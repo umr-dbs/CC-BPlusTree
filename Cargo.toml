@@ -1,0 +1,13 @@
+[package]
+name = "CCBPlusTree"
+version = "0.1.0"
+edition = "2021"
+authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
+description = "Experimental Concurrency Control B+Tree with and without Version Lists Implementation"
+repository = "https://github.com/umr-dbs/CC-BPlusTree"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ChronicleDB = { git = "ssh://git@github.com/umr-dbs/ChronicleDB", version = "1.0.45" }
+MVCCBPlusTree = { git = "ssh://git@github.com/umr-dbs/MVCC-BPlusTree", version = "0.0.48" }

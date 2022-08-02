@@ -10,4 +10,4 @@ repository = "https://github.com/umr-dbs/CC-BPlusTree"
 
 [dependencies]
 ChronicleDB = { git = "ssh://git@github.com/umr-dbs/ChronicleDB", version = "1.0.45" }
-MVCCBPlusTree = { git = "ssh://git@github.com/umr-dbs/MVCC-BPlusTree", version = "0.0.48" }
+MVCCBPlusTree = { git = "ssh://git@github.com/umr-dbs/MVCC-BPlusTree", version = "0.0.49" }

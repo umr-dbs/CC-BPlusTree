@@ -5,6 +5,7 @@ use mvcc_bplustree::index::version_info::Version;
 
 mod node;
 mod bplus_tree;
+mod node_manager;
 
 
 fn main() {

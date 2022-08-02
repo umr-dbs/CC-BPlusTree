@@ -28,6 +28,12 @@ impl Into<NodeRef> for Node {
 }
 
 impl Node {
+    pub(crate) fn is_overflow(&self, allocation: usize) -> bool {
+        // debug_assert!(allocation >= self.len());
+
+        self.len() >= allocation
+    }
+    
     pub const fn is_leaf(&self) -> bool {
         match self {
             Node::Index(..) => false,

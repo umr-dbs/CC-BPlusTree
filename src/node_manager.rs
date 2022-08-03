@@ -1,5 +1,8 @@
 use std::ops::Deref;
 
+pub(crate) const DEFAULT_ALLOCATION_LEAF: usize = 10;
+pub(crate) const DEFAULT_ALLOCATION_INDEX: usize = 10;
+
 pub struct NodeSettings {
     leaf_allocation: usize,
     index_allocation: usize,
@@ -8,8 +11,8 @@ pub struct NodeSettings {
 impl Default for NodeSettings {
     fn default() -> Self {
         Self {
-            leaf_allocation: 10,
-            index_allocation: 10,
+            leaf_allocation: DEFAULT_ALLOCATION_LEAF,
+            index_allocation: DEFAULT_ALLOCATION_INDEX,
         }
     }
 }

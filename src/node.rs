@@ -1,5 +1,6 @@
 use std::collections::LinkedList;
 use std::sync::Arc;
+use chronicle_db::tools::aliases::{Key, Keys};
 use mvcc_bplustree::index::record::Record;
 use mvcc_bplustree::utils::cc_cell_rrw_new::{CCCellGuard, CCCellRRWOPT};
 
@@ -13,11 +14,13 @@ use mvcc_bplustree::utils::cc_cell_rrw_new::{CCCellGuard, CCCellRRWOPT};
 
 pub(crate) type NodeRef = Arc<CCCellRRWOPT<Node>>;
 pub(crate) type NodeGuard<'a> = CCCellGuard<'a, Node>;
+pub(crate) type ChildrenRef = Vec<NodeRef>;
+pub(crate) type NodeLink = Option<NodeRef>;
 
 pub(crate) enum Node {
-    Index(Vec<u64>, Vec<NodeRef>),
+    Index(Keys, ChildrenRef),
     Leaf(Vec<Record>, LeafLinks),
-    MultiVersionLeaf(Vec<LinkedList<Record>>, LeafLinks)
+    MultiVersionLeaf(Vec<LinkedList<Record>>, LeafLinks),
 }
 
 
@@ -29,11 +32,11 @@ impl Into<NodeRef> for Node {
 
 impl Node {
     pub(crate) fn is_overflow(&self, allocation: usize) -> bool {
-        // debug_assert!(allocation >= self.len());
+        debug_assert!(allocation >= self.len());
 
         self.len() >= allocation
     }
-    
+
     pub const fn is_leaf(&self) -> bool {
         match self {
             Node::Index(..) => false,
@@ -41,22 +44,55 @@ impl Node {
         }
     }
 
+    pub(crate) fn children_mut(&mut self) -> Option<&mut Vec<NodeRef>> {
+        match self {
+            Node::Index(_, children) => Some(children),
+            _ => None
+        }
+    }
+
+    pub(crate) fn keys_mut(&mut self) -> Option<&mut Keys> {
+        match self {
+            Node::Index(keys, _) => Some(keys),
+            _ => None
+        }
+    }
+
+    // pub(crate) const fn leaf_links(&self) -> Option<&LeafLinks> {
+    //     match self {
+    //         Node::Leaf(_, leaf_links) => Some(leaf_links),
+    //         Node::MultiVersionLeaf(_, leaf_links) => Some(leaf_links),
+    //         _ => None
+    //     }
+    // }
+    //
+    // pub(crate) fn leaf_links_mut(&mut self) -> Option<&mut LeafLinks> {
+    //     match self {
+    //         Node::Leaf(_, leaf_links) => Some(leaf_links),
+    //         Node::MultiVersionLeaf(_, leaf_links) => Some(leaf_links),
+    //         _ => None
+    //     }
+    // }
+
     pub const fn is_directory(&self) -> bool {
         !self.is_leaf()
     }
 
-    pub fn as_records_mut(&mut self) -> &mut Vec<Record> {
+    pub(crate) fn push_record(&mut self, record: Record) -> bool {
         match self {
-            Node::Leaf(records, _) => records,
-            _ => unreachable!("Sleepy joe hit me -> expected a vec of records!")
+            Node::Leaf(records, _) => match records.binary_search(&record) {
+                Ok(pos) | Err(pos) => records.insert(pos, record)
+            }
+            Node::MultiVersionLeaf(records_version_lists, ..) => match records_version_lists
+                .binary_search_by_key(&record.key(), |version_list| version_list.front().unwrap().key())
+            {
+                Ok(pos) => records_version_lists.get_mut(pos).unwrap().push_front(record),
+                Err(pos) => records_version_lists.insert(pos, LinkedList::from_iter(vec![record]))
+            }
+            _ => return false
         }
-    }
 
-    pub fn as_records_versioned_mut(&mut self) -> &mut Vec<LinkedList<Record>> {
-        match self {
-            Node::MultiVersionLeaf(records, ..) => records,
-            _ => unreachable!("Sleepy joe hit me -> expected a vec of version lists of records!")
-        }
+        true
     }
 
     pub fn len(&self) -> usize {
@@ -69,16 +105,29 @@ impl Node {
 }
 
 pub(crate) struct LeafLinks {
-    left: Option<NodeRef>,
-    right: Option<NodeRef>
+    pub(crate) left: Option<NodeRef>,
+    pub(crate) right: Option<NodeRef>,
+}
+
+impl LeafLinks {
+    pub const fn new(left: NodeLink, right: NodeLink) -> Self {
+        Self {
+            left,
+            right
+        }
+    }
+
+    pub const fn none() -> Self {
+        Self {
+            left: None,
+            right: None,
+        }
+    }
 }
 
 impl Default for LeafLinks {
     fn default() -> Self {
-        Self {
-            left: None,
-            right: None
-        }
+        Self::none()
     }
 }
 

@@ -37,21 +37,22 @@ impl Index {
 
                 (current_node, node_guard)
             }
-            LockingStrategy::Dolos(..) if is_root_lock => {
-                let node_guard = self.root.borrow_mut_exclusive_static();
-                let current_node = self.root.clone();
-
-                (current_node, node_guard)
-            }
-            LockingStrategy::Dolos(..) => {
-                let root = self.root.clone();
-                let node_guard = root.borrow_free_static();
-
-                (root, node_guard)
-            }
+            _ => unreachable!("Sleepy joe hit me -> dolos not allowed")
+            // LockingStrategy::Dolos(..) if is_root_lock => {
+            //     let node_guard = self.root.borrow_mut_exclusive_static();
+            //     let current_node = self.root.clone();
+            //
+            //     (current_node, node_guard)
+            // }
+            // LockingStrategy::Dolos(..) => {
+            //     let root = self.root.clone();
+            //     let node_guard = root.borrow_free_static();
+            //
+            //     (root, node_guard)
+            // }
         };
 
-        let root_deref = root_guard.deref_mut();
+        let root_deref = root_guard.deref();
         let force_restart = match self.locking_strategy {
             LockingStrategy::SingleWriter | LockingStrategy::WriteCoupling => false,
             _ => !is_root_lock
@@ -121,6 +122,8 @@ impl Index {
                 let _ = mem::replace(self.root.get_mut(), root.clone());
             }
         }
+
+        self.inc_height();
 
         (root, root_guard)
     }
@@ -246,7 +249,7 @@ impl Index {
                             .unwrap()
                             .clone();
 
-                        let mut next_guard = self.locking_strategy.apply_for(
+                        let next_guard = self.locking_strategy.apply_for(
                             curr_level,
                             lock_level,
                             attempt,

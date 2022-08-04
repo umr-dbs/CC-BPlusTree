@@ -1,4 +1,5 @@
 use std::ops::Deref;
+use crate::node::{LeafLinks, Node, NodeLink};
 
 pub(crate) const DEFAULT_ALLOCATION_LEAF: usize = 10;
 pub(crate) const DEFAULT_ALLOCATION_INDEX: usize = 10;
@@ -74,12 +75,29 @@ impl Default for NodeManager {
 }
 
 impl NodeManager {
+    pub(crate) fn single_version_with(node_settings: NodeSettings) -> Self {
+        Self::SingleVersion(node_settings)
+    }
+
+    pub(crate) fn multi_version_with(node_settings: NodeSettings) -> Self {
+        Self::MultiVersion(node_settings)
+    }
+
     pub const fn node_settings(&self) -> &NodeSettings {
         match self {
             NodeManager::SingleVersion(node_settings) =>
                 node_settings,
             NodeManager::MultiVersion(node_settings) =>
                 node_settings
+        }
+    }
+
+    pub(crate) fn make_empty_root(&self) -> Node {
+        match self {
+            NodeManager::SingleVersion(_) =>
+                Node::Leaf(vec![], LeafLinks::none()),
+            NodeManager::MultiVersion(_) =>
+                Node::MultiVersionLeaf(vec![], LeafLinks::none())
         }
     }
 }

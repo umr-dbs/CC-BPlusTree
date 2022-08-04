@@ -78,21 +78,80 @@ impl Node {
         !self.is_leaf()
     }
 
-    pub(crate) fn push_record(&mut self, record: Record) -> bool {
+    // pub(crate) fn push_record(&mut self, record: Record) -> bool {
+    //     match self {
+    //         Node::Leaf(records, _) => match records.binary_search(&record) {
+    //             Ok(pos) | Err(pos) => records.insert(pos, record)
+    //         }
+    //         Node::MultiVersionLeaf(records_version_lists, ..) => match records_version_lists
+    //             .binary_search_by_key(&record.key(), |version_list| version_list.front().unwrap().key())
+    //         {
+    //             Ok(pos) => records_version_lists.get_mut(pos).unwrap().push_front(record),
+    //             Err(pos) => records_version_lists.insert(pos, LinkedList::from_iter(vec![record]))
+    //         }
+    //         _ => return false
+    //     }
+    //
+    //     true
+    // }
+
+    pub(crate) fn push_record(&mut self, record: Record, is_update: bool) -> bool {
         match self {
             Node::Leaf(records, _) => match records.binary_search(&record) {
-                Ok(pos) | Err(pos) => records.insert(pos, record)
+                Ok(pos) => {
+                    let old_record = records
+                        .get_mut(pos)
+                        .unwrap();
+
+                    if !is_update && !old_record.is_deleted() {
+                        false
+                    }
+                    else if is_update {
+                        if !old_record.is_deleted() {
+                            old_record.delete(record.insertion_version());
+                        }
+
+                        records.insert(pos + 1, record);
+                        true
+                    }
+                    else {
+                        false
+                    }
+                },
+                Err(pos) => {
+                    records.insert(pos, record);
+                    true
+                }
             }
             Node::MultiVersionLeaf(records_version_lists, ..) => match records_version_lists
                 .binary_search_by_key(&record.key(), |version_list| version_list.front().unwrap().key())
             {
-                Ok(pos) => records_version_lists.get_mut(pos).unwrap().push_front(record),
-                Err(pos) => records_version_lists.insert(pos, LinkedList::from_iter(vec![record]))
-            }
-            _ => return false
-        }
+                Ok(pos) => {
+                    debug_assert_eq!(pos, 0);
 
-        true
+                    let version_list = records_version_lists
+                        .get_mut(pos)
+                        .unwrap();
+
+                    let youngest_record = version_list
+                        .front_mut()
+                        .unwrap();
+
+                    if !youngest_record.is_deleted() {
+                        return false
+                    }
+
+                    youngest_record.delete(record.insertion_version());
+                    version_list.push_front(record);
+                    true
+                },
+                Err(pos) => {
+                    records_version_lists.insert(pos, LinkedList::from_iter(vec![record]));
+                    true
+                }
+            }
+            _ => false
+        }
     }
 
     pub fn len(&self) -> usize {

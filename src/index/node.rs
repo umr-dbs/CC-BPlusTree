@@ -57,18 +57,14 @@ impl Node {
     pub(crate) fn push_record(&mut self, record: Record, is_update: bool) -> bool {
         match self {
             Node::Leaf(records, _) => match records.binary_search(&record) {
-                Ok(pos) if is_update => {
-                    let old_record = records
-                        .get_mut(pos)
-                        .unwrap();
-
-                    if !old_record.is_deleted() {
-                        old_record.delete(record.insertion_version());
-                    }
-
-                    records.insert(pos + 1, record);
-                    true
-                }
+                Ok(pos) if is_update => records
+                    .get_mut(pos)
+                    .unwrap()
+                    .delete(record.insertion_version())
+                    .then(|| {
+                        records.insert(pos + 1, record);
+                        true
+                    }).unwrap_or(false),
                 Err(pos) if !is_update => {
                     records.insert(pos, record);
                     true
@@ -83,12 +79,11 @@ impl Node {
                         .get_mut(pos)
                         .unwrap();
 
-                    if !record_list.is_deleted() {
-                        record_list.delete(record.insertion_version());
-                    }
-
-                    record_list.push_front(record);
-                    true
+                    record_list.delete(record.insertion_version())
+                        .then(|| {
+                            record_list.push_front(record);
+                            true
+                        }).unwrap_or(false)
                 }
                 Err(pos) if !is_update => {
                     records_lists.insert(pos, RecordList::from_record(record));

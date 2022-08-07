@@ -38,6 +38,14 @@ impl PayloadVersioned {
         }
     }
 
+    pub fn as_event(&self, key: Key) -> Event {
+        Event::new_from_t1(key, self.payload.clone())
+    }
+
+    pub fn as_record(&self, key: Key) -> Record {
+        (self.as_event(key), self.version_info.clone()).into()
+    }
+
     pub fn payload(&self) -> &Payload {
         &self.payload
     }
@@ -101,10 +109,10 @@ impl RecordList {
             .unwrap_or(true)
     }
 
-    pub fn delete(&mut self, delete_version: Version) {
+    pub fn delete(&mut self, delete_version: Version) -> bool {
         self.payload_front_mut()
             .map(|front| front.version_info.delete(delete_version))
-            .unwrap()
+            .unwrap_or(false)
     }
 
     pub fn push_front(&mut self, record: Record) {

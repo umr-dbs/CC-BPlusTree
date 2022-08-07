@@ -1,5 +1,4 @@
 use std::ops::Deref;
-use chronicle_db::backbone::core::event::Event;
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use crate::bplus_tree::Index;
@@ -50,11 +49,10 @@ impl Index {
                     Node::MultiVersionLeaf(record_list, _) => record_list
                         .iter()
                         .find(|entry| entry.key() == key)
-                        .map(|version_list| version_list.payload_for_version(version))
+                        .map(|version_list| version_list
+                            .payload_for_version(version)
+                            .map(|found| found.as_record(key)))
                         .unwrap_or_default()
-                        .map(|found|
-                            (Event::new_from_t1(key, found.payload().clone()),
-                             found.version_info().clone()).into())
                         .map(|record| TransactionResult::MatchedRecord(Some(record)))
                         .unwrap_or(TransactionResult::MatchedRecord(None)),
                     _ => TransactionResult::Error
@@ -74,11 +72,10 @@ impl Index {
                     Node::MultiVersionLeaf(record_list, _) => record_list
                         .iter()
                         .find(|entry| entry.key() == key)
-                        .map(|version_list| version_list.payload_front())
+                        .map(|version_list| version_list
+                            .payload_front()
+                            .map(|found| found.as_record(key)))
                         .unwrap_or_default()
-                        .map(|found|
-                            (Event::new_from_t1(key, found.payload().clone()),
-                             found.version_info().clone()).into())
                         .map(|record| TransactionResult::MatchedRecord(Some(record)))
                         .unwrap_or(TransactionResult::MatchedRecord(None)),
                     _ => TransactionResult::Error

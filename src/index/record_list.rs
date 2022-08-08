@@ -9,7 +9,7 @@ use mvcc_bplustree::index::version_info::{Version, VersionInfo};
 #[derive(Clone, Default)]
 pub struct PayloadVersioned {
     payload: Payload,
-    version_info: VersionInfo
+    version_info: VersionInfo,
 }
 
 impl Into<PayloadVersioned> for Record {
@@ -34,7 +34,7 @@ impl PayloadVersioned {
     pub const fn new(payload: Payload, version_info: VersionInfo) -> Self {
         Self {
             payload,
-            version_info
+            version_info,
         }
     }
 
@@ -80,7 +80,7 @@ impl DerefMut for PayloadVersioned {
 #[derive(Clone, Default)]
 pub struct RecordList {
     key: Key,
-    payload: LinkedList<PayloadVersioned>
+    payload: LinkedList<PayloadVersioned>,
 }
 
 impl RecordList {
@@ -95,7 +95,7 @@ impl RecordList {
     pub fn new(key: Key, payload: Payload, version_info: VersionInfo) -> Self {
         Self {
             key,
-            payload: LinkedList::from_iter(vec![(payload, version_info).into()])
+            payload: LinkedList::from_iter(vec![(payload, version_info).into()]),
         }
     }
 
@@ -119,30 +119,47 @@ impl RecordList {
         self.payload.push_front(record.into())
     }
 
-    pub fn payload_front(&self) -> Option<&PayloadVersioned> {
+    fn payload_front(&self) -> Option<&PayloadVersioned> {
         self.payload.front()
     }
 
-    pub fn payload_front_mut(&mut self) -> Option<&mut PayloadVersioned> {
+    fn payload_front_mut(&mut self) -> Option<&mut PayloadVersioned> {
         self.payload.front_mut()
     }
 
-    pub fn payload_back(&self) -> Option<&PayloadVersioned> {
-        self.payload.back()
-    }
+    // fn payload_back(&self) -> Option<&PayloadVersioned> {
+    //     self.payload.back()
+    // }
+    //
+    // fn payload_back_mut(&mut self) -> Option<&mut PayloadVersioned> {
+    //     self.payload.back_mut()
+    // }
 
-    pub fn payload_back_mut(&mut self) -> Option<&mut PayloadVersioned> {
-        self.payload.back_mut()
-    }
-
-    pub fn payloads(&self) -> Iter<'_, PayloadVersioned> {
+    fn payloads(&self) -> Iter<'_, PayloadVersioned> {
         self.payload.iter()
     }
 
-    pub fn payload_for_version(&self, version: Version) -> Option<&PayloadVersioned> {
+    fn payload_for_version(&self, version: Version) -> Option<&PayloadVersioned> {
         self.payloads()
-            .find(|payload_versioned| payload_versioned
+            .skip_while(|payload_versioned| !payload_versioned
                 .version_info()
                 .matches(version))
+            .next()
+            // .filter(|payload_versioned| payload_versioned
+            //     .version_info()
+            //     .matches(version))
+    }
+
+    pub fn youngest_record(&self) -> Option<Record> {
+        self.payload_front()
+            .filter(|payload_versioned| !payload_versioned
+                .version_info()
+                .is_deleted())
+            .map(|found| found.as_record(self.key))
+    }
+
+    pub fn record_for_version(&self, version: Version) -> Option<Record> {
+        self.payload_for_version(version)
+            .map(|found| found.as_record(self.key))
     }
 }

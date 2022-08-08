@@ -41,20 +41,17 @@ impl Index {
                     = self.traversal_read(key);
 
                 match guard.deref() {
-                    Node::Leaf(records, _) => records
+                    Node::Leaf(records) => records
                         .iter()
-                        .find(|record| record.key() == key && record.match_version(version))
-                        .map(|found| TransactionResult::MatchedRecord(Some(found.clone())))
-                        .unwrap_or(TransactionResult::MatchedRecord(None)),
-                    Node::MultiVersionLeaf(record_list, _) => record_list
+                        .find(|record| record.key() == key)
+                        .filter(|record| record.match_version(version))
+                        .cloned()
+                        .into(),
+                    Node::MultiVersionLeaf(record_list) => record_list
                         .iter()
-                        .find(|entry| entry.key() == key)
-                        .map(|version_list| version_list
-                            .payload_for_version(version)
-                            .map(|found| found.as_record(key)))
-                        .unwrap_or_default()
-                        .map(|record| TransactionResult::MatchedRecord(Some(record)))
-                        .unwrap_or(TransactionResult::MatchedRecord(None)),
+                        .find(|record_list| record_list.key() == key)
+                        .map(|version_list| version_list.record_for_version(version).into())
+                        .unwrap_or(None.into()),
                     _ => TransactionResult::Error
                 }
             }
@@ -63,21 +60,21 @@ impl Index {
                     = self.traversal_read(key);
 
                 match guard.deref() {
-                    Node::Leaf(records, _) => records
+                    Node::Leaf(records) => records
                         .iter()
                         .rev()
-                        .find(|record| record.key() == key)
-                        .map(|found| TransactionResult::MatchedRecord(Some(found.clone())))
-                        .unwrap_or(TransactionResult::MatchedRecord(None)),
-                    Node::MultiVersionLeaf(record_list, _) => record_list
+                        .skip_while(|record| record.key() != key)
+                        .filter(|record| !record.is_deleted())
+                        .next()
+                        .cloned()
+                        .into(),
+                    Node::MultiVersionLeaf(record_list) => record_list
                         .iter()
-                        .find(|entry| entry.key() == key)
-                        .map(|version_list| version_list
-                            .payload_front()
-                            .map(|found| found.as_record(key)))
-                        .unwrap_or_default()
-                        .map(|record| TransactionResult::MatchedRecord(Some(record)))
-                        .unwrap_or(TransactionResult::MatchedRecord(None)),
+                        .skip_while(|record_list| record_list.key() != key)
+                        .filter(|version_list| !version_list.is_deleted())
+                        .next()
+                        .map(|version_list| version_list.youngest_record().into())
+                        .unwrap_or(None.into()),
                     _ => TransactionResult::Error
                 }
             }

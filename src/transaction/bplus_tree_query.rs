@@ -15,30 +15,15 @@ impl Index {
 
     // TODO: Check root strong count 1 too much!
     // TODO: maybe relates to double height increase error!
-    fn retrieve_root(&self, lock_level: Level, attempt: Attempts) -> (NodeRef, NodeGuard<'static>) {
+    fn retrieve_root(&self, lock_level: Level, attempt: Attempts) -> NodeGuard<'static> {
         let is_root_lock
             = self.locking_strategy.is_lock_root(lock_level, attempt, self.height());
 
-        let (mut current_root, mut root_guard) = match self.locking_strategy {
-            LockingStrategy::SingleWriter => (self.root.clone(), self.root.borrow_free_static()),
-            LockingStrategy::WriteCoupling => {
-                let node_guard = self.root.borrow_mut_exclusive_static();
-                let current_node = self.root.clone();
-
-                (current_node, node_guard)
-            }
-            LockingStrategy::Optimistic(..) if is_root_lock => {
-                let node_guard = self.root.borrow_mut_static();
-                let current_node = self.root.clone();
-
-                (current_node, node_guard)
-            }
-            LockingStrategy::Optimistic(..) => {
-                let node_guard = self.root.borrow_read_static();
-                let current_node = self.root.clone();
-
-                (current_node, node_guard)
-            }
+        let mut root_guard = match self.locking_strategy {
+            LockingStrategy::SingleWriter => self.root.borrow_free_static(),
+            LockingStrategy::WriteCoupling => self.root.borrow_mut_exclusive_static(),
+            LockingStrategy::Optimistic(..) if is_root_lock => self.root.borrow_mut_static(),
+            LockingStrategy::Optimistic(..) => self.root.borrow_read_static(),
             _ => unreachable!("Sleepy joe hit me -> dolos not allowed")
         };
 
@@ -50,14 +35,13 @@ impl Index {
         let has_overflow_root = self.has_overflow(root_guard.deref());
         if force_restart && has_overflow_root {
             mem::drop(root_guard);
-            mem::drop(current_root);
             mem::drop(is_root_lock);
 
             return self.retrieve_root(lock_level, attempt + 1);
         }
 
         if !has_overflow_root {
-            return (current_root, root_guard);
+            return root_guard;
         }
 
         debug_assert!(root_guard.is_write_lock() || !self.locking_strategy.additional_lock_required());
@@ -69,66 +53,53 @@ impl Index {
                 let new_keys = keys.split_off(keys_mid + 1);
                 keys.pop();
                 let new_children = children.split_off(keys_mid + 1);
-                let new_node: NodeRef = Node::Index(new_keys, new_children).into();
 
-                let new_root: NodeRef
-                    = Node::Index(vec![k3], vec![current_root, new_node]).into();
+                let new_node_right: NodeRef
+                    = Node::Index(new_keys, new_children).into();
 
-                let new_guard
-                    = self.locking_strategy.lock(new_root.deref());
+                let new_root_left: NodeRef
+                    = Node::Index(keys.split_off(0), children.split_off(0)).into();
 
-                self.set_root_on_insert(new_root.into());
-                current_root = self.root.clone();
-                root_guard = new_guard;
+                *root_guard.deref_mut()
+                    = Node::Index(vec![k3], vec![new_root_left, new_node_right]);
             }
-            Node::Leaf(records, root_links) => {
+            Node::Leaf(records) => {
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get(records_mid)
                     .unwrap()
                     .key();
 
-                let new_node: NodeRef = Node::Leaf(
-                    records.split_off(records_mid),
-                    LeafLinks::new(current_root.clone().into(), None)).into();
+                let new_node_right: NodeRef = Node::Leaf(
+                    records.split_off(records_mid), ).into();
 
-                root_links.right = new_node.clone().into();
+                let new_node_left: NodeRef = Node::Leaf(
+                    records.split_off(0)).into();
 
-                let new_root: NodeRef
-                    = Node::Index(vec![k3], vec![current_root, new_node]).into();
-
-                let new_guard
-                    = self.locking_strategy.lock(new_root.deref());
-
-                self.set_root_on_insert(new_root.into());
-                current_root = self.root.clone();
-                root_guard = new_guard;
+                *root_guard.deref_mut()
+                    = Node::Index(vec![k3], vec![new_node_left, new_node_right]);
             }
-            Node::MultiVersionLeaf(records, root_links) => {
+            Node::MultiVersionLeaf(records) => {
+                let records_mid = records.len() / 2;
                 let k3 = records
-                    .get(records.len() / 2)
+                    .get(records_mid)
                     .unwrap()
                     .key();
 
-                let new_node: NodeRef = Node::MultiVersionLeaf(
-                    records.split_off(records.len() / 2),
-                    LeafLinks::new(current_root.clone().into(), None)).into();
+                let new_node_right: NodeRef = Node::MultiVersionLeaf(
+                    records.split_off(records_mid), ).into();
 
-                root_links.right = new_node.clone().into();
+                let new_node_left: NodeRef = Node::MultiVersionLeaf(
+                    records.split_off(0)).into();
 
-                let new_root: NodeRef
-                    = Node::Index(vec![k3], vec![current_root, new_node]).into();
-
-                let new_guard
-                    = self.locking_strategy.lock(new_root.deref());
-
-                self.set_root_on_insert(new_root.into());
-                current_root = self.root.clone();
-                root_guard = new_guard;
+                *root_guard.deref_mut()
+                    = Node::Index(vec![k3], vec![new_node_left, new_node_right]);
             }
         }
 
-        (current_root, root_guard)
+        self.inc_height();
+
+        root_guard
     }
 
     fn do_overflow_correction<'a>(
@@ -147,7 +118,6 @@ impl Index {
                 keys.pop();
                 let new_children = children.split_off(keys_mid + 1);
                 let new_node: NodeRef = Node::Index(new_keys, new_children).into();
-                // let new_guard = self.locking_strategy.lock(&new_node);
 
                 parent_guard
                     .keys_mut()
@@ -164,7 +134,7 @@ impl Index {
 
                 (parent_node, parent_guard)
             }
-            Node::Leaf(records, links) => {
+            Node::Leaf(records) => {
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get(records_mid)
@@ -172,14 +142,7 @@ impl Index {
                     .key();
 
                 let new_node: NodeRef = Node::Leaf(
-                    records.split_off(records_mid),
-                    LeafLinks::new(from_node.into(), links.right.take())).into();
-
-                links.right
-                    = new_node.clone().into();
-
-                // let new_guard
-                //     = self.locking_strategy.lock(&new_node);
+                    records.split_off(records_mid), ).into();
 
                 parent_guard
                     .children_mut()
@@ -191,14 +154,12 @@ impl Index {
                     .unwrap()
                     .insert(child_pos, k3);
 
-                // mem::drop(parent_guard);
                 mem::drop(from_guard);
-                // mem::drop(from_node);
-                // mem::drop(parent_node);
+                mem::drop(from_node);
 
                 (parent_node, parent_guard)
             }
-            Node::MultiVersionLeaf(records, links) => {
+            Node::MultiVersionLeaf(records) => {
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get(records_mid)
@@ -206,14 +167,7 @@ impl Index {
                     .key();
 
                 let new_node: NodeRef = Node::MultiVersionLeaf(
-                    records.split_off(records_mid),
-                    LeafLinks::new(from_node.into(), links.right.take())).into();
-
-                links.right
-                    = new_node.clone().into();
-
-                // let new_guard
-                //     = self.locking_strategy.lock(&new_node);
+                    records.split_off(records_mid), ).into();
 
                 parent_guard
                     .children_mut()
@@ -225,10 +179,8 @@ impl Index {
                     .unwrap()
                     .insert(child_pos, k3);
 
-                // mem::drop(parent_guard);
                 mem::drop(from_guard);
-                // mem::drop(from_node);
-                // mem::drop(parent_node);
+                mem::drop(from_node);
 
                 (parent_node, parent_guard)
             }
@@ -238,11 +190,17 @@ impl Index {
     fn traversal_write_internal(&self, lock_level: Level, attempt: Attempts, key: Key) -> (NodeRef, NodeGuard) {
         let mut curr_level = Self::INIT_TREE_HEIGHT;
 
-        let (mut current_node, mut current_guard)
+        let mut current_guard
             = self.retrieve_root(lock_level, attempt);
+
+        let mut current_node
+            = self.root.clone();
 
         let mut write_n
             = current_guard.len();
+
+        let height
+            = self.height();
 
         loop {
             match current_guard.deref() {
@@ -256,23 +214,12 @@ impl Index {
 
                     curr_level += 1;
 
-                    // Why on earth is height wrong; check root todo tho -.-
-                    let next_guard = if next_node.is_leaf() {
-                        self.locking_strategy.lock(next_node.deref())
-                        // self.locking_strategy.apply_for(
-                        //     curr_level,
-                        //     lock_level,
-                        //     attempt,
-                        //     self.height(),
-                        //     next_node.deref())
-                    } else {
-                        self.locking_strategy.apply_for(
-                            curr_level,
-                            lock_level,
-                            attempt,
-                            self.height(),
-                            next_node.deref())
-                    };
+                    let next_guard = self.locking_strategy.apply_for(
+                        curr_level,
+                        lock_level,
+                        attempt,
+                        height,
+                        next_node.deref());
 
                     let has_overflow_next
                         = self.has_overflow(next_guard.deref());
@@ -321,11 +268,11 @@ impl Index {
     }
 
     pub(crate) fn traversal_read(&self, key: Key) -> (NodeRef, NodeGuard) {
+        let mut current_guard
+            = self.lock_reader(self.root.deref());
+
         let mut current_node
             = self.root.clone();
-
-        let mut current_guard
-            = self.lock_reader(current_node.deref());
 
         loop {
             match current_guard.deref() {

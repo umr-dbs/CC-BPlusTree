@@ -1,5 +1,8 @@
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use chronicle_db::tools::aliases::Keys;
+use mvcc_bplustree::block::block::{AtomicBlockID, BlockID};
 use mvcc_bplustree::index::record::Record;
 use mvcc_bplustree::utils::cc_cell::{CCCellGuard, CCCell};
 use crate::index::record_list::RecordList;
@@ -9,11 +12,49 @@ pub(crate) type NodeGuard<'a> = CCCellGuard<'a, Node>;
 pub(crate) type ChildrenRef = Vec<NodeRef>;
 pub(crate) type NodeLink = Option<NodeRef>;
 
+// #[derive(Clone)]
+// pub struct Block {
+//     id: BlockID,
+//     node_data: Node
+// }
+//
+// impl Deref for Block {
+//     type Target = Node;
+//
+//     fn deref(&self) -> &Self::Target {
+//         &self.node_data
+//     }
+// }
+//
+// impl DerefMut for Block {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut self.node_data
+//     }
+// }
+//
+// impl Block {
+//     const BLOCK_ID_COUNTER: AtomicBlockID = AtomicBlockID::new(0);
+//
+//     pub fn new_leaf() -> Self {
+//         Self {
+//             id: Self::BLOCK_ID_COUNTER.fetch_add(1, Relaxed),
+//             node_data: Node::Leaf(vec![])
+//         }
+//     }
+//
+//     pub fn new_multi_version_leaf() -> Self {
+//         Self {
+//             id: Self::BLOCK_ID_COUNTER.fetch_add(1, Relaxed),
+//             node_data: Node::MultiVersionLeaf(vec![])
+//         }
+//     }
+// }
+
 #[derive(Clone)]
 pub(crate) enum Node {
     Index(Keys, ChildrenRef),
-    Leaf(Vec<Record>, LeafLinks),
-    MultiVersionLeaf(Vec<RecordList>, LeafLinks),
+    Leaf(Vec<Record>),
+    MultiVersionLeaf(Vec<RecordList>),
 }
 
 impl Into<NodeRef> for Node {
@@ -56,7 +97,7 @@ impl Node {
 
     pub(crate) fn push_record(&mut self, record: Record, is_update: bool) -> bool {
         match self {
-            Node::Leaf(records, _) => match records.binary_search(&record) {
+            Node::Leaf(records) => match records.binary_search(&record) {
                 Ok(pos) if is_update => records
                     .get_mut(pos)
                     .unwrap()
@@ -98,8 +139,8 @@ impl Node {
     pub fn len(&self) -> usize {
         match self {
             Node::Index(keys, _) => keys.len(),
-            Node::Leaf(records, _) => records.len(),
-            Node::MultiVersionLeaf(record_lists, _) => record_lists.len()
+            Node::Leaf(records) => records.len(),
+            Node::MultiVersionLeaf(record_lists) => record_lists.len()
         }
     }
 }
@@ -134,6 +175,6 @@ impl Default for LeafLinks {
 
 impl Default for Node {
     fn default() -> Self {
-        Self::Leaf(vec![], LeafLinks::default())
+        Self::Leaf(vec![])
     }
 }

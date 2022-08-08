@@ -1,5 +1,5 @@
 use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
 use mvcc_bplustree::locking::locking_strategy::{DEFAULT_OPTIMISTIC_ATTEMPTS, Level, LockingStrategy};
 use mvcc_bplustree::utils::cc_cell::CCCell;
@@ -10,7 +10,7 @@ use crate::utils::un_cell::UnCell;
 
 pub(crate) type Index = BPlusTree;
 
-pub(crate) type SharedRoot = UnCell<NodeRef>;
+pub(crate) type SharedRoot = NodeRef;
 
 // #[derive(Serialize, Deserialize)]
 pub struct BPlusTree {
@@ -24,12 +24,6 @@ pub struct BPlusTree {
 impl Default for Index {
     fn default() -> Self {
         Index::new_multi_versioned()
-    }
-}
-
-impl Into<SharedRoot> for Node {
-    fn into(self) -> SharedRoot {
-        UnCell::new(self.into())
     }
 }
 
@@ -48,13 +42,18 @@ impl BPlusTree {
         }
     }
 
-    pub fn new_with(locking_strategy: LockingStrategy) -> Self {
+    pub fn new_single_version_for(locking_strategy: LockingStrategy) -> Self {
         Self::make(NodeManager::SingleVersion(NodeSettings::default()),
                    locking_strategy)
     }
 
+    pub fn new_multi_version_for(locking_strategy: LockingStrategy) -> Self {
+        Self::make(NodeManager::MultiVersion(NodeSettings::default()),
+                   locking_strategy)
+    }
+
     pub fn new_dolos() -> Self {
-        Self::new_with(LockingStrategy::dolos(DEFAULT_OPTIMISTIC_ATTEMPTS))
+        Self::new_single_version_for(LockingStrategy::dolos(DEFAULT_OPTIMISTIC_ATTEMPTS))
     }
 
     pub fn new_single_version_with(node_settings: NodeSettings, locking_strategy: LockingStrategy) -> Self {
@@ -81,25 +80,25 @@ impl BPlusTree {
             LockingStrategy::SingleWriter)
     }
 
-    pub(crate) fn set_root_on_insert(&self, new_root: NodeRef) {
-        let _ = self.root.replace(new_root);
-        self.inc_height()
-    }
-
-    pub(crate) fn set_root_on_delete(&self, new_root: NodeRef) {
-        let _ = self.root.replace(new_root);
-        self.dec_height()
-    }
+    // pub(crate) fn set_root_on_insert(&self, new_root: NodeRef) {
+    //     let _ = self.root.replace(new_root);
+    //     self.inc_height()
+    // }
+    //
+    // pub(crate) fn set_root_on_delete(&self, new_root: NodeRef) {
+    //     let _ = self.root.replace(new_root);
+    //     self.dec_height()
+    // }
 
     pub const fn locking_strategy(&self) -> &LockingStrategy {
         &self.locking_strategy
     }
 
-    pub fn height(&self) -> usize {
-        self.height.load(Relaxed)
+    pub fn height(&self) -> Level {
+        self.height.load(SeqCst)
     }
 
-    fn inc_height(&self) {
+    pub(crate)fn inc_height(&self) {
         self.height.fetch_add(1, Relaxed);
     }
 

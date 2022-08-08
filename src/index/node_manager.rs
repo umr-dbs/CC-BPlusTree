@@ -95,9 +95,9 @@ impl NodeManager {
     pub(crate) fn make_empty_root(&self) -> Node {
         match self {
             NodeManager::SingleVersion(_) =>
-                Node::Leaf(vec![], LeafLinks::none()),
+                Node::Leaf(vec![]),
             NodeManager::MultiVersion(_) =>
-                Node::MultiVersionLeaf(vec![], LeafLinks::none())
+                Node::MultiVersionLeaf(vec![])
         }
     }
 }

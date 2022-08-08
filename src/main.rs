@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 use std::{fs, mem, thread};
 use std::borrow::Borrow;
 use std::sync::Mutex;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use chronicle_db::backbone::core::event::Event;
 use chronicle_db::backbone::core::event::EventVariant::F64;
 use chronicle_db::tools::aliases::Key;
@@ -12,8 +12,7 @@ use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use chrono::{DateTime, Local};
 use mvcc_bplustree::utils::cc_cell::CCCell;
-use rand::{RngCore, thread_rng};
-use rand::prelude::SliceRandom;
+use rand::RngCore;
 use crate::index::bplus_tree;
 use crate::index::bplus_tree::Index;
 
@@ -25,10 +24,11 @@ mod utils;
 fn main() {
     make_splash();
 
-    simple_test();
+    // simple_test();
     // simple_test2();
-
     experiment();
+
+    experiment2();
 }
 
 /// Essential function.
@@ -43,7 +43,7 @@ fn make_splash() {
     println!(" |                                                                       |");
     println!(" |               ----------------------------------                      |");
     println!(" |               # Build:   {}                          |", datetime.format("%d-%m-%Y %T"));
-    println!(" |               # Current version: {}                                |", env!("CARGO_PKG_VERSION"));
+    println!(" |               # Current version: {}                               |", env!("CARGO_PKG_VERSION"));
     println!(" |               ----------------------------------                      |");
     println!(" |                                                                       |");
     println!(" |               Written by: Amir El-Shaikh                              |");
@@ -75,17 +75,20 @@ fn simple_test() {
         3, 9, 5, 2, 13, 40, 38, 41, 27, 16, 28, 42, 1, 43, 23, 26,
         44, 17, 29, 39, 20, 6, 4, 7, 30, 21, 35, 8];
 
-    let mut keys_insert = (1..1_000).collect::<Vec<_>>();
-    let mut rng = thread_rng();
-    keys_insert.shuffle(&mut rng);
+    let mut rand = rand::thread_rng();
+    let mut keys_insert = gen_rand_data(100_000);
+
+    // let dups = rand.next_u32().min(keys_insert.len() as _) as usize;
+    // keys_insert.extend(keys_insert.get(..dups).unwrap().to_vec());
+    // let mut rng = thread_rng();
+    // keys_insert.shuffle(&mut rng);
 
     let mut already_used: Vec<Key> = vec![];
     let keys_insert = keys_insert
         .iter()
         .map(|key| if already_used.contains(key) {
             UPDATE(*key)
-        }
-        else {
+        } else {
             already_used.push(*key);
             INSERT(*key)
         }).collect::<Vec<_>>();
@@ -97,7 +100,7 @@ fn simple_test() {
 
     // let mut keys_insert = gen_rand_data(10_000_000);
 
-    let tree = Index::new_multi_versioned();
+    let tree = Index::new_multi_version_for(LockingStrategy::SingleWriter);
     let mut search_queries = vec![];
 
     for (i, tx) in keys_insert.into_iter().enumerate() {
@@ -231,10 +234,10 @@ fn experiment() {
         1_000,
         10_000,
         100_000,
-        // 1_000_000,
+        1_000_000,
         // 2_000_000,
         // 5_000_000,
-        // 10_000_000,
+        10_000_000,
         // 20_000_000,
         // 50_000_000,
         // 100_000_000,
@@ -287,7 +290,7 @@ fn experiment() {
                 print!(",{}", *num_threads);
 
                 let index
-                    = Index::new_with(LockingStrategy::SingleWriter);
+                    = Index::new_single_version_for(LockingStrategy::SingleWriter);
 
                 let time = beast_test(
                     1,
@@ -300,7 +303,7 @@ fn experiment() {
                 print!(",{}", *num_threads);
 
                 let index
-                    = Index::new_with(LockingStrategy::WriteCoupling);
+                    = Index::new_single_version_for(LockingStrategy::WriteCoupling);
 
                 let time = beast_test(
                     1,
@@ -315,7 +318,7 @@ fn experiment() {
                     print!("{}", t1s.len());
                     print!(",{}", *num_threads);
                     let index
-                        = Index::new_with(ls.clone());
+                        = Index::new_single_version_for(ls.clone());
 
                     let time = beast_test(
                         *num_threads,
@@ -328,6 +331,115 @@ fn experiment() {
                 }
             }
         });
+}
+
+fn experiment2() {
+    println!("> Preparing data, hold on..");
+
+    let mut threads_cpu = 24;
+    let insertions: Key = 1_000_000;
+    let data = gen_rand_data(insertions as usize);
+
+    println!("Number Insertions,Number Threads,Locking Strategy,Height,Time");
+    print!("{}", insertions);
+    print!(",{}", threads_cpu);
+
+    let index
+        = Index::new_single_version_for(LockingStrategy::WriteCoupling);
+
+    let (time, index_o) = beast_test2(
+        threads_cpu,
+        index,
+        data.as_slice());
+
+    println!(",{}", time);
+
+    let index = index_o.unsafe_borrow();
+    for key in data {
+        match index.execute(Transaction::ExactSearchLatest(key)) {
+            TransactionResult::MatchedRecord(Some(..)) => {},
+            joe => println!("ERROR: {}", joe)
+        }
+    }
+
+
+}
+
+fn beast_test2(num_thread: usize, index: Index, t1s: &[Key]) -> (u128, CCCell<Index>) {
+    let index_o
+        = CCCell::new(index);
+
+    let mut handles = vec![];
+
+    let mut query_buff = Mutex::new(VecDeque::from_iter(
+        t1s.iter().map(|key| Transaction::Insert(
+            Event::new_single_float_event_t1(*key, *key as _))))
+    );
+
+    let query_buff_t: &'static Mutex<VecDeque<Transaction>>
+        = unsafe { mem::transmute(query_buff.borrow()) };
+
+    let index = index_o.unsafe_borrow_mut_static();
+    let start = SystemTime::now();
+
+    for _ in 1..=num_thread {
+        handles.push(thread::spawn(|| loop {
+            let mut buff = query_buff_t.lock().unwrap();
+            let next_query = buff.pop_front();
+            mem::drop(buff);
+
+            match next_query {
+                Some(query) => match index.execute(query) { // index.execute(transaction),
+                    TransactionResult::Inserted(key, version) |
+                    TransactionResult::Updated(key, version) => if false
+                    {
+                        match index.execute(Transaction::ExactSearch(key, version)) {
+                            TransactionResult::MatchedRecord(Some(record))
+                            if record.key() == key && record.match_version(version) =>
+                                {}
+                            joe => {
+                                println!("\nERROR Search -> Transaction::{}", Transaction::ExactSearch(key, version));
+                                println!("\n****ERROR: {}, {}", index.locking_strategy, joe);
+                                let t
+                                    = index.execute(Transaction::ExactSearch(key, version));
+
+                                let x = 123123;
+                                // panic!()
+                            }
+                        };
+
+                        // match index.execute(RangeSearch((key..=key).into(), version)) {
+                        //     TransactionResult::MatchedRecords(records)
+                        //     if records.len() != 1 =>
+                        //         panic!("Sleepy Joe => len = {} - {}",
+                        //                records.len(),
+                        //                records.iter().join("\n")),
+                        //     TransactionResult::MatchedRecords(ref records)
+                        //     if records[0].key() != key || !records[0].insertion_version() == version =>
+                        //         panic!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
+                        //     _ => {}
+                        // };
+                    },
+                    joey => {
+                        println!("\n####ERROR: {}, {}", index.locking_strategy, joey);
+                        panic!()
+                    }
+                }
+                None => break
+            };
+        }));
+    }
+
+    handles
+        .into_iter()
+        .for_each(|handle| handle
+            .join()
+            .unwrap());
+
+    let time = SystemTime::now().duration_since(start).unwrap().as_millis();
+    print!(",{},{}", index_o.locking_strategy(), index_o.height());
+
+    (time, index_o)
 }
 
 fn display_record(record: Option<Record>) -> String {
@@ -366,9 +478,9 @@ fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
             mem::drop(buff);
 
             match next_query {
-                Some(query) =>  match index.execute(query) { // index.execute(transaction),
+                Some(query) => match index.execute(query) { // index.execute(transaction),
                     TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if false
+                    TransactionResult::Updated(key, version) => if true
                     {
                         match index.execute(Transaction::ExactSearch(key, version)) {
                             TransactionResult::MatchedRecord(Some(record))
@@ -394,7 +506,7 @@ fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
                         // };
                     },
                     joey => {
-                        println!("\n****ERROR: {}, {}", index.locking_strategy, joey);
+                        println!("\n####ERROR: {}, {}", index.locking_strategy, joey);
                         panic!()
                     }
                 }

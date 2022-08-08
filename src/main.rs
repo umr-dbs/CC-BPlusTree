@@ -25,10 +25,10 @@ fn main() {
     make_splash();
 
     // simple_test();
-    // simple_test2();
-    experiment();
-
-    experiment2();
+    simple_test2();
+    // experiment();
+    //
+    // experiment2();
 }
 
 /// Essential function.
@@ -78,8 +78,8 @@ fn simple_test() {
     let mut rand = rand::thread_rng();
     let mut keys_insert = gen_rand_data(100_000);
 
-    // let dups = rand.next_u32().min(keys_insert.len() as _) as usize;
-    // keys_insert.extend(keys_insert.get(..dups).unwrap().to_vec());
+    let dups = rand.next_u32().min(keys_insert.len() as _) as usize;
+    keys_insert.extend(keys_insert.get(..dups).unwrap().to_vec());
     // let mut rng = thread_rng();
     // keys_insert.shuffle(&mut rng);
 
@@ -187,6 +187,12 @@ fn simple_test2() {
         multi_versioned_index.execute(
             Transaction::Insert(Event::new_from_t1(key, F64(key as f64))));
     }
+
+    let rq = multi_versioned_index.execute(
+        Transaction::RangeSearch((5..10).into(), 10));
+
+    println!("{}", rq);
+
 }
 
 fn gen_rand_data(n: usize) -> Vec<Key> {

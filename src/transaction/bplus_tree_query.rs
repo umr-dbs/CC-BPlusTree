@@ -13,8 +13,6 @@ impl Index {
         }
     }
 
-    // TODO: Check root strong count 1 too much!
-    // TODO: maybe relates to double height increase error!
     fn retrieve_root(&self, lock_level: Level, attempt: Attempts) -> NodeGuard<'static> {
         let is_root_lock
             = self.locking_strategy.is_lock_root(lock_level, attempt, self.height());

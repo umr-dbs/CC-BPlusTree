@@ -138,6 +138,12 @@ impl RecordList {
     fn payloads(&self) -> Iter<'_, PayloadVersioned> {
         self.payload.iter()
     }
+    
+    pub fn as_records(&self) -> Vec<Record> {
+        self.payloads()
+            .map(|payload_versioned| payload_versioned.as_record(self.key))
+            .collect()
+    }
 
     fn payload_for_version(&self, version: Version) -> Option<&PayloadVersioned> {
         self.payloads()

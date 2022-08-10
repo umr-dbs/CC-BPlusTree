@@ -118,4 +118,13 @@ impl BPlusTree {
             _ => unreachable!("Sleepy joe hit me -> lock_reader on dolos not allowed")
         }
     }
+
+    pub(crate) fn lock_reader_lifetime<'a>(&self, node: &'a CCCell<Node>) -> NodeGuard<'a> {
+        match self.locking_strategy {
+            LockingStrategy::SingleWriter => node.borrow_free(),
+            LockingStrategy::WriteCoupling => node.borrow_mut_exclusive(),
+            LockingStrategy::Optimistic(..) => node.borrow_read(),
+            _ => unreachable!("Sleepy joe hit me -> lock_reader on dolos not allowed")
+        }
+    }
 }

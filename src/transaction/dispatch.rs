@@ -1,10 +1,27 @@
-use std::ops::Deref;
+use std::collections::vec_deque::Iter;
+use std::collections::VecDeque;
+use std::mem;
+use std::ops::{Deref, DerefMut};
+use mvcc_bplustree::index::record::Record;
+use mvcc_bplustree::index::version_info::Version;
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
+use mvcc_bplustree::utils::cc_cell::{CCCell, CCCellGuard};
+use mvcc_bplustree::utils::interval::KeyInterval;
 use crate::bplus_tree::Index;
-use crate::index::node::Node;
+use crate::index::node::{Node, NodeGuard, NodeRef};
 
 impl Index {
+    pub fn execute_range_query_iter(&self, transaction: Transaction) -> TransactionResultIter {
+        let index = unsafe {
+            mem::transmute(self)
+        };
+        TransactionResultIter {
+            transaction,
+            index
+        }
+    }
+
     pub fn execute(&self, transaction: Transaction) -> TransactionResult {
         match transaction {
             Transaction::Empty => TransactionResult::Error,
@@ -135,5 +152,168 @@ impl Index {
             }
             _ => unimplemented!("bro hang on, im working on it..")
         }
+    }
+}
+
+pub struct TransactionResultIter {
+    transaction: Transaction,
+    index: &'static Index,
+}
+
+impl Iterator for TransactionResultIter {
+    type Item = Box<dyn Iterator<Item = Record>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        #[derive(Clone)]
+        struct RangeFilter {
+            key_interval: KeyInterval,
+            version: Version,
+        }
+
+        enum Fanout {
+            Fan {
+                index: &'static Index,
+                filter: RangeFilter,
+                father: (NodeRef, NodeGuard<'static>),
+                fan_out: VecDeque<NodeRef>,
+            },
+            Filter {
+                filter: RangeFilter,
+                leaf: (NodeRef, NodeGuard<'static>),
+            },
+            Results(Vec<Record>),
+        }
+
+        impl Fanout {
+            const fn is_results(&self) -> bool {
+                match self {
+                    Self::Results(..) => true,
+                    _ => false
+                }
+            }
+
+            fn into_results(self) -> Vec<Record> {
+                match self {
+                    Self::Results(records) => records,
+                    _ => unreachable!()
+                }
+            }
+        }
+
+        impl Iterator for Fanout {
+            type Item = Vec<Fanout>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                match self {
+                    Fanout::Results(..) => None,
+                    Fanout::Filter {
+                        filter,
+                        leaf: (.., leaf)
+                    } => {
+                        Some(vec![Fanout::Results(match NodeGuard::deref(leaf) {
+                            Node::Index(..) => unreachable!(),
+                            Node::Leaf(records) => records
+                                .iter()
+                                .filter(|record| filter.key_interval
+                                    .contains(record.key()) && record
+                                    .match_version(filter.version))
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                            Node::MultiVersionLeaf(record_lists) => record_lists
+                                .iter()
+                                .filter(|record_list| filter.key_interval.contains(record_list.key()))
+                                .map(|record_list| record_list.record_for_version(filter.version))
+                                .filter(|record| record.is_some())
+                                .map(|record| record.unwrap())
+                                .collect::<Vec<_>>(),
+                        })])
+                    }
+                    Fanout::Fan {
+                        index,
+                        father: (father_ref, ..),
+                        filter,
+                        fan_out,
+                    } => {
+                        let next_child
+                            = fan_out.pop_front().unwrap();
+
+                        let next_guard
+                            = index.lock_reader(next_child.deref());
+
+                        let next_fan = match next_guard.deref() {
+                            Node::Index(keys, children) => Self::Fan {
+                                index,
+                                filter: filter.clone(),
+                                fan_out: keys
+                                    .iter()
+                                    .enumerate()
+                                    .skip_while(|(_, k)| !filter.key_interval.lower().lt(k))
+                                    .take_while(|(pos, k)| filter.key_interval.upper().ge(k) || *pos == 0)
+                                    .map(|(pos, _)| children.get(pos).unwrap().clone())
+                                    .collect(),
+                                father: (next_child, next_guard),
+                            },
+                            _ => Self::Filter {
+                                filter: filter.clone(),
+                                leaf: (next_child, next_guard),
+                            }
+                        };
+
+                        Some(vec![Self::Fan {
+                            index,
+                            filter: filter.clone(),
+                            father: (father_ref.clone(), index.lock_reader(father_ref.deref())),
+                            fan_out: fan_out.split_off(0),
+                        }, next_fan])
+                    }
+                }
+            }
+        }
+
+        let (key_interval, version ) = match &self.transaction {
+            Transaction::RangeSearch(key_interval, version) => (key_interval.clone(), *version),
+            _ => return None
+        };
+
+        let father_ref
+            = self.index.root.clone();
+
+        let father_guard: NodeGuard
+            = self.index.lock_reader(father_ref.deref());
+
+        let filter = RangeFilter {
+            key_interval,
+            version
+        };
+
+        let fan_out = match father_guard.deref() {
+            Node::Index(keys, children) => {
+                let fan_out = keys
+                    .iter()
+                    .enumerate()
+                    .skip_while(|(_, k)| !filter.key_interval.lower().lt(k))
+                    .take_while(|(pos, k)| filter.key_interval.upper().ge(k) || *pos == 0)
+                    .map(|(pos, _)| children.get(pos).unwrap().clone())
+                    .collect::<VecDeque<_>>();
+
+                Fanout::Fan {
+                    index: self.index,
+                    father: (father_ref, father_guard),
+                    filter,
+                    fan_out,
+                }
+            },
+            _ => Fanout::Filter {
+                filter,
+                leaf: (father_ref, father_guard)
+            },
+        };
+
+        // TODO: Fill up wrapper iter for continuous .next() calls till is_result is valid
+        Some(Box::new(fan_out
+            .into_iter()
+            .flat_map(|fan| fan
+                .into_iter()
+                .flat_map(|fan_result| fan_result.into_results()))))
     }
 }

@@ -1,6 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::{fs, mem, thread};
 use std::borrow::Borrow;
+use std::ops::{Deref, DerefMut};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 use chronicle_db::backbone::core::event::Event;
@@ -188,10 +189,21 @@ fn simple_test2() {
             Transaction::Insert(Event::new_from_t1(key, F64(key as f64))));
     }
 
-    let rq = multi_versioned_index.execute(
-        Transaction::RangeSearch((5..10).into(), 10));
+    let range_query
+        = Transaction::RangeSearch((5..10).into(), 10);
 
-    println!("{}", rq);
+    let rq_collected
+        = multi_versioned_index.execute(range_query.clone());
+
+
+    let mut rq_iter
+        = multi_versioned_index.execute_range_query_iter(range_query);
+
+    println!("{}", rq_collected);
+
+    println!();
+    println!();
+    println!();
 
 }
 

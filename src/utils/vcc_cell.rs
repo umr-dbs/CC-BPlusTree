@@ -1,7 +1,7 @@
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::null_mut;
-use std::sync::atomic::Ordering::{AcqRel, Relaxed};
+use std::sync::atomic::Ordering::Acquire;
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
 use mvcc_bplustree::utils::cc_cell::{CCCell, CCCellGuard};
 
@@ -18,7 +18,7 @@ pub struct VCCCellGuard<'a, E: Default + 'a> {
 
 impl<'a, E: Default + 'a> Drop for VCCCellGuard<'a, E> {
     fn drop(&mut self) {
-        self.latch_cell_version.map(|(cell, ..)| cell.cell_version.fetch_add(1, Relaxed));
+        self.latch_cell_version.map(|(cell, ..)| cell.cell_version.fetch_add(1, Acquire));
     }
 }
 
@@ -42,7 +42,7 @@ impl<E: Default> DerefMut for VCCCellGuard<'_, E> {
             unsafe { mem::transmute(null_mut() as *mut E) }
         }
         else {
-            self.latch_cell_version.map(|(cell, ..)| cell.cell_version.fetch_add(1, Relaxed));
+            self.latch_cell_version.map(|(cell, ..)| cell.cell_version.fetch_add(1, Acquire));
             ptr
         }
     }
@@ -55,12 +55,12 @@ impl<'a, E: 'a + Default> VCCCellGuard<'a, E> {
     }
 
     pub fn cell_version(&self) -> Option<Version> {
-        self.latch_cell_version.map(|(cell, _)| cell.cell_version.fetch_add(0, AcqRel))
+        self.latch_cell_version.map(|(cell, _)| cell.cell_version.load(Acquire))
     }
 
     pub fn is_modified(&self) -> bool {
         self.latch_cell_version
-            .map(|(cell, latch_version)| latch_version != cell.cell_version.fetch_add(0, AcqRel))
+            .map(|(cell, latch_version)| latch_version != cell.cell_version.load(Acquire))
             .unwrap_or(false)
     }
 
@@ -95,32 +95,25 @@ impl<E: Default> VCCCell<E> {
         }
     }
 
-    pub fn borrow_versioned<'a>(&'a self) -> VCCCellGuard<'a, E>{
-        let cc_guard = self.cell.borrow_free();
-        let version = self.cell_version.fetch_add(1, Relaxed);
+    pub fn borrow_versioned<'a>(&'a self) -> VCCCellGuard<'a, E> {
+        let version
+            = self.cell_version.load(Acquire);
 
         VCCCellGuard {
-            cc_guard,
+            cc_guard: self.cell.borrow_free(),
             latch_cell_version: Some((self, version))
         }
     }
 
-    pub fn borrow_versioned_static(&self) -> VCCCellGuard<'static, E>{
-        let cc_guard
-            = self.cell.borrow_free_static();
-
-        let version
-            = self.cell_version.fetch_add(1, Relaxed);
-
-        VCCCellGuard {
-            cc_guard,
-            latch_cell_version: Some((unsafe { mem::transmute(self) }, version))
+    pub fn borrow_versioned_static(&self) -> VCCCellGuard<'static, E> {
+        unsafe {
+            mem::transmute(self.borrow_versioned())
         }
     }
 
     /// Read access via static life-time.
     #[inline(always)]
-    pub fn borrow_read_static(&self) -> VCCCellGuard<'static, E>  {
+    pub fn borrow_read_static(&self) -> VCCCellGuard<'static, E> {
         VCCCellGuard {
             cc_guard: self.cell.borrow_read_static(),
             latch_cell_version: None

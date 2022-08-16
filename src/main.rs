@@ -26,8 +26,8 @@ fn main() {
     make_splash();
 
     // simple_test();
-    simple_test2();
-    // experiment();
+    // simple_test2();
+    experiment();
     //
     // experiment2();
 }
@@ -189,18 +189,20 @@ fn simple_test2() {
             Transaction::Insert(Event::new_from_t1(key, F64(key as f64))));
     }
 
-    let range_query
-        = Transaction::RangeSearch((5..10).into(), 10);
+    // let range_query
+    //     = Transaction::RangeSearch((5..10).into(), 10);
 
-    let rq_collected
-        = multi_versioned_index.execute(range_query.clone());
+    // let rq_collected
+    //     = multi_versioned_index.execute(range_query.clone());
 
 
-    let mut rq_iter
-        = multi_versioned_index.execute_range_query_iter(range_query);
-
-    println!("{}", rq_collected);
-
+    // let mut rq_iter
+    //     = multi_versioned_index.execute_range_query_iter(range_query)
+    //     .unwrap();
+    //
+    // println!("{}", rq_collected);
+    //
+    // let x = rq_iter.next();
     println!();
     println!();
     println!();
@@ -228,7 +230,7 @@ fn experiment() {
     let cpu_threads = false;
 
     let mut threads_cpu = vec![
-        1,
+        // 1,
         2,
         3,
         4,
@@ -251,18 +253,18 @@ fn experiment() {
         100,
         1_000,
         10_000,
-        100_000,
-        1_000_000,
+        // 100_000,
+        // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
+        // 10_000_000,
         // 20_000_000,
         // 50_000_000,
         // 100_000_000,
     ];
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::WriteCoupling);
+    // strategies.push(LockingStrategy::WriteCoupling);
 
     for attempt in 1..=3 {
         // strategies.push(LockingStrategy::optimistic_custom(
@@ -280,10 +282,10 @@ fn experiment() {
         // strategies.push(LockingStrategy::dolos_custom(
         //     LevelVariant::new_height_lock(0.9_f32), attempt));
         //
-        strategies.push(LockingStrategy::optimistic_custom(
-            LevelVariant::new_height_lock(1_f32), attempt));
-        // strategies.push(LockingStrategy::dolos_custom(
+        // strategies.push(LockingStrategy::optimistic_custom(
         //     LevelVariant::new_height_lock(1_f32), attempt));
+        strategies.push(LockingStrategy::dolos_custom(
+            LevelVariant::new_height_lock(1_f32), attempt));
     }
 
     let cases = insertions
@@ -498,7 +500,7 @@ fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
             match next_query {
                 Some(query) => match index.execute(query) { // index.execute(transaction),
                     TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if true
+                    TransactionResult::Updated(key, version) => if false
                     {
                         match index.execute(Transaction::ExactSearch(key, version)) {
                             TransactionResult::MatchedRecord(Some(record))

@@ -1,16 +1,11 @@
-use std::ops::{Deref, DerefMut};
-use std::slice::Iter;
 use std::sync::Arc;
-use std::sync::atomic::Ordering::Relaxed;
 use chronicle_db::tools::aliases::Keys;
-use mvcc_bplustree::block::block::{AtomicBlockID, BlockID};
 use mvcc_bplustree::index::record::Record;
-use mvcc_bplustree::index::version_info::Version;
-use mvcc_bplustree::utils::cc_cell::{CCCellGuard, CCCell};
 use crate::index::record_list::RecordList;
+use crate::utils::vcc_cell::{VCCCell, VCCCellGuard};
 
-pub(crate) type NodeRef = Arc<CCCell<Node>>;
-pub(crate) type NodeGuard<'a> = CCCellGuard<'a, Node>;
+pub(crate) type NodeRef = Arc<VCCCell<Node>>;
+pub(crate) type NodeGuard<'a> = VCCCellGuard<'a, Node>;
 pub(crate) type ChildrenRef = Vec<NodeRef>;
 pub(crate) type NodeLink = Option<NodeRef>;
 
@@ -61,7 +56,7 @@ pub(crate) enum Node {
 
 impl Into<NodeRef> for Node {
     fn into(self) -> NodeRef {
-        Arc::new(CCCell::new(self))
+        Arc::new(VCCCell::new(self))
     }
 }
 

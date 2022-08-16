@@ -4,6 +4,7 @@ use chronicle_db::tools::aliases::Key;
 use mvcc_bplustree::locking::locking_strategy::{Attempts, Level, LockingStrategy};
 use crate::Index;
 use crate::index::node::{LeafLinks, Node, NodeGuard, NodeRef};
+use crate::utils::vcc_cell::{VCCCell, VCCCellGuard};
 
 impl Index {
     fn has_overflow(&self, node: &Node) -> bool {
@@ -22,6 +23,8 @@ impl Index {
             LockingStrategy::WriteCoupling => self.root.borrow_mut_exclusive_static(),
             LockingStrategy::Optimistic(..) if is_root_lock => self.root.borrow_mut_static(),
             LockingStrategy::Optimistic(..) => self.root.borrow_read_static(),
+            LockingStrategy::Dolos(..) if is_root_lock => self.root.borrow_mut_static(),
+            LockingStrategy::Dolos(..) => self.root.borrow_versioned_static(),
             _ => unreachable!("Sleepy joe hit me -> dolos not allowed")
         };
 
@@ -44,7 +47,10 @@ impl Index {
 
         debug_assert!(root_guard.is_write_lock() || !self.locking_strategy.additional_lock_required());
 
-        match root_guard.deref_mut() {
+        let root_mut
+            = root_guard.deref_mut();
+
+        match root_mut {
             Node::Index(keys, children) => {
                 let keys_mid = keys.len() / 2;
                 let k3 = *keys.get(keys_mid).unwrap();
@@ -58,7 +64,7 @@ impl Index {
                 let new_root_left: NodeRef
                     = Node::Index(keys.split_off(0), children.split_off(0)).into();
 
-                *root_guard.deref_mut()
+                *root_mut
                     = Node::Index(vec![k3], vec![new_root_left, new_node_right]);
             }
             Node::Leaf(records) => {
@@ -74,7 +80,7 @@ impl Index {
                 let new_node_left: NodeRef = Node::Leaf(
                     records.split_off(0)).into();
 
-                *root_guard.deref_mut()
+                *root_mut
                     = Node::Index(vec![k3], vec![new_node_left, new_node_right]);
             }
             Node::MultiVersionLeaf(records) => {
@@ -90,7 +96,7 @@ impl Index {
                 let new_node_left: NodeRef = Node::MultiVersionLeaf(
                     records.split_off(0)).into();
 
-                *root_guard.deref_mut()
+                *root_mut
                     = Node::Index(vec![k3], vec![new_node_left, new_node_right]);
             }
         }
@@ -117,12 +123,15 @@ impl Index {
                 let new_children = children.split_off(keys_mid + 1);
                 let new_node: NodeRef = Node::Index(new_keys, new_children).into();
 
-                parent_guard
+                let parent_mut
+                    = parent_guard.deref_mut();
+
+                parent_mut
                     .keys_mut()
                     .unwrap()
                     .insert(child_pos, k3);
 
-                parent_guard
+                parent_mut
                     .children_mut()
                     .unwrap()
                     .insert(child_pos + 1, new_node.clone());
@@ -142,12 +151,15 @@ impl Index {
                 let new_node: NodeRef = Node::Leaf(
                     records.split_off(records_mid), ).into();
 
-                parent_guard
+                let parent_mut
+                    = parent_guard.deref_mut();
+
+                parent_mut
                     .children_mut()
                     .unwrap()
                     .insert(child_pos + 1, new_node);
 
-                parent_guard
+                parent_mut
                     .keys_mut()
                     .unwrap()
                     .insert(child_pos, k3);
@@ -167,12 +179,15 @@ impl Index {
                 let new_node: NodeRef = Node::MultiVersionLeaf(
                     records.split_off(records_mid), ).into();
 
-                parent_guard
+                let parent_mut
+                    = parent_guard.deref_mut();
+
+                parent_mut
                     .children_mut()
                     .unwrap()
                     .insert(child_pos + 1, new_node.clone());
 
-                parent_guard
+                parent_mut
                     .keys_mut()
                     .unwrap()
                     .insert(child_pos, k3);
@@ -194,8 +209,8 @@ impl Index {
         let mut current_node
             = self.root.clone();
 
-        let mut write_n
-            = current_guard.len();
+        // let mut write_n
+        //     = current_guard.cell_version();
 
         let height
             = self.height();
@@ -212,7 +227,7 @@ impl Index {
 
                     curr_level += 1;
 
-                    let next_guard = self.locking_strategy.apply_for(
+                    let next_guard = self.apply_for(
                         curr_level,
                         lock_level,
                         attempt,
@@ -224,7 +239,7 @@ impl Index {
 
                     if self.locking_strategy.additional_lock_required() &&
                         (has_overflow_next ||
-                            (self.locking_strategy.is_dolos() && (write_n != current_guard.len() || self.has_overflow(current_guard.deref())))) &&
+                            (self.locking_strategy.is_dolos() && (current_guard.is_modified() || self.has_overflow(current_guard.deref())))) &&
                         (!current_guard.is_write_lock() || !next_guard.is_write_lock())
                     {
                         mem::drop(next_guard);
@@ -246,11 +261,11 @@ impl Index {
 
                         current_guard = new_next_guard;
                         current_node = new_next;
-                        write_n = current_guard.len();
+                        // write_n = current_guard.cell_version();
                     } else {
                         current_guard = next_guard;
                         current_node = next_node;
-                        write_n = current_guard.len();
+                        // write_n = current_guard.cell_version();
                     }
                 }
                 _ => break (current_node, current_guard)

@@ -1,11 +1,12 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
-use mvcc_bplustree::locking::locking_strategy::{DEFAULT_OPTIMISTIC_ATTEMPTS, Level, LockingStrategy};
+use mvcc_bplustree::locking::locking_strategy::{Attempts, DEFAULT_OPTIMISTIC_ATTEMPTS, Level, LockingStrategy};
 use mvcc_bplustree::utils::cc_cell::CCCell;
 use crate::index::node::{Node, NodeGuard, NodeRef};
 use crate::index::node_manager::{NodeManager, NodeSettings};
 use crate::utils::un_cell::UnCell;
+use crate::utils::vcc_cell::{VCCCell, VCCCellGuard};
 // use serde::{Serialize, Deserialize};
 
 pub(crate) type Index = BPlusTree;
@@ -110,21 +111,31 @@ impl BPlusTree {
         self.version_manager.fetch_add(1, Relaxed)
     }
 
-    pub(crate) fn lock_reader(&self, node: &CCCell<Node>) -> NodeGuard {
+    pub(crate) fn lock_reader(&self, node: &VCCCell<Node>) -> NodeGuard {
         match self.locking_strategy {
             LockingStrategy::SingleWriter => node.borrow_free_static(),
-            LockingStrategy::WriteCoupling => node.borrow_mut_exclusive_static(),
+            LockingStrategy::WriteCoupling => node.borrow_read_static(),
             LockingStrategy::Optimistic(..) => node.borrow_read_static(),
-            _ => unreachable!("Sleepy joe hit me -> lock_reader on dolos not allowed")
+            LockingStrategy::Dolos(..) => node.borrow_versioned_static(),
         }
     }
-
-    pub(crate) fn lock_reader_lifetime<'a>(&self, node: &'a CCCell<Node>) -> NodeGuard<'a> {
-        match self.locking_strategy {
-            LockingStrategy::SingleWriter => node.borrow_free(),
-            LockingStrategy::WriteCoupling => node.borrow_mut_exclusive(),
-            LockingStrategy::Optimistic(..) => node.borrow_read(),
-            _ => unreachable!("Sleepy joe hit me -> lock_reader on dolos not allowed")
+    #[inline]
+    pub(crate) fn apply_for<E: Default>(&self, curr_level: Level, max_level: Level, attempt: Attempts, height: Level, block_cc: &VCCCell<E>) -> VCCCellGuard<'static, E> {
+        match self.locking_strategy() {
+            LockingStrategy::SingleWriter =>
+                block_cc.borrow_free_static(),
+            LockingStrategy::WriteCoupling =>
+                block_cc.borrow_mut_static(),
+            LockingStrategy::Optimistic(lock_level, attempts)
+            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
+                block_cc.borrow_mut_static(),
+            LockingStrategy::Dolos(lock_level, attempts)
+            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
+                block_cc.borrow_mut_static(),
+            LockingStrategy::Optimistic(..) =>
+                block_cc.borrow_read_static(),
+            LockingStrategy::Dolos(..) =>
+                block_cc.borrow_versioned_static(),
         }
     }
 }

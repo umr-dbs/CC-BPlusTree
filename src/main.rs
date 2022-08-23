@@ -230,7 +230,7 @@ fn experiment() {
     let cpu_threads = false;
 
     let mut threads_cpu = vec![
-        // 1,
+        1,
         2,
         3,
         4,

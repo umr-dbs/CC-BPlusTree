@@ -1,12 +1,15 @@
+use std::mem;
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
 use mvcc_bplustree::locking::locking_strategy::{Attempts, DEFAULT_OPTIMISTIC_ATTEMPTS, Level, LockingStrategy};
 use mvcc_bplustree::utils::cc_cell::CCCell;
-use crate::index::node::{Node, NodeGuard, NodeRef};
+use crate::index::node::{Node, NodeGuard, NodeGuardResult, NodeRef};
 use crate::index::node_manager::{NodeManager, NodeSettings};
 use crate::utils::un_cell::UnCell;
-use crate::utils::vcc_cell::{VCCCell, VCCCellGuard};
+use crate::utils::vcc_cell::{ConcurrentCell, ConcurrentGuard, OptCell};
+use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
 // use serde::{Serialize, Deserialize};
 
 pub(crate) type Index = BPlusTree;
@@ -34,8 +37,14 @@ impl BPlusTree {
     pub(crate) const START_VERSION: Version = 0;
 
     fn make(node_manager: NodeManager, locking_strategy: LockingStrategy) -> Self {
+        let empty_node
+            = node_manager.make_empty_root();
+
         Self {
-            root: node_manager.make_empty_root().into(),
+            root: match locking_strategy.is_dolos() {
+                true => OptimisticCell(Arc::new(OptCell::new(empty_node))),
+                false => ConcurrencyControlCell(Arc::new(CCCell::new(empty_node)))
+            },
             locking_strategy,
             node_manager,
             version_manager: AtomicVersion::new(Self::START_VERSION),
@@ -99,7 +108,7 @@ impl BPlusTree {
         self.height.load(SeqCst)
     }
 
-    pub(crate)fn inc_height(&self) {
+    pub(crate) fn inc_height(&self) {
         self.height.fetch_add(1, Relaxed);
     }
 
@@ -111,16 +120,17 @@ impl BPlusTree {
         self.version_manager.fetch_add(1, Relaxed)
     }
 
-    pub(crate) fn lock_reader(&self, node: &VCCCell<Node>) -> NodeGuard {
+    pub(crate) fn lock_reader(&self, node: &NodeRef) -> NodeGuard {
         match self.locking_strategy {
             LockingStrategy::SingleWriter => node.borrow_free_static(),
             LockingStrategy::WriteCoupling => node.borrow_read_static(),
             LockingStrategy::Optimistic(..) => node.borrow_read_static(),
-            LockingStrategy::Dolos(..) => node.borrow_versioned_static(),
+            LockingStrategy::Dolos(..) => node.borrow_free_static(),
         }
     }
+
     #[inline]
-    pub(crate) fn apply_for<E: Default>(&self, curr_level: Level, max_level: Level, attempt: Attempts, height: Level, block_cc: &VCCCell<E>) -> VCCCellGuard<'static, E> {
+    pub(crate) fn apply_for(&self, curr_level: Level, max_level: Level, attempt: Attempts, height: Level, block_cc: &NodeRef) -> NodeGuard {
         match self.locking_strategy() {
             LockingStrategy::SingleWriter =>
                 block_cc.borrow_free_static(),
@@ -131,11 +141,11 @@ impl BPlusTree {
                 block_cc.borrow_mut_static(),
             LockingStrategy::Dolos(lock_level, attempts)
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut_static(),
+                block_cc.borrow_mut_exclusive_static(),
             LockingStrategy::Optimistic(..) =>
                 block_cc.borrow_read_static(),
             LockingStrategy::Dolos(..) =>
-                block_cc.borrow_versioned_static(),
+                block_cc.borrow_free_static(),
         }
     }
 }

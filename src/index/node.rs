@@ -1,13 +1,16 @@
 use std::sync::Arc;
 use chronicle_db::tools::aliases::Keys;
 use mvcc_bplustree::index::record::Record;
+use mvcc_bplustree::locking::locking_strategy::LockingStrategy;
+use mvcc_bplustree::utils::cc_cell::CCCell;
 use crate::index::record_list::RecordList;
-use crate::utils::vcc_cell::{VCCCell, VCCCellGuard};
+use crate::utils::vcc_cell::{ConcurrentCell, ConcurrentGuard, GuardDerefResult, OptCell};
 
-pub(crate) type NodeRef = Arc<VCCCell<Node>>;
-pub(crate) type NodeGuard<'a> = VCCCellGuard<'a, Node>;
+pub(crate) type NodeGuardResult<'a> = GuardDerefResult<'a, Node>;
+pub(crate) type NodeRef = ConcurrentCell<Node>;
+pub(crate) type NodeGuard<'a> = ConcurrentGuard<'a, Node>;
 pub(crate) type ChildrenRef = Vec<NodeRef>;
-pub(crate) type NodeLink = Option<NodeRef>;
+// pub(crate) type NodeLink = Option<NodeRef>;
 
 // #[derive(Clone)]
 // pub struct Block {
@@ -54,13 +57,16 @@ pub(crate) enum Node {
     MultiVersionLeaf(Vec<RecordList>),
 }
 
-impl Into<NodeRef> for Node {
-    fn into(self) -> NodeRef {
-        Arc::new(VCCCell::new(self))
-    }
-}
-
 impl Node {
+    pub fn into_node_ref(self, locking_strategy: &LockingStrategy) -> NodeRef {
+        if locking_strategy.is_dolos() {
+            ConcurrentCell::OptimisticCell(Arc::new(OptCell::new(self)))
+        }
+        else {
+            ConcurrentCell::ConcurrencyControlCell(Arc::new(CCCell::new(self)))
+        }
+    }
+
     pub(crate) fn is_overflow(&self, allocation: usize) -> bool {
         debug_assert!(allocation >= self.len());
 
@@ -139,34 +145,6 @@ impl Node {
             Node::Leaf(records) => records.len(),
             Node::MultiVersionLeaf(record_lists) => record_lists.len()
         }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct LeafLinks {
-    pub(crate) left: Option<NodeRef>,
-    pub(crate) right: Option<NodeRef>,
-}
-
-impl LeafLinks {
-    pub const fn new(left: NodeLink, right: NodeLink) -> Self {
-        Self {
-            left,
-            right,
-        }
-    }
-
-    pub const fn none() -> Self {
-        Self {
-            left: None,
-            right: None,
-        }
-    }
-}
-
-impl Default for LeafLinks {
-    fn default() -> Self {
-        Self::none()
     }
 }
 

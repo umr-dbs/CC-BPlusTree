@@ -1,5 +1,5 @@
 use std::ops::Deref;
-use crate::index::node::{LeafLinks, Node};
+use crate::index::node::Node;
 
 pub(crate) const DEFAULT_ALLOCATION_LEAF: usize = 10;
 pub(crate) const DEFAULT_ALLOCATION_INDEX: usize = 10;

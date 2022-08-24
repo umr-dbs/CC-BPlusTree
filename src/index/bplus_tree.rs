@@ -1,14 +1,12 @@
-use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
 use mvcc_bplustree::locking::locking_strategy::{Attempts, DEFAULT_OPTIMISTIC_ATTEMPTS, Level, LockingStrategy};
 use mvcc_bplustree::utils::cc_cell::CCCell;
-use crate::index::node::{Node, NodeGuard, NodeGuardResult, NodeRef};
+use crate::index::node::{NodeGuard, NodeRef};
 use crate::index::node_manager::{NodeManager, NodeSettings};
-use crate::utils::un_cell::UnCell;
-use crate::utils::vcc_cell::{ConcurrentCell, ConcurrentGuard, OptCell};
+use crate::utils::vcc_cell::OptCell;
 use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
 // use serde::{Serialize, Deserialize};
 
@@ -139,9 +137,9 @@ impl BPlusTree {
             LockingStrategy::Optimistic(lock_level, attempts)
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut_static(),
-            LockingStrategy::Dolos(lock_level, attempts)
-            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut_exclusive_static(),
+            // LockingStrategy::Dolos(lock_level, attempts)
+            // if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
+            //     block_cc.borrow_free_static(),
             LockingStrategy::Optimistic(..) =>
                 block_cc.borrow_read_static(),
             LockingStrategy::Dolos(..) =>

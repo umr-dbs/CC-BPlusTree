@@ -253,11 +253,11 @@ fn experiment() {
         100,
         1_000,
         10_000,
-        // 100_000,
-        // 1_000_000,
+        100_000,
+        1_000_000,
         // 2_000_000,
         // 5_000_000,
-        // 10_000_000,
+        10_000_000,
         // 20_000_000,
         // 50_000_000,
         // 100_000_000,
@@ -282,10 +282,10 @@ fn experiment() {
         // strategies.push(LockingStrategy::dolos_custom(
         //     LevelVariant::new_height_lock(0.9_f32), attempt));
         //
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(1_f32), attempt));
-        strategies.push(LockingStrategy::dolos_custom(
+        strategies.push(LockingStrategy::optimistic_custom(
             LevelVariant::new_height_lock(1_f32), attempt));
+        // strategies.push(LockingStrategy::dolos_custom(
+        //     LevelVariant::new_height_lock(1_f32), attempt));
     }
 
     let cases = insertions
@@ -411,7 +411,7 @@ fn beast_test2(num_thread: usize, index: Index, t1s: &[Key]) -> (u128, CCCell<In
             match next_query {
                 Some(query) => match index.execute(query) { // index.execute(transaction),
                     TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if false
+                    TransactionResult::Updated(key, version) => if true
                     {
                         match index.execute(Transaction::ExactSearch(key, version)) {
                             TransactionResult::MatchedRecord(Some(record))
@@ -492,7 +492,7 @@ fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
     let start = SystemTime::now();
 
     for _ in 1..=num_thread {
-        handles.push(thread::spawn(|| loop {
+        handles.push(thread::Builder::new().stack_size(1024 * 1024 * 1000*1).spawn(|| loop {
             let mut buff = query_buff_t.lock().unwrap();
             let next_query = buff.pop_front();
             mem::drop(buff);
@@ -532,7 +532,7 @@ fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
                 }
                 None => break
             };
-        }));
+        }).unwrap());
     }
 
     handles

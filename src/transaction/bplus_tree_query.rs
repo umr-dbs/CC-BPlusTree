@@ -17,37 +17,90 @@ impl Index {
         }
     }
 
-    fn retrieve_root(&self, lock_level: Level, attempt: Attempts) -> NodeGuard<'static> {
+    fn retrieve_root(&self, lock_level: Level, attempt: Attempts) -> (NodeGuard, NodeGuardResult) {
         let is_root_lock
             = self.locking_strategy.is_lock_root(lock_level, attempt, self.height());
 
-        let mut root_guard = match self.locking_strategy {
-            LockingStrategy::SingleWriter => self.root.borrow_free_static(),
-            LockingStrategy::Dolos(..) => self.root.borrow_free_static(),
-            LockingStrategy::WriteCoupling => self.root.borrow_mut_exclusive_static(),
-            LockingStrategy::Optimistic(..) if is_root_lock => self.root.borrow_mut_static(),
-            LockingStrategy::Optimistic(..) => self.root.borrow_read_static(),
+        let (root_guard, mut root_guard_result) = match self.locking_strategy {
+            LockingStrategy::SingleWriter => {
+                let mut guard
+                    = self.root.borrow_free_static();
+
+                let guard_writer
+                    = guard.try_deref_mut();
+
+                (guard, guard_writer)
+            },
+            LockingStrategy::Dolos(..) if is_root_lock => {
+                let mut guard
+                    = self.root.borrow_free_static();
+
+                let guard_writer
+                    = guard.try_deref_mut();
+
+                if !guard_writer.is_mut() {
+                    mem::drop(guard_writer);
+                    mem::drop(guard);
+
+                    return self.retrieve_root(lock_level, attempt + 1);
+                }
+
+                (guard, guard_writer)
+            },
+            LockingStrategy::Dolos(..) => {
+                let guard
+                    = self.root.borrow_free_static();
+
+                let guard_reader
+                    = guard.try_deref();
+
+                (guard, guard_reader)
+            },
+            LockingStrategy::WriteCoupling => {
+                let mut guard
+                    = self.root.borrow_mut_exclusive_static();
+
+                let guard_writer
+                    = guard.try_deref_mut();
+
+                (guard, guard_writer)
+            },
+            LockingStrategy::Optimistic(..) if is_root_lock => {
+                let mut guard
+                    = self.root.borrow_mut_static();
+
+                let guard_writer
+                    = guard.try_deref_mut();
+
+                (guard, guard_writer)
+            },
+            LockingStrategy::Optimistic(..) => {
+                let guard
+                    = self.root.borrow_read_static();
+
+                let guard_reader
+                    = guard.try_deref();
+
+                (guard, guard_reader)
+            },
         };
 
-        let root_guard_mut = root_guard
-            .try_deref_mut();
+        let root_deref
+            = root_guard_result.as_ref();
 
-        if !root_guard_mut.is_valid() {
-            mem::drop(root_guard_mut);
+        if root_deref.is_none() {
+            mem::drop(root_guard_result);
             mem::drop(root_guard);
             mem::drop(is_root_lock);
 
             return self.retrieve_root(lock_level, attempt + 1);
         }
 
-        // Note: checked as valid here, i.e. definitely locked
-        // WARNING: UNBOXING not allowed and must keep deref_result alive for invariant!!
-        let root_mut = root_guard_mut
-            .assume_mut()
-            .unwrap();
+        let root_deref
+            = root_deref.unwrap();
 
         let has_overflow_root
-            = self.has_overflow(root_mut);
+            = self.has_overflow(root_deref);
 
         let force_restart = match self.locking_strategy {
             LockingStrategy::SingleWriter | LockingStrategy::WriteCoupling => false,
@@ -55,7 +108,7 @@ impl Index {
         };
 
         if force_restart && has_overflow_root {
-            mem::drop(root_guard_mut);
+            mem::drop(root_guard_result);
             mem::drop(root_guard);
             mem::drop(is_root_lock);
 
@@ -63,9 +116,21 @@ impl Index {
         }
 
         if !has_overflow_root {
-            return root_guard;
+            return (root_guard, root_guard_result);
         }
 
+        if root_guard_result.force_mut().is_none() {
+            mem::drop(root_guard_result);
+            mem::drop(root_guard);
+            mem::drop(is_root_lock);
+
+            return self.retrieve_root(lock_level, attempt + 1);
+        }
+
+        let root_mut
+            = root_guard_result.assume_mut().unwrap();
+
+        //TODO: introduce a way to mark as obsolete!!
         match root_mut {
             Node::Index(keys, children) => {
                 let keys_mid = keys.len() / 2;
@@ -120,7 +185,7 @@ impl Index {
 
         self.inc_height();
 
-        root_guard
+        (root_guard, root_guard_result)
     }
 
     fn do_overflow_correction(
@@ -206,31 +271,21 @@ impl Index {
         }
     }
 
-    fn traversal_write_internal(&self, lock_level: Level, attempt: Attempts, key: Key) -> NodeGuardResult<'_> {
+    fn traversal_write_internal(&self, lock_level: Level, attempt: Attempts, key: Key) -> (NodeGuard, NodeGuardResult) {
         let mut curr_level = Self::INIT_TREE_HEIGHT;
 
-        let mut current_guard
+        let (mut current_guard, mut current_node_deref)
             = self.retrieve_root(lock_level, attempt);
 
         let height
             = self.height();
 
-        let is_dolos
-            = self.locking_strategy.is_dolos();
-
         loop {
-            let mut current_node_deref = if self.locking_strategy
-                .is_lock(curr_level, lock_level, attempt, height)
-            {
-                current_guard.try_deref_mut()
-            } else {
-                current_guard.try_deref()
-            };
-
             let deref_as_ref
                 = current_node_deref.as_ref();
 
             if deref_as_ref.is_none() {
+                mem::drop(current_node_deref);
                 mem::drop(current_guard);
 
                 return self.traversal_write_internal(
@@ -253,23 +308,27 @@ impl Index {
 
                     curr_level += 1;
 
-                    let next_guard = self.apply_for(
+                    let mut next_guard = self.apply_for(
                         curr_level,
                         lock_level,
                         attempt,
                         height,
                         &next_node);
 
-                    let mut next_guard_deref
-                        = next_guard.try_deref();
+                    let mut next_guard_deref = match self.locking_strategy
+                        .is_lock(curr_level, lock_level, attempt, height)
+                    {
+                        true => next_guard.try_deref_mut(),
+                        false => next_guard.try_deref()
+                    };
 
                     let next_guard_deref_as_ref
                         = next_guard_deref.as_ref();
 
                     if next_guard_deref_as_ref.is_none() {
                         mem::drop(current_node_deref);
-                        mem::drop(next_guard);
                         mem::drop(current_guard);
+                        mem::drop(next_guard);
                         mem::drop(next_node);
 
                         return self.traversal_write_internal(
@@ -284,22 +343,23 @@ impl Index {
                     let has_overflow_next
                         = self.has_overflow(next_guard_ref);
 
-                    if self.locking_strategy.additional_lock_required() &&
-                        (has_overflow_next ||
-                            (is_dolos && (!current_guard.is_valid() || self.has_overflow(current)))) &&
-                        (!current_node_deref.can_mut() || !next_guard_deref.can_mut())
-                    {
-                        mem::drop(next_guard_deref);
-                        mem::drop(current_node_deref);
-                        mem::drop(next_guard);
-                        mem::drop(current_guard);
-                        mem::drop(next_node);
-
-                        return self.traversal_write_internal(
-                            curr_level - 1,
-                            attempt + 1,
-                            key);
-                    } else if has_overflow_next {
+                    // if self.locking_strategy.additional_lock_required() &&
+                    //     (has_overflow_next ||
+                    //         (is_dolos && (!current_guard.is_valid() || self.has_overflow(current)))) &&
+                    //     (!current_node_deref.can_mut() || !next_guard_deref.can_mut())
+                    // {
+                    //     mem::drop(next_guard_deref);
+                    //     mem::drop(current_node_deref);
+                    //     mem::drop(next_guard);
+                    //     mem::drop(current_guard);
+                    //     mem::drop(next_node);
+                    //
+                    //     return self.traversal_write_internal(
+                    //         curr_level - 1,
+                    //         attempt + 1,
+                    //         key);
+                    // } else
+                    if has_overflow_next {
                         if current_node_deref.force_mut().is_none() || next_guard_deref.force_mut().is_none() {
                             mem::drop(next_guard_deref);
                             mem::drop(current_node_deref);
@@ -321,22 +381,26 @@ impl Index {
                         current_guard = next_guard;
                     }
                 }
-                _ => break current_node_deref
+                _ => break (current_guard, current_node_deref)
             }
+
+            current_node_deref = match self.locking_strategy.is_lock(curr_level, lock_level, attempt, height) {
+                true => current_guard.try_deref_mut(),
+                false => current_guard.try_deref()
+            };
         }
     }
 
-    pub(crate) fn traversal_write(&self, key: Key) -> NodeGuardResult<'_> {
+    pub(crate) fn traversal_write(&self, key: Key) -> (NodeGuard, NodeGuardResult) {
         self.traversal_write_internal(
             Self::MAX_TREE_HEIGHT,
             mvcc_bplustree::locking::locking_strategy::ATTEMPT_START,
             key)
     }
 
-    pub(crate) fn traversal_read(&self, key: Key) -> NodeGuardResult<'_> {
+    pub(crate) fn traversal_read(&self, key: Key) -> NodeGuardResult {
         let mut current_guard
             = self.lock_reader(&self.root);
-
 
         loop {
             let current_deref_result

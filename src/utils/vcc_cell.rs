@@ -67,10 +67,14 @@ impl<E: Default> OptCell<E> {
     }
 
     fn is_read_valid(&self, v: Version) -> bool {
+        debug_assert!(v & WRITE_OBSOLETE_FLAG_VERSION == 0);
+
         v == self.cell_version.load(Relaxed)
     }
 
     fn write_lock(&self, read_version: Version) -> Option<Version> {
+        debug_assert!(read_version & WRITE_OBSOLETE_FLAG_VERSION == 0);
+
         match self.cell_version.compare_exchange(
             read_version,
             WRITE_FLAG_VERSION | (read_version + 1),
@@ -86,10 +90,10 @@ impl<E: Default> OptCell<E> {
     }
 
     fn write_unlock(&self, write_version: Version) {
-        debug_assert!(write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
+        debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
         let flag = write_version ^ WRITE_FLAG_VERSION;
-        self.cell_version.store((flag + 1) | READ_FLAG_VERSION, SeqCst)
+        self.cell_version.store(flag | READ_FLAG_VERSION, SeqCst)
     }
 
     pub fn write_obsolete_unlock(&self) {
@@ -152,7 +156,7 @@ impl<'a, E: Default> Default for ConcurrentGuard<'a, E> {
 }
 
 #[repr(u8)]
-#[derive(Default)]
+#[derive(Default)] // Idea: Maybe add invariant here, instead of separation?
 pub enum GuardDerefResult<'a, E: Default> {
     #[default]
     Null,

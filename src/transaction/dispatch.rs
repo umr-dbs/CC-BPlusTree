@@ -70,13 +70,15 @@ impl Index {
                 let key
                     = event.t1();
 
-                let mut guard
+                let (_guard, guard_result)
                     = self.traversal_write(key);
 
                 let version
                     = self.next_version();
 
-                guard.force_mut().unwrap().push_record((event, version).into(), false)
+                debug_assert!(guard_result.assume_mut().is_some());
+
+                guard_result.assume_mut().unwrap().push_record((event, version).into(), false)
                     .then(|| TransactionResult::Inserted(key, version))
                     .unwrap_or(TransactionResult::Error)
             }
@@ -84,13 +86,15 @@ impl Index {
                 let key
                     = event.t1();
 
-                let mut guard
+                let (_guard, guard_result)
                     = self.traversal_write(key);
 
                 let version
                     = self.next_version();
 
-                guard.force_mut().unwrap().push_record((event, version).into(), true)
+                debug_assert!(guard_result.assume_mut().is_some());
+
+                guard_result.assume_mut().unwrap().push_record((event, version).into(), true)
                     .then(|| TransactionResult::Updated(key, version))
                     .unwrap_or(TransactionResult::Error)
             }

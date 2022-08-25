@@ -257,7 +257,7 @@ fn experiment() {
         1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
+        // 10_000_000,
         // 20_000_000,
         // 50_000_000,
         // 100_000_000,
@@ -284,8 +284,8 @@ fn experiment() {
         //
         strategies.push(LockingStrategy::optimistic_custom(
             LevelVariant::new_height_lock(1_f32), attempt));
-        // strategies.push(LockingStrategy::dolos_custom(
-        //     LevelVariant::new_height_lock(1_f32), attempt));
+        strategies.push(LockingStrategy::dolos_custom(
+            LevelVariant::new_height_lock(1_f32), attempt));
     }
 
     let cases = insertions

@@ -76,7 +76,7 @@ impl Index {
                 let version
                     = self.next_version();
 
-                debug_assert!(guard_result.assume_mut().is_some());
+                debug_assert!(guard_result.assume_mut().is_some(), "{}", self.locking_strategy);
 
                 guard_result.assume_mut().unwrap().push_record((event, version).into(), false)
                     .then(|| TransactionResult::Inserted(key, version))

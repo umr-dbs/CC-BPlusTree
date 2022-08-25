@@ -69,11 +69,15 @@ impl<E: Default> OptCell<E> {
     fn is_read_valid(&self, v: Version) -> bool {
         debug_assert!(v & WRITE_OBSOLETE_FLAG_VERSION == 0);
 
-        v == self.cell_version.load(Relaxed)
+        v & WRITE_OBSOLETE_FLAG_VERSION == 0 && v == self.cell_version.load(Relaxed)
     }
 
     fn write_lock(&self, read_version: Version) -> Option<Version> {
         debug_assert!(read_version & WRITE_OBSOLETE_FLAG_VERSION == 0);
+
+        if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+            return None
+        }
 
         match self.cell_version.compare_exchange(
             read_version,
@@ -81,7 +85,7 @@ impl<E: Default> OptCell<E> {
             Acquire,
             Relaxed)
         {
-            Ok(version) => Some(version),
+            Ok(..) => Some(WRITE_FLAG_VERSION | (read_version + 1)),
             Err(..) => {
                 hint::spin_loop();
                 None
@@ -90,13 +94,17 @@ impl<E: Default> OptCell<E> {
     }
 
     fn write_unlock(&self, write_version: Version) {
-        debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
+        debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION >= WRITE_FLAG_VERSION);
 
-        let flag = write_version ^ WRITE_FLAG_VERSION;
-        self.cell_version.store(flag | READ_FLAG_VERSION, SeqCst)
+        if write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION {
+            let flag = write_version ^ WRITE_FLAG_VERSION;
+            self.cell_version.store(flag | READ_FLAG_VERSION, SeqCst)
+        }
     }
 
-    pub fn write_obsolete_unlock(&self) {
+    pub fn write_obsolete(&self) {
+        debug_assert!(self.cell_version.load(Relaxed) & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
+
         self.cell_version.store(WRITE_OBSOLETE_FLAG_VERSION, SeqCst)
     }
 }
@@ -232,6 +240,13 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
             WriteHolder(..) => true,
             ReadHolder((e, latch_version)) if e.is_read_valid(*latch_version) => true,
             _ => false
+        }
+    }
+
+    pub fn obsolete(&self) {
+        match self {
+            WriteHolder(cell) => cell.write_obsolete(),
+            _ => {}
         }
     }
 }

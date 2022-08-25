@@ -1,18 +1,20 @@
+use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
 use mvcc_bplustree::locking::locking_strategy::{Attempts, DEFAULT_OPTIMISTIC_ATTEMPTS, Level, LockingStrategy};
 use mvcc_bplustree::utils::cc_cell::CCCell;
-use crate::index::node::{NodeGuard, NodeRef};
+use crate::index::node::{Node, NodeGuard, NodeGuardResult, NodeRef};
 use crate::index::node_manager::{NodeManager, NodeSettings};
+use crate::utils::un_cell::UnCell;
 use crate::utils::vcc_cell::OptCell;
 use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
 // use serde::{Serialize, Deserialize};
 
 pub(crate) type Index = BPlusTree;
 
-pub(crate) type SharedRoot = NodeRef;
+pub(crate) type SharedRoot = UnCell<NodeRef>;
 
 // #[derive(Serialize, Deserialize)]
 pub struct BPlusTree {
@@ -34,15 +36,42 @@ impl BPlusTree {
     pub(crate) const MAX_TREE_HEIGHT: Level = usize::MAX;
     pub(crate) const START_VERSION: Version = 0;
 
+    pub(crate) fn set_new_root(&self, new_root: Node, old_root_ptr: &mut Node) -> Option<(NodeGuard, NodeGuardResult)> {
+        match self.locking_strategy.is_dolos() {
+            true => {
+                let new_root = new_root.into_node_ref(self.locking_strategy());
+                let mut new_root_guard = self.apply_for(
+                    Self::INIT_TREE_HEIGHT,
+                    Level::MIN,
+                    Attempts::MAX,
+                    Level::MIN,
+                    &new_root);
+
+                let new_root_guard_result
+                    = new_root_guard.try_deref_mut();
+
+                debug_assert!(new_root_guard_result.is_mut());
+
+                let _ = self.root.replace(new_root);
+                // mem::drop(self.root.replace(new_root));
+                Some((new_root_guard, new_root_guard_result))
+            },
+            false => {
+                *old_root_ptr = new_root;
+                None
+            }
+        }
+    }
+
     fn make(node_manager: NodeManager, locking_strategy: LockingStrategy) -> Self {
         let empty_node
             = node_manager.make_empty_root();
 
         Self {
-            root: match locking_strategy.is_dolos() {
+            root: UnCell::new(match locking_strategy.is_dolos() {
                 true => OptimisticCell(Arc::new(OptCell::new(empty_node))),
                 false => ConcurrencyControlCell(Arc::new(CCCell::new(empty_node)))
-            },
+            }),
             locking_strategy,
             node_manager,
             version_manager: AtomicVersion::new(Self::START_VERSION),

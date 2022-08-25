@@ -1,13 +1,9 @@
-use std::mem;
-use std::ops::{Deref, DerefMut};
-use std::ptr::null;
-use std::sync::Arc;
+use std::{mem, ptr};
 use chronicle_db::tools::aliases::Key;
 use mvcc_bplustree::locking::locking_strategy::{Attempts, Level, LockingStrategy};
-use mvcc_bplustree::utils::cc_cell::CCCell;
 use crate::Index;
 use crate::index::node::{Node, NodeGuard, NodeGuardResult, NodeRef};
-use crate::utils::vcc_cell::{ConcurrentCell, GuardDerefResult, OptCell};
+use crate::utils::vcc_cell::GuardDerefResult;
 
 impl Index {
     fn has_overflow(&self, node: &Node) -> bool {
@@ -21,7 +17,7 @@ impl Index {
         let is_root_lock
             = self.locking_strategy.is_lock_root(lock_level, attempt, self.height());
 
-        let (root_guard, mut root_guard_result) = match self.locking_strategy {
+        let (mut root_guard, mut root_guard_result) = match self.locking_strategy {
             LockingStrategy::SingleWriter => {
                 let mut guard
                     = self.root.borrow_free_static();
@@ -30,7 +26,7 @@ impl Index {
                     = guard.try_deref_mut();
 
                 (guard, guard_writer)
-            },
+            }
             LockingStrategy::Dolos(..) if is_root_lock => {
                 let mut guard
                     = self.root.borrow_free_static();
@@ -39,14 +35,14 @@ impl Index {
                     = guard.try_deref_mut();
 
                 if !guard_writer.is_mut() {
-                    mem::drop(guard_writer);
                     mem::drop(guard);
+                    mem::drop(guard_writer);
 
                     return self.retrieve_root(lock_level, attempt + 1);
                 }
 
                 (guard, guard_writer)
-            },
+            }
             LockingStrategy::Dolos(..) => {
                 let guard
                     = self.root.borrow_free_static();
@@ -55,7 +51,7 @@ impl Index {
                     = guard.try_deref();
 
                 (guard, guard_reader)
-            },
+            }
             LockingStrategy::WriteCoupling => {
                 let mut guard
                     = self.root.borrow_mut_exclusive_static();
@@ -64,7 +60,7 @@ impl Index {
                     = guard.try_deref_mut();
 
                 (guard, guard_writer)
-            },
+            }
             LockingStrategy::Optimistic(..) if is_root_lock => {
                 let mut guard
                     = self.root.borrow_mut_static();
@@ -73,7 +69,7 @@ impl Index {
                     = guard.try_deref_mut();
 
                 (guard, guard_writer)
-            },
+            }
             LockingStrategy::Optimistic(..) => {
                 let guard
                     = self.root.borrow_read_static();
@@ -82,7 +78,7 @@ impl Index {
                     = guard.try_deref();
 
                 (guard, guard_reader)
-            },
+            }
         };
 
         let root_deref
@@ -107,7 +103,7 @@ impl Index {
             _ => !is_root_lock
         };
 
-        if force_restart && has_overflow_root {
+        if !root_guard_result.is_valid() || force_restart && has_overflow_root {
             mem::drop(root_guard_result);
             mem::drop(root_guard);
             mem::drop(is_root_lock);
@@ -130,7 +126,6 @@ impl Index {
         let root_mut
             = root_guard_result.assume_mut().unwrap();
 
-        //TODO: introduce a way to mark as obsolete!!
         match root_mut {
             Node::Index(keys, children) => {
                 let keys_mid = keys.len() / 2;
@@ -146,8 +141,14 @@ impl Index {
                     Node::Index(keys.split_off(0), children.split_off(0))
                         .into_node_ref(self.locking_strategy());
 
-                *root_mut
-                    = Node::Index(vec![k3], vec![new_root_left, new_node_right]);
+                self.set_new_root(
+                    Node::Index(vec![k3], vec![new_root_left, new_node_right]),
+                    root_mut,
+                ).map(|(guard, guard_result)| {
+                    root_guard_result.obsolete();
+                    root_guard_result = guard_result;
+                    root_guard = guard;
+                });
             }
             Node::Leaf(records) => {
                 let records_mid = records.len() / 2;
@@ -162,8 +163,14 @@ impl Index {
                 let new_node_left: NodeRef = Node::Leaf(
                     records.split_off(0)).into_node_ref(self.locking_strategy());
 
-                *root_mut
-                    = Node::Index(vec![k3], vec![new_node_left, new_node_right]);
+                self.set_new_root(
+                    Node::Index(vec![k3], vec![new_node_left, new_node_right]),
+                    root_mut,
+                ).map(|(guard, guard_result)| {
+                    root_guard_result.obsolete();
+                    root_guard_result = guard_result;
+                    root_guard = guard;
+                });
             }
             Node::MultiVersionLeaf(records) => {
                 let records_mid = records.len() / 2;
@@ -178,8 +185,14 @@ impl Index {
                 let new_node_left: NodeRef = Node::MultiVersionLeaf(
                     records.split_off(0)).into_node_ref(self.locking_strategy());
 
-                *root_mut
-                    = Node::Index(vec![k3], vec![new_node_left, new_node_right]);
+                self.set_new_root(
+                    Node::Index(vec![k3], vec![new_node_left, new_node_right]),
+                    root_mut,
+                ).map(|(guard, guard_result)| {
+                    root_guard_result.obsolete();
+                    root_guard_result = guard_result;
+                    root_guard = guard;
+                });
             }
         }
 
@@ -326,6 +339,7 @@ impl Index {
                         = next_guard_deref.as_ref();
 
                     if next_guard_deref_as_ref.is_none() {
+                        mem::drop(next_guard_deref_as_ref);
                         mem::drop(current_node_deref);
                         mem::drop(current_guard);
                         mem::drop(next_guard);
@@ -343,29 +357,13 @@ impl Index {
                     let has_overflow_next
                         = self.has_overflow(next_guard_ref);
 
-                    // if self.locking_strategy.additional_lock_required() &&
-                    //     (has_overflow_next ||
-                    //         (is_dolos && (!current_guard.is_valid() || self.has_overflow(current)))) &&
-                    //     (!current_node_deref.can_mut() || !next_guard_deref.can_mut())
-                    // {
-                    //     mem::drop(next_guard_deref);
-                    //     mem::drop(current_node_deref);
-                    //     mem::drop(next_guard);
-                    //     mem::drop(current_guard);
-                    //     mem::drop(next_node);
-                    //
-                    //     return self.traversal_write_internal(
-                    //         curr_level - 1,
-                    //         attempt + 1,
-                    //         key);
-                    // } else
                     if has_overflow_next {
                         if current_node_deref.force_mut().is_none() || next_guard_deref.force_mut().is_none() {
                             mem::drop(next_guard_deref);
-                            mem::drop(current_node_deref);
                             mem::drop(next_guard);
-                            mem::drop(current_guard);
                             mem::drop(next_node);
+                            mem::drop(current_node_deref);
+                            mem::drop(current_guard);
 
                             return self.traversal_write_internal(
                                 curr_level - 1,

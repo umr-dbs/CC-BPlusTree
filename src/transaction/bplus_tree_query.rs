@@ -377,15 +377,11 @@ impl Index {
                             next_guard_deref)
                     } else {
                         current_guard = next_guard;
+                        current_node_deref = next_guard_deref;
                     }
                 }
                 _ => break (current_guard, current_node_deref)
             }
-
-            current_node_deref = match self.locking_strategy.is_lock(curr_level, lock_level, attempt, height) {
-                true => current_guard.try_deref_mut(),
-                false => current_guard.try_deref()
-            };
         }
     }
 

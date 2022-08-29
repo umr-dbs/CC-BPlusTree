@@ -11,7 +11,7 @@ use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticC
 use crate::utils::vcc_cell::ConcurrentGuard::{ConcurrencyControlGuard, OptimisticGuard};
 use crate::utils::vcc_cell::GuardDerefResult::{ReadHolder, Null, Ref, WriteHolder, RefMut};
 
-const OBSOLETE_FLAG_VERSION: Version = 0x8_000000000000000;
+pub const OBSOLETE_FLAG_VERSION: Version = 0x8_000000000000000;
 const WRITE_FLAG_VERSION: Version = 0x4_000000000000000;
 const WRITE_OBSOLETE_FLAG_VERSION: Version = 0xC_000000000000000;
 const READ_FLAG_VERSION: Version = 0x0_000000000000000;
@@ -67,9 +67,11 @@ impl<E: Default> OptCell<E> {
     }
 
     fn is_read_valid(&self, v: Version) -> bool {
-        debug_assert!(v & WRITE_OBSOLETE_FLAG_VERSION == 0);
-
         v & WRITE_OBSOLETE_FLAG_VERSION == 0 && v == self.cell_version.load(Relaxed)
+    }
+
+    fn is_any_valid(&self, v: Version) -> bool {
+        v == self.cell_version.load(Relaxed)
     }
 
     fn write_lock(&self, read_version: Version) -> Option<Version> {
@@ -94,18 +96,32 @@ impl<E: Default> OptCell<E> {
     }
 
     fn write_unlock(&self, write_version: Version) {
-        debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION >= WRITE_FLAG_VERSION);
-
         if write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION {
+            println!("Dropping {} to {}", write_version, write_version ^ WRITE_FLAG_VERSION);
             let flag = write_version ^ WRITE_FLAG_VERSION;
-            self.cell_version.store(flag | READ_FLAG_VERSION, SeqCst)
+            self.cell_version.store(flag | READ_FLAG_VERSION, Relaxed)
         }
     }
 
-    pub fn write_obsolete(&self) {
+    pub fn write_obsolete(&self) -> bool {
+        let write_version = self.cell_version.load(Relaxed);
         debug_assert!(self.cell_version.load(Relaxed) & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store(WRITE_OBSOLETE_FLAG_VERSION, SeqCst)
+        self.cell_version.compare_exchange(
+            write_version,
+            WRITE_OBSOLETE_FLAG_VERSION,
+            Acquire,
+            Relaxed
+        ).is_ok()
+        // self.cell_version.store(WRITE_OBSOLETE_FLAG_VERSION, SeqCst)
+    }
+
+    pub fn is_obsolete(&self) -> bool {
+        self.cell_version.load(Relaxed) & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+    }
+
+    pub fn is_write(&self) -> bool {
+        self.cell_version.load(Relaxed) & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION
     }
 }
 
@@ -192,6 +208,13 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    pub const fn is_optimistic(&self) -> bool {
+        match self {
+            WriteHolder(_) => true,
+            _ => false
+        }
+    }
+
     pub const fn can_mut(&self) -> bool {
         match self {
             RefMut(_) => true,
@@ -224,6 +247,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         self.assume_mut().or_else(|| match self {
             ReadHolder((cell, latch_version)) => match cell.write_lock(*latch_version) {
                 Some(..) => {
+                    debug_assert!(cell.cell_version.load(Relaxed) & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
                     *self = WriteHolder(mem::take(cell));
                     self.assume_mut()
                 },
@@ -243,10 +267,10 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
-    pub fn obsolete(&self) {
+    pub fn mark_obsolete(&self) -> bool {
         match self {
             WriteHolder(cell) => cell.write_obsolete(),
-            _ => {}
+            _ => false
         }
     }
 }
@@ -263,16 +287,16 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     /// Returns true, if the CCCellGuard is locked via mutex or rwlock write lock.
     /// Returns false, otherwise.
     #[inline]
-    pub fn is_write_lock(&self) -> bool {
+    pub fn is_write_lock(&self) -> Option<bool> {
         match self {
             ConcurrencyControlGuard {
                 guard,
                 ..
-            } => guard.is_write_lock(),
+            } => guard.is_write_lock().into(),
             OptimisticGuard {
-                latch_version,
+                // latch_version,
                 ..
-            } => latch_version.get() & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION
+            } => None
         }
     }
 
@@ -288,7 +312,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
             OptimisticGuard {
                 latch_version,
                 ..
-            } => latch_version.get() & WRITE_FLAG_VERSION == 0
+            } => latch_version.get() == READ_FLAG_VERSION
         }
     }
 
@@ -320,7 +344,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
             OptimisticGuard {
                 latch_version,
                 ..
-            } => latch_version.get() & WRITE_FLAG_VERSION == 0
+            } => latch_version.get() == READ_FLAG_VERSION
         }
     }
 
@@ -331,7 +355,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
                 cell,
                 latch_version
             } => cell.upgrade()
-                .map_or(false, |adult| adult.is_read_valid(latch_version.get()))
+                .map_or(false, |adult| adult.is_any_valid(latch_version.get()))
         }
     }
 
@@ -388,12 +412,21 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
         }
     }
 
-    pub fn try_deref_mut(&mut self) -> GuardDerefResult<'a, E> {
+    pub fn try_deref_mut(&self) -> GuardDerefResult<'a, E> {
         match self {
             ConcurrencyControlGuard { guard, .. } => match guard {
-                CCCellGuard::LockFree(e) => RefMut(*e),
-                CCCellGuard::Writer(_, e) => RefMut(*e),
-                CCCellGuard::Exclusive(_, e) => RefMut(*e),
+                CCCellGuard::LockFree(e) => unsafe {
+                    let p: *mut *mut E = mem::transmute(e);
+                    RefMut(*p)
+                },
+                CCCellGuard::Writer(_, e) => unsafe {
+                    let p: *mut *mut E = mem::transmute(e);
+                    RefMut(*p)
+                },
+                CCCellGuard::Exclusive(_, e) => unsafe {
+                    let p: *mut *mut E = mem::transmute(e);
+                    RefMut(*p)
+                },
                 CCCellGuard::Reader(..) => Null,
             }
             OptimisticGuard {

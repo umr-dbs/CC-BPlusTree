@@ -40,7 +40,7 @@ impl BPlusTree {
         match self.locking_strategy.is_dolos() {
             true => {
                 let new_root = new_root.into_node_ref(self.locking_strategy());
-                let mut new_root_guard = self.apply_for(
+                let new_root_guard = self.apply_for(
                     Self::INIT_TREE_HEIGHT,
                     Level::MIN,
                     Attempts::MAX,

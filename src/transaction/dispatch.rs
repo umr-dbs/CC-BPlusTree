@@ -67,6 +67,7 @@ impl Index {
         match transaction {
             Transaction::Empty => TransactionResult::Error,
             Transaction::Insert(event) => {
+                println!("Inserting Event = {}", event);
                 let key
                     = event.t1();
 

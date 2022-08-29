@@ -1,5 +1,7 @@
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use chronicle_db::tools::aliases::Keys;
+use itertools::Itertools;
 use mvcc_bplustree::index::record::Record;
 use mvcc_bplustree::locking::locking_strategy::LockingStrategy;
 use mvcc_bplustree::utils::cc_cell::CCCell;
@@ -57,12 +59,28 @@ pub(crate) enum Node {
     MultiVersionLeaf(Vec<RecordList>),
 }
 
+impl Display for Node {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Node::Index(keys, children) =>
+                write!(f, "Index(key: {:?}, Children: {}", keys, children.len()),
+            Node::Leaf(records) => write!(f, "Leaf({})", records
+                .iter()
+                .join("")),
+            Node::MultiVersionLeaf(record_lists) =>
+                write!(f, "MultiVersionLeaf({})", record_lists
+                    .iter()
+                    .flat_map(|record_list| record_list.as_records())
+                    .join(","))
+        }
+    }
+}
+
 impl Node {
     pub fn into_node_ref(self, locking_strategy: &LockingStrategy) -> NodeRef {
         if locking_strategy.is_dolos() {
             ConcurrentCell::OptimisticCell(Arc::new(OptCell::new(self)))
-        }
-        else {
+        } else {
             ConcurrentCell::ConcurrencyControlCell(Arc::new(CCCell::new(self)))
         }
     }

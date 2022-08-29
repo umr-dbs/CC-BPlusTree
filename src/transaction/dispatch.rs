@@ -100,10 +100,10 @@ impl Index {
                     .unwrap_or(TransactionResult::Error)
             }
             Transaction::ExactSearch(key, version) => {
-                let guard
+                let (_guard, guard_result)
                     = self.traversal_read(key);
 
-                match guard.as_ref().unwrap() {
+                match guard_result.as_ref().unwrap() {
                     Node::Leaf(records) => records
                         .iter()
                         .find(|record| record.key() == key)
@@ -119,10 +119,10 @@ impl Index {
                 }
             }
             Transaction::ExactSearchLatest(key) => {
-                let guard
+                let (_guard, guard_result)
                     = self.traversal_read(key);
 
-                match guard.as_ref().unwrap() {
+                match guard_result.as_ref().unwrap() {
                     Node::Leaf(records) => records
                         .iter()
                         .rev()

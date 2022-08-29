@@ -1,12 +1,13 @@
 use std::cell::Cell;
 use std::{hint, mem};
-use std::ops::{Deref, DerefMut};
+use std::fmt::{Display, Formatter};
+use std::ops::Deref;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use std::sync::{Arc, Weak};
 use chronicle_db::tools::safe_cell::SafeCell;
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
+use mvcc_bplustree::locking::locking_strategy::Attempts;
 use mvcc_bplustree::utils::cc_cell::{CCCell, CCCellGuard};
-use crate::index::node::NodeRef;
 use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
 use crate::utils::vcc_cell::ConcurrentGuard::{ConcurrencyControlGuard, OptimisticGuard};
 use crate::utils::vcc_cell::GuardDerefResult::{ReadHolder, Null, Ref, WriteHolder, RefMut};
@@ -24,6 +25,14 @@ const READ_FLAG_VERSION: Version = 0x0_000000000000000;
 // const LOCKING_BITS_OFFSET: Version = 2;
 // const VERSIONING_COUNTER_BITS: Version = (8 * mem::size_of::<Version>() as Version) - READERS_NUM_BITS - LOCKING_BITS_OFFSET;
 
+pub(crate) fn sched_yield(attempt: Attempts) {
+    if attempt > 3 {
+        unsafe { libc::sched_yield(); }
+    } else {
+        hint::spin_loop();
+    }
+}
+
 pub type ConcurrencyCell<E> = CCCell<E>;
 pub type LatchVersion = Version;
 
@@ -35,6 +44,13 @@ pub struct OptCell<E: Default> {
     cell: SafeCell<E>,
     cell_version: AtomicVersion,
 }
+
+impl<E: Default + Display> Display for OptCell<E> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OptCell {{\ncell: {}\n\t\tcell_version: {}\n\t}}", self.cell.get_mut(), self.load_version())
+    }
+}
+
 
 impl<E: Default> Default for OptCell<E> {
     fn default() -> Self {
@@ -66,19 +82,14 @@ impl<E: Default> OptCell<E> {
         }
     }
 
-    fn is_read_valid(&self, v: Version) -> bool {
-        v & WRITE_OBSOLETE_FLAG_VERSION == 0 && v == self.cell_version.load(Relaxed)
-    }
-
     fn is_any_valid(&self, v: Version) -> bool {
-        v == self.cell_version.load(Relaxed)
+        let load = self.load_version();
+        v == load && load & OBSOLETE_FLAG_VERSION == 0
     }
 
     fn write_lock(&self, read_version: Version) -> Option<Version> {
-        debug_assert!(read_version & WRITE_OBSOLETE_FLAG_VERSION == 0);
-
         if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
-            return None
+            return None;
         }
 
         match self.cell_version.compare_exchange(
@@ -95,29 +106,30 @@ impl<E: Default> OptCell<E> {
         }
     }
 
-    fn write_unlock(&self, write_version: Version) {
-        if write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION {
+    fn write_unlock(&self) {
+        let write_version = self.load_version();
+        if write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION {
             println!("Dropping {} to {}", write_version, write_version ^ WRITE_FLAG_VERSION);
             let flag = write_version ^ WRITE_FLAG_VERSION;
-            self.cell_version.store(flag | READ_FLAG_VERSION, Relaxed)
+            self.cell_version.store(flag | READ_FLAG_VERSION, SeqCst)
         }
     }
 
     pub fn write_obsolete(&self) -> bool {
-        let write_version = self.cell_version.load(Relaxed);
-        debug_assert!(self.cell_version.load(Relaxed) & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
+        let write_version = self.load_version();
+        debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
         self.cell_version.compare_exchange(
             write_version,
-            WRITE_OBSOLETE_FLAG_VERSION,
+            OBSOLETE_FLAG_VERSION | write_version,
             Acquire,
-            Relaxed
+            Relaxed,
         ).is_ok()
-        // self.cell_version.store(WRITE_OBSOLETE_FLAG_VERSION, SeqCst)
     }
 
     pub fn is_obsolete(&self) -> bool {
-        self.cell_version.load(Relaxed) & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+        self.load_version() & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+        // self.cell_version.load(Relaxed) & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
     }
 
     pub fn is_write(&self) -> bool {
@@ -130,6 +142,17 @@ impl<E: Default> OptCell<E> {
 pub enum ConcurrentCell<E: Default> {
     ConcurrencyControlCell(Arc<CCCell<E>>),
     OptimisticCell(Arc<OptCell<E>>),
+}
+
+impl<E: Default + Display> Display for ConcurrentCell<E> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConcurrencyControlCell(cell) =>
+                write!(f, "ConcurrencyControlCell(CCCell({}))", cell.unsafe_borrow()),
+            OptimisticCell(cell) =>
+                write!(f, "OptimisticCell({})", cell)
+        }
+    }
 }
 
 impl<E: Default> Default for ConcurrentCell<E> {
@@ -193,7 +216,7 @@ pub enum GuardDerefResult<'a, E: Default> {
 impl<'a, E: Default> Drop for GuardDerefResult<'a, E> {
     fn drop(&mut self) {
         match self {
-            WriteHolder(cell) => cell.write_unlock(cell.load_version()),
+            WriteHolder(cell) => cell.write_unlock(),
             _ => {}
         }
     }
@@ -208,7 +231,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
-    pub const fn is_optimistic(&self) -> bool {
+    pub const fn is_optimistic_write(&self) -> bool {
         match self {
             WriteHolder(_) => true,
             _ => false
@@ -229,7 +252,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
             Ref(e) => Some(e),
             RefMut(e) => unsafe { e.as_ref() },
             WriteHolder(e) => Some(e.cell.deref()),
-            ReadHolder((e, latch_version)) if e.is_read_valid(*latch_version) =>
+            ReadHolder((e, latch_version)) if e.is_any_valid(*latch_version) =>
                 Some(e.cell.deref()),
             _ => None
         }
@@ -245,14 +268,15 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
 
     pub fn force_mut(&mut self) -> Option<&'a mut E> {
         self.assume_mut().or_else(|| match self {
-            ReadHolder((cell, latch_version)) => match cell.write_lock(*latch_version) {
-                Some(..) => {
-                    debug_assert!(cell.cell_version.load(Relaxed) & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
-                    *self = WriteHolder(mem::take(cell));
-                    self.assume_mut()
-                },
-                _ => None
-            }
+            ReadHolder((cell, ..)) =>
+                match cell.write_lock(cell.load_version()) {
+                    Some(..) => {
+                        debug_assert!(cell.cell_version.load(Relaxed) & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
+                        *self = WriteHolder(mem::take(cell));
+                        self.assume_mut()
+                    }
+                    _ => None
+                }
             _ => None
         })
     }
@@ -262,7 +286,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
             Ref(..) => true,
             RefMut(..) => true,
             WriteHolder(..) => true,
-            ReadHolder((e, latch_version)) if e.is_read_valid(*latch_version) => true,
+            ReadHolder((e, latch_version)) if e.is_any_valid(*latch_version) => true,
             _ => false
         }
     }
@@ -397,13 +421,16 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
                 cell,
                 latch_version
             } => match cell.upgrade() {
+                Some(adult) if adult.is_any_valid(latch_version.get()) =>
+                    ReadHolder((adult, latch_version.get())),
                 Some(adult) => {
                     let (can_read, read_version)
                         = adult.read_lock();
 
-                    if !can_read || read_version != latch_version.get() {
+                    if !can_read {
                         Null
                     } else {
+                        latch_version.replace(read_version);
                         ReadHolder((adult, read_version))
                     }
                 }
@@ -433,11 +460,13 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
                 cell,
                 latch_version
             } => match cell.upgrade() {
+                Some(adult) if latch_version.get() & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION =>
+                    WriteHolder(adult),
                 Some(adult) => {
                     let (can_read, read_version)
                         = adult.read_lock();
 
-                    if !can_read || read_version != latch_version.get() {
+                    if !can_read {
                         Null
                     } else {
                         match adult.write_lock(read_version) {

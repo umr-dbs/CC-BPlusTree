@@ -1,4 +1,5 @@
 use std::cell::UnsafeCell;
+use std::fmt::{Display, Formatter};
 use std::mem;
 use std::ops::{Deref, DerefMut};
 
@@ -14,6 +15,12 @@ use std::ops::{Deref, DerefMut};
 #[derive(Default)]
 pub struct UnCell<E: Default> {
     inner: UnsafeCell<E>
+}
+
+impl<E: Default + Display> Display for UnCell<E> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "UnCell({})", self.get_mut())
+    }
 }
 
 /// Impl. Block for SafeCell and for all E.

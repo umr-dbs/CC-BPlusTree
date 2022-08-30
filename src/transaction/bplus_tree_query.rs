@@ -23,16 +23,16 @@ impl Index {
                     = self.root.borrow_free_static();
 
                 let guard_writer
-                    = guard.try_deref_mut();
+                    = guard.guard_deref();
 
                 (guard, guard_writer)
             }
             LockingStrategy::Dolos(..) if is_root_lock => {
                 let mut guard
-                    = self.root.borrow_free_static();
+                    = self.root.borrow_mut_static();
 
                 let mut guard_writer
-                    = guard.try_deref_mut();
+                    = guard.guard_deref();
 
                 let mut attempt = attempt;
                 while !guard_writer.is_mut() {
@@ -40,8 +40,11 @@ impl Index {
                     mem::drop(guard_writer);
                     mem::drop(guard);
 
-                    guard = self.root.borrow_free_static();
-                    guard_writer = guard.try_deref_mut();
+                    if attempt > 10000 {
+                        let x = 1231;
+                    }
+                    guard = self.root.borrow_mut_static();
+                    guard_writer = guard.guard_deref();
 
                     sched_yield(attempt);
                     println!("1 \tAttempt = {}", attempt);
@@ -54,7 +57,7 @@ impl Index {
                     = self.root.borrow_free_static();
 
                 let guard_reader
-                    = guard.try_deref();
+                    = guard.guard_deref();
 
                 (guard, guard_reader)
             }
@@ -63,7 +66,7 @@ impl Index {
                     = self.root.borrow_mut_exclusive_static();
 
                 let guard_writer
-                    = guard.try_deref_mut();
+                    = guard.guard_deref();
 
                 (guard, guard_writer)
             }
@@ -72,7 +75,7 @@ impl Index {
                     = self.root.borrow_mut_static();
 
                 let guard_writer
-                    = guard.try_deref_mut();
+                    = guard.guard_deref();
 
                 (guard, guard_writer)
             }
@@ -81,7 +84,7 @@ impl Index {
                     = self.root.borrow_read_static();
 
                 let guard_reader
-                    = guard.try_deref();
+                    = guard.guard_deref();
 
                 (guard, guard_reader)
             }
@@ -123,7 +126,7 @@ impl Index {
             return (root_guard, root_guard_result);
         }
 
-        if root_guard_result.force_mut().is_none() {
+        if !root_guard.is_write_lock() {
             mem::drop(root_guard_result);
             mem::drop(root_guard);
             mem::drop(is_root_lock);
@@ -132,12 +135,12 @@ impl Index {
             return self.retrieve_root(lock_level, attempt + 1);
         }
 
-        let (_holder, root_mut) = match root_guard_result.is_optimistic_write() {
+        let (_holder, root_mut) = match root_guard_result.is_mut_optimistic() {
             true => {
                 root_guard_result.mark_obsolete();
-
                 let mut data_copy = root_guard_result.assume_mut().cloned().unwrap();
                 let mut_data: &mut Node = unsafe { mem::transmute(&mut data_copy) };
+
                 (Some(data_copy), mut_data)
             }
             false => (None, root_guard_result.assume_mut().unwrap())
@@ -221,13 +224,17 @@ impl Index {
         child_pos: usize,
         from_guard: GuardDerefResult<Node>)
     {
-        let (_holder, from_node_deref) = match from_guard.is_optimistic_write() {
+        let (_holder, from_node_deref) = match from_guard.is_mut_optimistic() {
             true => {
                 debug_assert!(from_guard.assume_mut().is_some());
+                debug_assert!(parent_guard.assume_mut().is_some());
+                debug_assert!(from_guard.is_valid());
+
+                from_guard.mark_obsolete();
+
                 let mut data_copy = from_guard.assume_mut().cloned().unwrap();
                 let mut_data: &mut Node = unsafe { mem::transmute(&mut data_copy) };
 
-                from_guard.mark_obsolete();
                 (Some(data_copy), mut_data)
             }
             false => (None, from_guard.assume_mut().unwrap())
@@ -240,7 +247,8 @@ impl Index {
                 let new_keys = keys.split_off(keys_mid + 1);
                 keys.pop();
                 let new_children = children.split_off(keys_mid + 1);
-                let new_node: NodeRef = Node::Index(new_keys, new_children).into_node_ref(self.locking_strategy());
+                let new_node: NodeRef = Node::Index(new_keys, new_children)
+                    .into_node_ref(self.locking_strategy());
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
@@ -254,8 +262,6 @@ impl Index {
                     .keys_mut()
                     .unwrap()
                     .insert(child_pos, k3);
-
-                mem::drop(from_guard);
             }
             Node::Leaf(records) => {
                 let records_mid = records.len() / 2;
@@ -264,8 +270,8 @@ impl Index {
                     .unwrap()
                     .key();
 
-                let new_node: NodeRef = Node::Leaf(
-                    records.split_off(records_mid), ).into_node_ref(self.locking_strategy());
+                let new_node: NodeRef = Node::Leaf(records.split_off(records_mid), )
+                    .into_node_ref(self.locking_strategy());
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
@@ -279,8 +285,6 @@ impl Index {
                     .keys_mut()
                     .unwrap()
                     .insert(child_pos, k3);
-
-                mem::drop(from_guard);
             }
             Node::MultiVersionLeaf(records) => {
                 let records_mid = records.len() / 2;
@@ -289,8 +293,8 @@ impl Index {
                     .unwrap()
                     .key();
 
-                let new_node: NodeRef = Node::MultiVersionLeaf(
-                    records.split_off(records_mid), ).into_node_ref(self.locking_strategy());
+                let new_node: NodeRef = Node::MultiVersionLeaf(records.split_off(records_mid), )
+                    .into_node_ref(self.locking_strategy());
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
@@ -304,13 +308,13 @@ impl Index {
                     .keys_mut()
                     .unwrap()
                     .insert(child_pos, k3);
-
-                mem::drop(from_guard);
             }
         }
     }
 
-    fn traversal_write_internal(&self, lock_level: Level, attempt: Attempts, key: Key) -> (NodeGuard, NodeGuardResult) {
+    fn traversal_write_internal(&self, lock_level: Level, attempt: Attempts, key: Key)
+        -> Result<NodeGuard, (Level, Attempts)>
+    {
         let mut curr_level = Self::INIT_TREE_HEIGHT;
 
         let (mut current_guard, mut current_node_deref)
@@ -329,11 +333,8 @@ impl Index {
                 mem::drop(current_guard);
 
                 println!("5 \tAttempt = {}", attempt);
-                sched_yield(attempt);
-                return self.traversal_write_internal(
-                    curr_level - 1,
-                    attempt + 1,
-                    key);
+
+                return Err((curr_level - 1, attempt + 1));
             }
 
             let current
@@ -350,20 +351,15 @@ impl Index {
 
                     curr_level += 1;
 
-                    let next_guard = self.apply_for(
+                    let mut next_guard = self.apply_for(
                         curr_level,
                         lock_level,
                         attempt,
                         height,
                         &next_node);
 
-                    let mut next_guard_deref = match self
-                        .locking_strategy
-                        .is_lock(curr_level, lock_level, attempt, height)
-                    {
-                        true => next_guard.try_deref_mut(),
-                        false => next_guard.try_deref()
-                    };
+                    let next_guard_deref
+                        = next_guard.guard_deref();
 
                     let next_guard_deref_as_ref
                         = next_guard_deref.as_ref();
@@ -378,15 +374,7 @@ impl Index {
 
                         println!("6 \tAttempt = {}", attempt);
 
-                        if attempt > 50000 {
-                            let x = 13123;
-                        }
-
-                        sched_yield(attempt);
-                        return self.traversal_write_internal(
-                            curr_level - 1,
-                            attempt + 1,
-                            key);
+                        return Err((curr_level - 1, attempt + 1));
                     }
 
                     let next_guard_ref
@@ -396,7 +384,9 @@ impl Index {
                         = self.has_overflow(next_guard_ref);
 
                     if has_overflow_next {
-                        if current_node_deref.force_mut().is_none() || next_guard_deref.force_mut().is_none() {
+                        if self.locking_strategy.additional_lock_required() &&
+                          (!current_guard.upgrade_write_lock() || !next_guard.upgrade_write_lock())
+                        {
                             mem::drop(height);
                             mem::drop(next_guard_deref);
                             mem::drop(next_guard);
@@ -405,49 +395,49 @@ impl Index {
                             mem::drop(current_guard);
 
                             println!("7 \tAttempt = {}", attempt);
-                            sched_yield(attempt);
-                            return self.traversal_write_internal(
-                                curr_level - 1,
-                                attempt + 1,
-                                key);
+
+                            return Err((curr_level - 1, attempt + 1));
                         }
 
+                        debug_assert!(current_guard.is_write_lock() && next_guard.is_write_lock());
                         self.do_overflow_correction(
-                            &current_node_deref,
+                            &current_guard.guard_deref(),
                             child_pos,
-                            next_guard_deref)
+                            next_guard.guard_deref())
                     } else {
                         current_node_deref = next_guard_deref;
                         current_guard = next_guard;
                     }
                 }
-                _ if current_node_deref.is_mut() => break (current_guard, current_node_deref),
-                _ => if current_node_deref.force_mut().is_none() ||
-                        self.has_overflow(current_node_deref.as_ref().unwrap())
-                {
+                _ if current_node_deref.is_mut() => return Ok(current_guard),
+                _ => return if !current_guard.upgrade_write_lock() { // is_leaf
                     mem::drop(height);
                     mem::drop(current_node_deref);
                     mem::drop(current_guard);
 
                     println!("8 \tAttempt = {}", attempt);
-                    sched_yield(attempt);
-                    return self.traversal_write_internal(
-                        curr_level - 1,
-                        attempt + 1,
-                        key);
-                }
-                else {
-                    break (current_guard, current_node_deref)
+
+                    Err((curr_level - 1, attempt + 1))
+                } else {
+                    Ok(current_guard)
                 }
             }
         }
     }
 
-    pub(crate) fn traversal_write(&self, key: Key) -> (NodeGuard, NodeGuardResult) {
-        self.traversal_write_internal(
-            Self::MAX_TREE_HEIGHT,
-            mvcc_bplustree::locking::locking_strategy::ATTEMPT_START,
-            key)
+    pub(crate) fn traversal_write(&self, key: Key) -> NodeGuard {
+        let mut attempt = ATTEMPT_START;
+        let mut lock_level = Self::MAX_TREE_HEIGHT;
+
+        loop {
+            match self.traversal_write_internal(lock_level, attempt, key) {
+                Err((n_lock_level, n_attempt)) => {
+                    attempt = n_attempt;
+                    lock_level = n_lock_level;
+                }
+                Ok(guard) => break guard,
+            }
+        }
     }
 
     pub(crate) fn traversal_read_internal(&self, key: Key, attempt: Attempts) -> (NodeGuard, NodeGuardResult) {
@@ -456,7 +446,7 @@ impl Index {
 
         loop {
             let current_deref_result
-                = current_guard.try_deref();
+                = current_guard.guard_deref();
 
             let current
                 = current_deref_result.as_ref();

@@ -48,7 +48,7 @@ impl BPlusTree {
                     &new_root);
 
                 let new_root_guard_result
-                    = new_root_guard.try_deref_mut();
+                    = new_root_guard.guard_deref();
 
                 debug_assert!(new_root_guard_result.is_mut());
 
@@ -150,9 +150,7 @@ impl BPlusTree {
     pub(crate) fn lock_reader(&self, node: &NodeRef) -> NodeGuard {
         match self.locking_strategy {
             LockingStrategy::SingleWriter => node.borrow_free_static(),
-            LockingStrategy::WriteCoupling => node.borrow_read_static(),
-            LockingStrategy::Optimistic(..) => node.borrow_read_static(),
-            LockingStrategy::Dolos(..) => node.borrow_free_static(),
+            _ => node.borrow_read_static(),
         }
     }
 
@@ -166,9 +164,9 @@ impl BPlusTree {
             LockingStrategy::Optimistic(lock_level, attempts)
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut_static(),
-            // LockingStrategy::Dolos(lock_level, attempts)
-            // if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-            //     block_cc.borrow_free_static(),
+            LockingStrategy::Dolos(lock_level, attempts)
+            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
+                block_cc.borrow_mut_static(),
             LockingStrategy::Optimistic(..) =>
                 block_cc.borrow_read_static(),
             LockingStrategy::Dolos(..) =>

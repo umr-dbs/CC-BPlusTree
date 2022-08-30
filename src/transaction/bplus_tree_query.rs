@@ -99,6 +99,8 @@ impl Index {
             mem::drop(is_root_lock);
 
             println!("2 \tAttempt = {}", attempt);
+
+            sched_yield(attempt);
             return self.retrieve_root(lock_level, attempt + 1);
         }
 
@@ -113,12 +115,14 @@ impl Index {
             _ => !is_root_lock
         };
 
-        if !root_guard_result.is_valid() || force_restart && has_overflow_root {
+        if !root_guard.is_valid() || force_restart && has_overflow_root {
             mem::drop(root_guard_result);
             mem::drop(root_guard);
             mem::drop(is_root_lock);
 
             println!("3 \tAttempt = {}", attempt);
+
+            sched_yield(attempt);
             return self.retrieve_root(lock_level, attempt + 1);
         }
 
@@ -132,6 +136,8 @@ impl Index {
             mem::drop(is_root_lock);
 
             println!("4 \tAttempt = {}", attempt);
+
+            sched_yield(attempt);
             return self.retrieve_root(lock_level, attempt + 1);
         }
 
@@ -220,7 +226,7 @@ impl Index {
 
     fn do_overflow_correction(
         &self,
-        parent_guard: &GuardDerefResult<Node>,
+        parent_guard: GuardDerefResult<Node>,
         child_pos: usize,
         from_guard: GuardDerefResult<Node>)
     {
@@ -228,9 +234,8 @@ impl Index {
             true => {
                 debug_assert!(from_guard.assume_mut().is_some());
                 debug_assert!(parent_guard.assume_mut().is_some());
-                debug_assert!(from_guard.is_valid());
 
-                from_guard.mark_obsolete();
+                // from_guard.mark_obsolete();
 
                 let mut data_copy = from_guard.assume_mut().cloned().unwrap();
                 let mut_data: &mut Node = unsafe { mem::transmute(&mut data_copy) };
@@ -401,7 +406,7 @@ impl Index {
 
                         debug_assert!(current_guard.is_write_lock() && next_guard.is_write_lock());
                         self.do_overflow_correction(
-                            &current_guard.guard_deref(),
+                            current_guard.guard_deref(),
                             child_pos,
                             next_guard.guard_deref())
                     } else {
@@ -434,6 +439,8 @@ impl Index {
                 Err((n_lock_level, n_attempt)) => {
                     attempt = n_attempt;
                     lock_level = n_lock_level;
+
+                    sched_yield(attempt);
                 }
                 Ok(guard) => break guard,
             }

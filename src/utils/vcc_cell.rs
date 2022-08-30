@@ -189,7 +189,7 @@ pub enum ConcurrentGuard<'a, E: Default + 'a> {
         guard: CCCellGuard<'a, E>,
     },
     OptimisticGuard {
-        cell: Arc<OptCell<E>>,
+        cell: Option<Arc<OptCell<E>>>,
         guard_deref: GuardDerefResult<'a, E>,
     },
 }
@@ -226,8 +226,8 @@ pub enum GuardDerefResult<'a, E: Default> {
     Null,
     Ref(&'a E),
     RefMut(*mut E),
-    ReadHolder((Arc<OptCell<E>>, LatchVersion)),
-    WriteHolder(Arc<OptCell<E>>),
+    ReadHolder((&'a OptCell<E>, Cell<LatchVersion>)),
+    WriteHolder(&'a OptCell<E>),
 }
 
 impl<'a, E: Default> Clone for GuardDerefResult<'a, E> {
@@ -236,8 +236,8 @@ impl<'a, E: Default> Clone for GuardDerefResult<'a, E> {
             Null => Null,
             Ref(e) => Ref(*e),
             RefMut(e) => RefMut(*e),
-            ReadHolder((e, latch_version)) => ReadHolder((e.clone(), *latch_version)),
-            WriteHolder(cell) => WriteHolder(cell.clone())
+            ReadHolder((e, latch_version)) => ReadHolder((*e, latch_version.clone())),
+            WriteHolder(cell) => WriteHolder(*cell)
         }
     }
 }
@@ -273,11 +273,11 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
-    pub const fn can_mut(&self) -> bool {
+    pub fn can_mut(&self) -> bool {
         match self {
             RefMut(_) => true,
             WriteHolder(_) => true,
-            ReadHolder(..) => true,
+            ReadHolder((cell, latch_version)) => cell.is_read_valid(latch_version.get()),
             _ => false,
         }
     }
@@ -287,7 +287,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
             Ref(e) => Some(e),
             RefMut(e) => unsafe { e.as_ref() },
             WriteHolder(e) => Some(e.cell.deref()),
-            ReadHolder((e, latch_version)) if e.is_read_valid(*latch_version) =>
+            ReadHolder((e, latch_version)) if e.is_read_valid(latch_version.get()) =>
                 Some(e.cell.deref()),
             _ => None
         }
@@ -296,7 +296,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
     pub fn assume_mut(&self) -> Option<&'a mut E> {
         match self {
             RefMut(e) => unsafe { e.as_mut() },
-            WriteHolder(e) => Some(unsafe { mem::transmute(e.cell.get_mut()) }),
+            WriteHolder(e) => Some(e.cell.get_mut()),
             _ => None
         }
     }
@@ -304,10 +304,10 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
     fn force_mut(&mut self) -> Option<&'a mut E> {
         self.assume_mut().or_else(|| match self {
             ReadHolder((cell, latch_version)) =>
-                match cell.write_lock(*latch_version) {
+                match cell.write_lock(latch_version.get()) {
                     Some(..) => {
                         debug_assert!(cell.cell_version.load(Relaxed) & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
-                        *self = WriteHolder(mem::take(cell));
+                        *self = WriteHolder(*cell);
                         self.assume_mut()
                     }
                     _ => None
@@ -316,15 +316,15 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         })
     }
 
-    pub fn is_valid(&self) -> bool {
-        match self {
-            Ref(..) => true,
-            RefMut(..) => true,
-            WriteHolder(..) => true,
-            ReadHolder((e, latch_version)) if e.is_any_valid(*latch_version) => true,
-            _ => false
-        }
-    }
+    // pub fn is_valid(&self) -> bool {
+    //     match self {
+    //         Ref(..) => true,
+    //         RefMut(..) => true,
+    //         WriteHolder(..) => true,
+    //         ReadHolder((e, latch_version)) if e.is_any_valid(*latch_version) => true,
+    //         _ => false
+    //     }
+    // }
 
     pub fn mark_obsolete(&self) {
         match self {
@@ -345,6 +345,17 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
         }
     }
 
+    pub fn is_valid(&self) -> bool {
+        match self {
+            ConcurrencyControlGuard { .. } => true,
+            OptimisticGuard {
+                cell: Some(cell),
+                ..
+            } => !cell.is_obsolete(),
+            _ => false
+        }
+    }
+
     #[inline(always)]
     pub const fn boxed(cell: Arc<CCCell<E>>, guard: CCCellGuard<'a, E>) -> Self {
         ConcurrencyControlGuard {
@@ -352,11 +363,6 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
             cell,
         }
     }
-
-    // pub fn force_mut(&mut self) -> Option<&'a mut E> {
-    //     let mut guard_deref = self.guard_deref();
-    //     guard_deref.assume_mut()
-    // }
 
     /// Returns true, if the CCCellGuard is locked via mutex or rwlock write lock.
     /// Returns false, otherwise.
@@ -422,7 +428,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
         }
     }
 
-    pub fn guard_deref(&self) -> GuardDerefResult<'a, E> {
+    pub fn guard_deref(&self) -> GuardDerefResult<'a, E> { // TODO: Add result as field to reference
         match self {
             ConcurrencyControlGuard { guard, .. } => match guard {
                 CCCellGuard::Reader(_, e) => Ref(*e),
@@ -439,7 +445,23 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
                     RefMut(*p)
                 },
             },
-            OptimisticGuard { guard_deref: guard, .. } => guard.clone()
+            OptimisticGuard {
+                guard_deref: ReadHolder((cell, latch_version)),
+                ..
+            } if cell.is_read_valid(latch_version.get()) => ReadHolder((cell, latch_version.clone())),
+            OptimisticGuard {
+                guard_deref: ReadHolder((cell, latch_version)),
+                ..
+            } => {
+                let (can_read, read_version) = cell.read_lock();
+                if can_read {
+                    latch_version.replace(read_version);
+                    ReadHolder((cell, latch_version.clone()))
+                } else {
+                    Null
+                }
+            }
+            _ => Null
         }
     }
 
@@ -483,12 +505,12 @@ impl<'a, E: Default + 'a> ConcurrentCell<E> {
 
                 match can_read {
                     false => OptimisticGuard {
-                        cell: cell.clone(),
+                        cell: None,
                         guard_deref: Null,
                     },
                     true => OptimisticGuard {
-                        cell: cell.clone(),
-                        guard_deref: ReadHolder((cell.clone(), read_version)),
+                        cell: Some(cell.clone()),
+                        guard_deref: ReadHolder((cell.as_ref(), Cell::new(read_version))),
                     }
                 }
             }
@@ -505,17 +527,17 @@ impl<'a, E: Default + 'a> ConcurrentCell<E> {
 
                 match can_read {
                     false => OptimisticGuard {
-                        cell: cell.clone(),
+                        cell: None,
                         guard_deref: Null,
                     },
                     true => match cell.write_lock(read_version) {
                         None => OptimisticGuard {
-                            cell: cell.clone(),
+                            cell: None,
                             guard_deref: Null,
                         },
                         Some(..) => OptimisticGuard {
-                            cell: cell.clone(),
-                            guard_deref: WriteHolder(cell.clone()),
+                            cell: Some(cell.clone()),
+                            guard_deref: WriteHolder(cell.as_ref()),
                         }
                     }
                 }

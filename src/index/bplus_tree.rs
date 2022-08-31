@@ -36,7 +36,7 @@ impl BPlusTree {
     pub(crate) const MAX_TREE_HEIGHT: Level = usize::MAX;
     pub(crate) const START_VERSION: Version = 0;
 
-    pub(crate) fn set_new_root(&self, new_root: Node, old_root_ptr: &mut Node) -> Option<(NodeGuard, NodeGuardResult)> {
+    pub(crate) fn set_new_root(&self, new_root: Node, old_root_ptr: &mut Node) -> Option<NodeGuard> {
         match self.locking_strategy.is_dolos() {
             true => {
                 let new_root = new_root.into_node_ref(self.locking_strategy());
@@ -45,16 +45,13 @@ impl BPlusTree {
                     Level::MIN,
                     Attempts::MAX,
                     Level::MIN,
-                    &new_root);
+                    new_root.clone());
 
-                let new_root_guard_result
-                    = new_root_guard.guard_deref();
-
-                debug_assert!(new_root_guard_result.is_mut());
+                debug_assert!(new_root_guard.is_write_lock());
 
                 let _ = self.root.replace(new_root);
                 // mem::drop(self.root.replace(new_root));
-                Some((new_root_guard, new_root_guard_result))
+                Some(new_root_guard)
             },
             false => {
                 *old_root_ptr = new_root;
@@ -155,7 +152,7 @@ impl BPlusTree {
     }
 
     #[inline]
-    pub(crate) fn apply_for(&self, curr_level: Level, max_level: Level, attempt: Attempts, height: Level, block_cc: &NodeRef) -> NodeGuard {
+    pub(crate) fn apply_for(&self, curr_level: Level, max_level: Level, attempt: Attempts, height: Level, block_cc: NodeRef) -> NodeGuard {
         match self.locking_strategy() {
             LockingStrategy::SingleWriter =>
                 block_cc.borrow_free_static(),

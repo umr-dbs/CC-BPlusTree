@@ -47,6 +47,12 @@ impl<E: Default> UnCell<E> {
     pub fn get_mut(&self) -> &mut E {
         unsafe { &mut *self.inner.get() }
     }
+
+    /// Unsafely gets the wrapped object as an immutable reference.
+    #[inline]
+    pub fn get(&self) -> &E {
+        unsafe { &*self.inner.get() }
+    }
 }
 
 /// Implements AsRef for SafeCell.

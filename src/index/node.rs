@@ -98,6 +98,18 @@ impl Node {
         }
     }
 
+    pub(crate) fn truncate(&mut self) {
+        match self {
+            Node::Index(keys, children) => {
+                let len = keys.len() / 2;
+                keys.truncate(len + 1);
+                children.truncate(len + 2);
+            }
+            Node::Leaf(records) => records.truncate(records.len() / 2),
+            Node::MultiVersionLeaf(records) => records.truncate(records.len() / 2),
+        }
+    }
+
     pub(crate) fn children_mut(&mut self) -> Option<&mut Vec<NodeRef>> {
         match self {
             Node::Index(_, children) => Some(children),

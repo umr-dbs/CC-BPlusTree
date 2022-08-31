@@ -67,7 +67,7 @@ impl Index {
         match transaction {
             Transaction::Empty => TransactionResult::Error,
             Transaction::Insert(event) => {
-                println!("Inserting Event = {}", event);
+                // println!("Inserting Event = {}", event);
                 let key
                     = event.t1();
 
@@ -77,9 +77,9 @@ impl Index {
                 let version
                     = self.next_version();
 
-                debug_assert!(guard.guard_deref().is_mut(), "{}", self.locking_strategy);
+                debug_assert!(guard.guard_result().is_mut(), "{}", self.locking_strategy);
 
-                guard.guard_deref().assume_mut().unwrap().push_record((event, version).into(), false)
+                guard.guard_result().assume_mut().unwrap().push_record((event, version).into(), false)
                     .then(|| TransactionResult::Inserted(key, version))
                     .unwrap_or(TransactionResult::Error)
             }
@@ -93,9 +93,9 @@ impl Index {
                 let version
                     = self.next_version();
 
-                debug_assert!(guard.guard_deref().is_mut());
+                debug_assert!(guard.guard_result().is_mut());
 
-                guard.guard_deref().assume_mut().unwrap().push_record((event, version).into(), true)
+                guard.guard_result().assume_mut().unwrap().push_record((event, version).into(), true)
                     .then(|| TransactionResult::Updated(key, version))
                     .unwrap_or(TransactionResult::Error)
             }
@@ -155,10 +155,10 @@ impl Index {
                     = vec![(current_root, current_guard)];
 
                 loop {
-                    match lock_level.first().map(|(_n, guard)| guard.guard_deref().as_ref().unwrap().is_directory()).unwrap_or(false) {
+                    match lock_level.first().map(|(_n, guard)| guard.guard_result().as_ref().unwrap().is_directory()).unwrap_or(false) {
                         true => lock_level = lock_level
                             .drain(..)
-                            .flat_map(|(_, guard)| match guard.guard_deref().as_ref().unwrap() {
+                            .flat_map(|(_, guard)| match guard.guard_result().as_ref().unwrap() {
                                 Node::Index(keys, children) => keys
                                     .iter()
                                     .enumerate()
@@ -177,7 +177,7 @@ impl Index {
                             }).collect(),
                         false => break TransactionResult::MatchedRecords(lock_level
                             .drain(..)
-                            .flat_map(|(_n, guard)| match guard.guard_deref().as_ref().unwrap() {
+                            .flat_map(|(_n, guard)| match guard.guard_result().as_ref().unwrap() {
                                 Node::Leaf(records) => records
                                     .iter()
                                     .filter(|record| key_interval.contains(record.key()) &&

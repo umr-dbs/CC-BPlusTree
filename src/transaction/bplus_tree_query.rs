@@ -270,25 +270,28 @@ impl Index {
                 let k3 = *keys.get(keys_mid).unwrap();
 
                 // let new_keys = keys.split_off(keys_mid + 1);
-                let new_keys = if copy {
-                    keys[keys_mid + 1..].to_vec()
+                let (new_keys_right, new_keys_from) = if copy {
+                    (keys[keys_mid + 1..].to_vec(), keys[..keys_mid].to_vec())
                 }
                 else {
                     let new_keys = keys.split_off(keys_mid + 1);
                     keys.pop();
-                    new_keys
+                    (new_keys, keys.split_off(0))
                 };
                 // keys.pop();
 
                 // let new_children = children.split_off(keys_mid + 1);
-                let new_children = if copy {
-                    children[keys_mid + 1..].to_vec()
+                let (new_children_right, new_children_from) = if copy {
+                    (children[keys_mid + 1..].to_vec(), children[..keys_mid + 1].to_vec())
                 }
                 else {
-                    children.split_off(keys_mid + 1)
+                    (children.split_off(keys_mid + 1), children.split_off(0))
                 };
 
-                let new_node: NodeRef = Node::Index(new_keys, new_children)
+                let new_node_right: NodeRef = Node::Index(new_keys_right, new_children_right)
+                    .into_node_ref(self.locking_strategy());
+
+                let new_node_from: NodeRef = Node::Index(new_keys_from, new_children_from)
                     .into_node_ref(self.locking_strategy());
 
                 let parent_mut
@@ -302,7 +305,13 @@ impl Index {
                 parent_mut
                     .children_mut()
                     .unwrap()
-                    .insert(child_pos + 1, new_node);
+                    .insert(child_pos + 1, new_node_right);
+
+                *parent_mut
+                    .children_mut()
+                    .unwrap()
+                    .get_mut(child_pos)
+                    .unwrap() = new_node_from;
             }
             Node::Leaf(records) => {
                 let records_mid = records.len() / 2;
@@ -311,17 +320,17 @@ impl Index {
                     .unwrap()
                     .key();
 
-                // let new_node: NodeRef = Node::Leaf(records.split_off(records_mid))
-                //     .into_node_ref(self.locking_strategy());
-
-                let new_records = if copy {
-                    records[records_mid..].to_vec()
+                let (new_records, new_records_from) = if copy {
+                    (records[records_mid..].to_vec(), records[..records_mid].to_vec())
                 }
                 else {
-                    records.split_off(records_mid)
+                    (records.split_off(records_mid), records.split_off(0))
                 };
 
                 let new_node: NodeRef = Node::Leaf(new_records)
+                    .into_node_ref(self.locking_strategy());
+
+                let new_node_from: NodeRef = Node::Leaf(new_records_from)
                     .into_node_ref(self.locking_strategy());
 
                 let parent_mut
@@ -336,6 +345,12 @@ impl Index {
                     .children_mut()
                     .unwrap()
                     .insert(child_pos + 1, new_node);
+
+                *parent_mut
+                    .children_mut()
+                    .unwrap()
+                    .get_mut(child_pos)
+                    .unwrap() = new_node_from;
             }
             Node::MultiVersionLeaf(records) => {
                 let records_mid = records.len() / 2;
@@ -344,17 +359,17 @@ impl Index {
                     .unwrap()
                     .key();
 
-                // let new_node: NodeRef = Node::MultiVersionLeaf(records.split_off(records_mid))
-                //     .into_node_ref(self.locking_strategy());
-
-                let new_records = if copy {
-                    records[records_mid..].to_vec()
+                let (new_records, new_records_from) = if copy {
+                    (records[records_mid..].to_vec(), records[..records_mid].to_vec())
                 }
                 else {
-                    records.split_off(records_mid)
+                    (records.split_off(records_mid), records.split_off(0))
                 };
 
                 let new_node: NodeRef = Node::MultiVersionLeaf(new_records)
+                    .into_node_ref(self.locking_strategy());
+
+                let new_node_from: NodeRef = Node::MultiVersionLeaf(new_records_from)
                     .into_node_ref(self.locking_strategy());
 
                 let parent_mut
@@ -369,11 +384,13 @@ impl Index {
                     .children_mut()
                     .unwrap()
                     .insert(child_pos + 1, new_node);
-            }
-        }
 
-        if copy {
-            from_node_deref.truncate()
+                *parent_mut
+                    .children_mut()
+                    .unwrap()
+                    .get_mut(child_pos)
+                    .unwrap() = new_node_from;
+            }
         }
     }
 

@@ -104,7 +104,7 @@ impl Index {
 
         debug_assert!(root_guard.is_valid());
 
-        if !root_guard.upgrade_write_lock() {
+        if !root_guard.upgrade_write_lock() && self.locking_strategy().additional_lock_required() {
             mem::drop(root_guard);
             mem::drop(is_root_lock);
 

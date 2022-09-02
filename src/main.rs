@@ -230,7 +230,7 @@ fn experiment() {
     let cpu_threads = false;
 
     let mut threads_cpu = vec![
-        // 1,
+        1,
         2,
         3,
         4,
@@ -241,7 +241,7 @@ fn experiment() {
         128,
         256,
         512,
-        // 1024,
+        1024,
     ];
 
     if cpu_threads {
@@ -254,7 +254,7 @@ fn experiment() {
         // 1_000,
         // 10_000,
         // 100_000,
-        1_000_000,
+        // 1_000_000,
         // 2_000_000,
         // 5_000_000,
         10_000_000,
@@ -264,7 +264,7 @@ fn experiment() {
     ];
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::WriteCoupling);
+    strategies.push(LockingStrategy::WriteCoupling);
 
     for attempt in 1..=3 {
         // strategies.push(LockingStrategy::optimistic_custom(
@@ -282,8 +282,8 @@ fn experiment() {
         // strategies.push(LockingStrategy::dolos_custom(
         //     LevelVariant::new_height_lock(0.9_f32), attempt));
         //
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(1_f32), attempt));
+        strategies.push(LockingStrategy::optimistic_custom(
+            LevelVariant::new_height_lock(1_f32), attempt));
         strategies.push(LockingStrategy::dolos_custom(
             LevelVariant::new_height_lock(1_f32), attempt));
     }

@@ -60,19 +60,20 @@ impl<E: Default> Default for OptCell<E> {
 impl<E: Default> OptCell<E> {
     const CELL_START_VERSION: Version = 0;
 
-    pub fn new(data: E) -> Self {
+    pub const fn new(data: E) -> Self {
         Self {
             cell: SafeCell::new(data),
             cell_version: AtomicVersion::new(Self::CELL_START_VERSION),
         }
     }
 
+    #[inline(always)]
     fn load_version(&self) -> Version {
         self.cell_version.load(Relaxed)
     }
 
     fn read_lock(&self) -> (bool, Version) {
-        let version = self.cell_version.load(Relaxed);
+        let version = self.load_version();
         if version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
             hint::spin_loop();
             (false, version)
@@ -81,10 +82,10 @@ impl<E: Default> OptCell<E> {
         }
     }
 
-    fn is_any_valid(&self, v: Version) -> bool {
-        let load = self.load_version();
-        v == load && load & OBSOLETE_FLAG_VERSION == 0
-    }
+    // fn is_any_valid(&self, v: Version) -> bool {
+    //     let load = self.load_version();
+    //     v == load && load & OBSOLETE_FLAG_VERSION == 0
+    // }
 
     fn is_read_valid(&self, v: Version) -> bool {
         let load = self.load_version();
@@ -110,14 +111,17 @@ impl<E: Default> OptCell<E> {
         }
     }
 
+    #[inline(always)]
     fn write_unlock(&self, write_version: Version) {
-        if write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION {
+        // if write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION {
             // println!("Dropping {} to {}", write_version, write_version ^ WRITE_FLAG_VERSION);
-            self.cell_version.store(write_version ^ WRITE_FLAG_VERSION, SeqCst)
-        }
+        debug_assert!(write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
+        self.cell_version.store(write_version ^ WRITE_FLAG_VERSION, SeqCst)
+        // }
     }
 
-    pub fn write_obsolete(&self, write_version: Version) {
+    #[inline(always)]
+    fn write_obsolete(&self, write_version: Version) {
         debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
         self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, SeqCst);
@@ -129,17 +133,17 @@ impl<E: Default> OptCell<E> {
         // ).is_ok()
     }
 
-    pub fn is_obsolete(&self) -> bool {
-        self.load_version() & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
-        // self.cell_version.load(Relaxed) & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
-    }
-
-    pub fn is_write(&self) -> bool {
-        self.cell_version.load(Relaxed) & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION
-    }
+    // pub fn is_obsolete(&self) -> bool {
+    //     self.load_version() & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+    //     // self.cell_version.load(Relaxed) & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+    // }
+    //
+    // pub fn is_write(&self) -> bool {
+    //     self.load_version() & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION
+    // }
 }
 
-// #[repr(u8)]
+#[repr(u8)]
 #[derive(Clone)]
 pub enum ConcurrentCell<E: Default> {
     ConcurrencyControlCell(Arc<CCCell<E>>),
@@ -179,7 +183,7 @@ unsafe impl<E: Default> Sync for ConcurrentCell<E> {}
 
 unsafe impl<E: Default> Send for ConcurrentCell<E> {}
 
-// #[repr(u8)]
+#[repr(u8)]
 pub enum ConcurrentGuard<'a, E: Default + 'a> {
     ConcurrencyControlGuard {
         cell: Arc<CCCell<E>>,
@@ -216,14 +220,14 @@ impl<'a, E: Default> Drop for ConcurrentGuard<'a, E> {
     }
 }
 
-// #[repr(u8)]
+#[repr(u8)]
 #[derive(Default)]
 pub enum GuardDerefResult<'a, E: Default> {
     #[default]
     Null,
     Ref(&'a E),
     RefMut(*mut E),
-    ReadHolder((&'a OptCell<E>, Cell<LatchVersion>)),
+    ReadHolder((&'a OptCell<E>, LatchVersion)),
     WriteHolder((&'a OptCell<E>, LatchVersion)),
 }
 
@@ -233,7 +237,7 @@ impl<'a, E: Default> Clone for GuardDerefResult<'a, E> {
             Null => Null,
             Ref(e) => Ref(*e),
             RefMut(e) => RefMut(*e),
-            ReadHolder((e, latch_version)) => ReadHolder((*e, latch_version.clone())),
+            ReadHolder((e, latch_version)) => ReadHolder((*e, *latch_version)),
             WriteHolder((cell, latch_version)) => WriteHolder((*cell, *latch_version))
         }
     }
@@ -274,7 +278,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         match self {
             RefMut(_) => true,
             WriteHolder(_) => true,
-            ReadHolder((cell, latch_version)) => cell.is_read_valid(latch_version.get()),
+            ReadHolder((cell, latch_version)) => cell.is_read_valid(*latch_version),
             _ => false,
         }
     }
@@ -284,7 +288,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
             Ref(e) => Some(e),
             RefMut(e) => unsafe { e.as_ref() },
             WriteHolder((e, _)) => Some(e.cell.deref()),
-            ReadHolder((e, latch_version)) if e.is_read_valid(latch_version.get()) =>
+            ReadHolder((e, latch_version)) if e.is_read_valid(*latch_version) =>
                 Some(e.cell.deref()),
             _ => None
         }
@@ -301,7 +305,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
     fn force_mut(&mut self) -> Option<&'a mut E> {
         self.assume_mut().or_else(|| match self {
             ReadHolder((cell, latch_version)) =>
-                match cell.write_lock(latch_version.get()) {
+                match cell.write_lock(*latch_version) {
                     Some(latch_version) => {
                         *self = WriteHolder((*cell, latch_version));
                         self.assume_mut()
@@ -348,7 +352,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
             OptimisticGuard {
                 cell: Some(..),
                 guard_deref: ReadHolder((cell, latch_version))
-            } => cell.is_any_valid(latch_version.get()),
+            } => cell.is_read_valid(*latch_version),
             OptimisticGuard {
                 guard_deref: Null,
                 ..
@@ -448,8 +452,8 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
             OptimisticGuard {
                 guard_deref: ReadHolder((cell, latch_version)),
                 ..
-            } => if cell.is_read_valid(latch_version.get()) {
-                ReadHolder((*cell, latch_version.clone()))
+            } => if cell.is_read_valid(*latch_version) {
+                ReadHolder((*cell, *latch_version))
             } else {
                 Null
             }
@@ -502,7 +506,7 @@ impl<'a, E: Default + 'a> ConcurrentCell<E> {
                     },
                     true => OptimisticGuard {
                         cell: Some(cell.clone()),
-                        guard_deref: ReadHolder((cell.as_ref(), Cell::new(read_version))),
+                        guard_deref: ReadHolder((cell.as_ref(), read_version)),
                     }
                 }
             }

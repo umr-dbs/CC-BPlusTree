@@ -77,6 +77,7 @@ impl Display for Node {
 }
 
 impl Node {
+    #[inline(always)]
     pub fn into_node_ref(self, locking_strategy: &LockingStrategy) -> NodeRef {
         if locking_strategy.is_dolos() {
             ConcurrentCell::OptimisticCell(Arc::new(OptCell::new(self)))

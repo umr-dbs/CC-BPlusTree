@@ -15,26 +15,35 @@ impl Index {
         }
     }
 
-    fn retrieve_root(&self, lock_level: Level, attempt: Attempts) -> NodeGuard {
+    fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (NodeGuard, Level, Attempts) {
+        loop {
+            match self.retrieve_root_internal(lock_level, attempt) {
+                Err((n_lock_level, n_attempt)) => {
+                    lock_level = n_lock_level;
+                    attempt = n_attempt;
+
+                    sched_yield(attempt);
+                }
+                Ok(guard) => break (guard, lock_level, attempt)
+            }
+        }
+    }
+
+    #[inline]
+    fn retrieve_root_internal(&self, lock_level: Level, attempt: Attempts) -> Result<NodeGuard, (Level, Attempts)> {
         let is_root_lock
             = self.locking_strategy.is_lock_root(lock_level, attempt, self.height());
 
         let mut root_guard = match self.locking_strategy {
             LockingStrategy::SingleWriter => self.root.borrow_free_static(),
             LockingStrategy::Dolos(..) if is_root_lock => {
-                let mut guard
+                let guard
                     = self.root.borrow_mut_static();
 
-                let mut attempt = attempt;
-                while !guard.is_write_lock() {
+                if !guard.is_write_lock() {
                     mem::drop(guard);
-                    sched_yield(attempt);
 
-                    attempt += 1;
-                    guard = self.root.borrow_mut_static();
-                    if DEBUG {
-                        println!("1 \tAttempt = {}", attempt);
-                    }
+                    return Err((lock_level, attempt + 1));
                 }
 
                 guard
@@ -47,14 +56,7 @@ impl Index {
 
         if !root_guard.is_valid() {
             mem::drop(root_guard);
-            mem::drop(is_root_lock);
-
-            if DEBUG {
-                println!("2 \tAttempt = {}, is_root_lock = {}", attempt, is_root_lock);
-            }
-
-            sched_yield(attempt);
-            return self.retrieve_root(lock_level, attempt + 1);
+            return Err((lock_level, attempt + 1));
         }
 
         let root_guard_result
@@ -65,14 +67,8 @@ impl Index {
 
         if root_ref.is_none() {
             mem::drop(root_guard);
-            mem::drop(is_root_lock);
 
-            if DEBUG {
-                println!("3 \tAttempt = {}", attempt);
-            }
-
-            sched_yield(attempt);
-            return self.retrieve_root(lock_level, attempt + 1);
+            return Err((lock_level, attempt + 1));
         }
 
         let root_ref = root_ref
@@ -88,32 +84,20 @@ impl Index {
 
         if !root_guard.is_valid() || force_restart && has_overflow_root {
             mem::drop(root_guard);
-            mem::drop(is_root_lock);
 
-            if DEBUG {
-                println!("4 \tAttempt = {}", attempt);
-            }
-
-            sched_yield(attempt);
-            return self.retrieve_root(lock_level, attempt + 1);
+            return Err((lock_level, attempt + 1));
         }
 
         if !has_overflow_root {
-            return root_guard;
+            return Ok(root_guard);
         }
 
         debug_assert!(root_guard.is_valid());
 
         if !root_guard.upgrade_write_lock() && self.locking_strategy().additional_lock_required() {
             mem::drop(root_guard);
-            mem::drop(is_root_lock);
 
-            if DEBUG {
-                println!("5 \tAttempt = {}", attempt);
-            }
-
-            sched_yield(attempt);
-            return self.retrieve_root(lock_level, attempt + 1);
+            return Err((lock_level, attempt + 1));
         }
 
         let guard_result
@@ -140,8 +124,7 @@ impl Index {
                 // let new_keys = keys.split_off(keys_mid + 1);
                 let new_keys = if copy {
                     keys[keys_mid + 1..].to_vec()
-                }
-                else {
+                } else {
                     let new_keys = keys.split_off(keys_mid + 1);
                     keys.pop();
                     new_keys
@@ -151,8 +134,7 @@ impl Index {
 
                 let new_children = if copy {
                     children[keys_mid + 1..].to_vec()
-                }
-                else {
+                } else {
                     children.split_off(keys_mid + 1)
                 };
 
@@ -161,15 +143,13 @@ impl Index {
 
                 let new_keys = if copy {
                     keys[..keys_mid + 1].to_vec()
-                }
-                else {
+                } else {
                     keys.split_off(0)
                 };
 
                 let new_children = if copy {
                     children[..keys_mid + 2].to_vec()
-                }
-                else {
+                } else {
                     children.split_off(0)
                 };
 
@@ -191,8 +171,7 @@ impl Index {
 
                 let new_records_right = if copy {
                     records[records_mid..].to_vec()
-                }
-                else {
+                } else {
                     records.split_off(records_mid)
                 };
 
@@ -201,8 +180,7 @@ impl Index {
 
                 let new_records_left = if copy {
                     records[..records_mid].to_vec()
-                }
-                else {
+                } else {
                     records.split_off(0)
                 };
                 let new_node_left: NodeRef = Node::Leaf(new_records_left)
@@ -222,8 +200,7 @@ impl Index {
 
                 let new_records_right = if copy {
                     records[records_mid..].to_vec()
-                }
-                else {
+                } else {
                     records.split_off(records_mid)
                 };
 
@@ -232,8 +209,7 @@ impl Index {
 
                 let new_records_left = if copy {
                     records[..records_mid].to_vec()
-                }
-                else {
+                } else {
                     records.split_off(0)
                 };
 
@@ -249,7 +225,7 @@ impl Index {
 
         self.inc_height();
 
-        root_guard
+        Ok(root_guard)
     }
 
     fn do_overflow_correction(
@@ -272,8 +248,7 @@ impl Index {
                 // let new_keys = keys.split_off(keys_mid + 1);
                 let (new_keys_right, new_keys_from) = if copy {
                     (keys[keys_mid + 1..].to_vec(), keys[..keys_mid].to_vec())
-                }
-                else {
+                } else {
                     let new_keys = keys.split_off(keys_mid + 1);
                     keys.pop();
                     (new_keys, keys.split_off(0))
@@ -283,8 +258,7 @@ impl Index {
                 // let new_children = children.split_off(keys_mid + 1);
                 let (new_children_right, new_children_from) = if copy {
                     (children[keys_mid + 1..].to_vec(), children[..keys_mid + 1].to_vec())
-                }
-                else {
+                } else {
                     (children.split_off(keys_mid + 1), children.split_off(0))
                 };
 
@@ -322,8 +296,7 @@ impl Index {
 
                 let (new_records, new_records_from) = if copy {
                     (records[records_mid..].to_vec(), records[..records_mid].to_vec())
-                }
-                else {
+                } else {
                     (records.split_off(records_mid), records.split_off(0))
                 };
 
@@ -361,8 +334,7 @@ impl Index {
 
                 let (new_records, new_records_from) = if copy {
                     (records[records_mid..].to_vec(), records[..records_mid].to_vec())
-                }
-                else {
+                } else {
                     (records.split_off(records_mid), records.split_off(0))
                 };
 
@@ -398,7 +370,7 @@ impl Index {
     {
         let mut curr_level = Self::INIT_TREE_HEIGHT;
 
-        let mut current_guard
+        let (mut current_guard, lock_level, attempt)
             = self.retrieve_root(lock_level, attempt);
 
         let height
@@ -510,8 +482,7 @@ impl Index {
                             current_guard.guard_result(),
                             child_pos,
                             next_guard.guard_result())
-                    }
-                    else if !current_guard.is_valid() || !next_guard.is_valid() {
+                    } else if !current_guard.is_valid() || !next_guard.is_valid() {
                         mem::drop(height);
                         mem::drop(next_guard);
                         mem::drop(current_guard);

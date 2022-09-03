@@ -8,7 +8,7 @@ use chronicle_db::backbone::core::event::Event;
 use chronicle_db::backbone::core::event::EventVariant::F64;
 use chronicle_db::tools::aliases::Key;
 use mvcc_bplustree::index::record::Record;
-use mvcc_bplustree::locking::locking_strategy::{LevelVariant, LockingStrategy};
+use mvcc_bplustree::locking::locking_strategy::{Attempts, LevelVariant, LockingStrategy};
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use chrono::{DateTime, Local};
@@ -230,15 +230,15 @@ fn experiment() {
     let cpu_threads = false;
 
     let mut threads_cpu = vec![
-        1,
-        2,
-        3,
-        4,
-        8,
-        16,
-        32,
-        64,
-        128,
+        // 1,
+        // 2,
+        // 3,
+        // 4,
+        // 8,
+        // 16,
+        // 32,
+        // 64,
+        // 128,
         256,
         512,
         1024,
@@ -257,14 +257,14 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
-        // 20_000_000,
+        // 10_000_000,
+        20_000_000,
         // 50_000_000,
-        // 100_000_000,
+        100_000_000,
     ];
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::WriteCoupling);
+    // strategies.push(LockingStrategy::WriteCoupling);
 
     for attempt in 1..=3 {
         // strategies.push(LockingStrategy::optimistic_custom(
@@ -282,8 +282,8 @@ fn experiment() {
         // strategies.push(LockingStrategy::dolos_custom(
         //     LevelVariant::new_height_lock(0.9_f32), attempt));
         //
-        strategies.push(LockingStrategy::optimistic_custom(
-            LevelVariant::new_height_lock(1_f32), attempt));
+        // strategies.push(LockingStrategy::optimistic_custom(
+        //     LevelVariant::new_height_lock(1_f32), attempt));
         strategies.push(LockingStrategy::dolos_custom(
             LevelVariant::new_height_lock(1_f32), attempt));
     }

@@ -335,7 +335,41 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
     }
 }
 
+// impl<'a, E: Default + Clone + 'a> ConcurrentGuard<'a, E> {
+//     pub(crate) fn data_copy(&self) -> Option<E> {
+//         match self {
+//             ConcurrencyControlGuard { guard, .. } => Some(guard.deref().clone()),
+//             OptimisticGuard { cell: Some(cell), .. } => {
+//                 let result
+//                     = Some(cell.cell.deref().clone());
+//
+//                 if self.is_valid() {
+//                     result
+//                 }
+//                 else {
+//                     None
+//                 }
+//             },
+//             _ => None
+//         }
+//     }
+// }
+
 impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
+    // pub(crate) fn data(&self) -> Option<&'a E> {
+    //     match self {
+    //         ConcurrencyControlGuard {
+    //             cell,
+    //             ..
+    //         } => Some(unsafe { mem::transmute(cell.unsafe_borrow()) }),
+    //         OptimisticGuard {
+    //             cell: Some(cell),
+    //             ..
+    //         } if self.is_valid() => Some(unsafe { mem::transmute(cell.cell.deref()) }),
+    //         _ => None
+    //     }
+    // }
+
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
             ConcurrencyControlGuard { guard, .. } => guard

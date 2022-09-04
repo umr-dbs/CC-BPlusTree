@@ -7,7 +7,7 @@ use crate::utils::vcc_cell::{GuardDerefResult, sched_yield};
 
 const DEBUG: bool = false;
 
-impl Index {
+impl Index { // TODO: Introduced aligned pages to avoid readers to read unallocated memory!
     fn has_overflow(&self, node: &Node) -> bool {
         match node.is_leaf() {
             true => node.is_overflow(self.node_manager.allocation_leaf()),
@@ -234,8 +234,15 @@ impl Index {
         child_pos: usize,
         from_guard: GuardDerefResult<Node>)
     {
-        let copy
-            = from_guard.is_mut_optimistic();
+        let copy= match from_guard.is_mut_optimistic() {
+            true => {
+                from_guard.mark_obsolete();
+                true
+            }
+            false => false
+        };
+        // let copy
+        //     = from_guard.is_mut_optimistic();
 
         let from_node_deref
             = from_guard.assume_mut().unwrap();
@@ -530,50 +537,60 @@ impl Index {
         }
     }
 
-    pub(crate) fn traversal_read_internal(&self, key: Key, attempt: Attempts) -> (NodeGuard, NodeGuardResult) {
+    fn traversal_read_internal(&self, key: Key) -> Option<NodeGuard> {
         let mut current_guard
             = self.lock_reader(&self.root);
 
         loop {
+            if !current_guard.is_valid() {
+                return None
+            }
+
             let current_deref_result
                 = current_guard.guard_result();
 
             let current
                 = current_deref_result.as_ref();
 
-            if current.is_none() {
-                mem::drop(current_deref_result);
-                mem::drop(current_guard);
-
-                sched_yield(attempt);
-                return self.traversal_read_internal(key, attempt + 1);
+            if current.is_none() || !current_guard.is_valid() {
+               return None
             }
 
             match current.unwrap() {
                 Node::Index(keys, children) => {
-                    let next_node = keys
+                    let (next_node, _) = keys
                         .iter()
                         .enumerate()
                         .find(|(_, k)| key.lt(k))
-                        .map(|(pos, _)| children
-                            .get(pos)
-                            .unwrap()
-                            .clone())
-                        .unwrap_or_else(|| children.last().unwrap().clone());
+                        .map(|(pos, _)| (children.get(pos).cloned(), pos))
+                        .unwrap_or_else(|| (children.last().cloned(), keys.len()));
 
-                    let next_guard =
-                        self.lock_reader(&next_node);
+                    if next_node.is_none() || !current_guard.is_valid() {
+                        return None
+                    }
 
-                    current_guard = next_guard;
+                    let next_node
+                        = next_node.unwrap();
+
+                    current_guard = self.lock_reader(&next_node);
                 }
-                _ => break (current_guard, current_deref_result)
+                _ => break Some(current_guard),
             }
         }
     }
 
-    pub(crate) fn traversal_read(&self, key: Key) -> (NodeGuard, NodeGuardResult) {
-        self.traversal_read_internal(
-            key,
-            ATTEMPT_START)
+    pub(crate) fn traversal_read(&self, key: Key) -> NodeGuard {
+        let mut attempt = ATTEMPT_START;
+
+        loop {
+            match self.traversal_read_internal(key) {
+                Some(guard) => break guard,
+                _ => {
+                    attempt += 1;
+                    sched_yield(attempt)
+                }
+            }
+        }
+
     }
 }

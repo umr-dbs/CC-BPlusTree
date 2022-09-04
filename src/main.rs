@@ -254,13 +254,13 @@ fn experiment() {
         // 1_000,
         // 10_000,
         // 100_000,
-        // 1_000_000,
+        1_000_000,
         // 2_000_000,
         // 5_000_000,
         // 10_000_000,
-        20_000_000,
+        // 20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     let mut strategies = vec![];
@@ -500,7 +500,7 @@ fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
             match next_query {
                 Some(query) => match index.execute(query) { // index.execute(transaction),
                     TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if false
+                    TransactionResult::Updated(key, version) => if true
                     {
                         match index.execute(Transaction::ExactSearch(key, version)) {
                             TransactionResult::MatchedRecord(Some(record))

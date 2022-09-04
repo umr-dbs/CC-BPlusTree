@@ -147,6 +147,7 @@ impl BPlusTree {
     pub(crate) fn lock_reader(&self, node: &NodeRef) -> NodeGuard {
         match self.locking_strategy {
             LockingStrategy::SingleWriter => node.borrow_free_static(),
+            LockingStrategy::WriteCoupling => node.borrow_mut_exclusive_static(),
             _ => node.borrow_read_static(),
         }
     }

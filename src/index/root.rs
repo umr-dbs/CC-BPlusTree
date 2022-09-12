@@ -2,13 +2,25 @@ use std::sync::Arc;
 use mvcc_bplustree::block::block::BlockID;
 use mvcc_bplustree::locking::locking_strategy::{Level, LockingStrategy};
 use mvcc_bplustree::utils::cc_cell::CCCell;
+use crate::bplus_tree::Height;
 use crate::index::block::Block;
 use crate::index::node::BlockRef;
 use crate::utils::un_cell::UnCell;
 use crate::utils::vcc_cell::{ConcurrentCell, OptCell};
 
 pub(crate) struct Root {
-    block: UnCell<(BlockRef, Level)>,
+    pub(crate) block: UnCell<(BlockRef, Level)>,
+}
+
+impl Clone for Root {
+    fn clone(&self) -> Self {
+        let (block, height)
+            = self.block.get().clone();
+
+        Root {
+            block: UnCell::new((block, height))
+        }
+    }
 }
 
 impl Into<Root> for (BlockRef, Level) {
@@ -45,7 +57,7 @@ impl Root {
         self.block.replace((new_block, height)).0
     }
 
-    pub(crate) fn height(&self) -> Level {
+    pub(crate) fn height(&self) -> Height {
         self.block.get().1
     }
 

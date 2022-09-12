@@ -8,6 +8,8 @@ use crate::index::root::Root;
 use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
 // use serde::{Serialize, Deserialize};
 
+pub(crate) type Height = Level;
+pub(crate) type LockLevel = Level;
 pub(crate) type Index = BPlusTree;
 
 // #[derive(Serialize, Deserialize)]
@@ -37,9 +39,9 @@ impl BPlusTree {
 
                 let new_root_guard = self.apply_for(
                     Self::INIT_TREE_HEIGHT,
-                    Level::MIN,
+                    LockLevel::MIN,
                     Attempts::MAX,
-                    Level::MIN,
+                    Height::MIN,
                     new_root.clone());
 
                 debug_assert!(new_root_guard.is_write_lock());
@@ -98,7 +100,7 @@ impl BPlusTree {
         &self.locking_strategy
     }
 
-    pub fn height(&self) -> Level {
+    pub fn height(&self) -> Height {
         self.root.height()
     }
 

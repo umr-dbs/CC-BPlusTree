@@ -1,6 +1,7 @@
 use std::mem;
 use chronicle_db::tools::aliases::Key;
 use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level, LockingStrategy};
+use crate::bplus_tree::{Height, LockLevel};
 use crate::Index;
 use crate::index::aligned_page::IndexPage;
 use crate::index::node::{Node, BlockGuard, BlockGuardResult, BlockRef};
@@ -9,7 +10,6 @@ use crate::utils::vcc_cell::sched_yield;
 const DEBUG: bool = false;
 
 impl Index {
-    // TODO: Introduced aligned pages to avoid readers to read unallocated memory!
     fn has_overflow(&self, node: &Node) -> bool {
         match node.is_leaf() {
             true => node.is_overflow(self.block_manager.allocation_leaf()),
@@ -17,7 +17,7 @@ impl Index {
         }
     }
 
-    fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (BlockGuard, Level, Attempts) {
+    fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (BlockGuard, Height, LockLevel, Attempts) {
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
                 Err((n_lock_level, n_attempt)) => {
@@ -26,21 +26,27 @@ impl Index {
 
                     sched_yield(attempt);
                 }
-                Ok(guard) => break (guard, lock_level, attempt)
+                Ok((guard, height)) => break (guard, height, lock_level, attempt)
             }
         }
     }
 
     #[inline]
-    fn retrieve_root_internal(&self, lock_level: Level, attempt: Attempts) -> Result<BlockGuard, (Level, Attempts)> {
+    fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts) -> Result<(BlockGuard, Height), (LockLevel, Attempts)> {
+        let root
+            = self.root.clone();
+
+        let root_block
+            = &root.block.get().0;
+
         let is_root_lock
-            = self.locking_strategy.is_lock_root(lock_level, attempt, self.height());
+            = self.locking_strategy.is_lock_root(lock_level, attempt, root.height());
 
         let mut root_guard = match self.locking_strategy {
-            LockingStrategy::SingleWriter => self.root.block().borrow_free_static(),
+            LockingStrategy::SingleWriter => root_block.borrow_free_static(),
             LockingStrategy::Dolos(..) if is_root_lock => {
                 let guard
-                    = self.root.block().borrow_mut_static();
+                    = root_block.borrow_mut_static();
 
                 if !guard.is_write_lock() {
                     mem::drop(guard);
@@ -50,10 +56,10 @@ impl Index {
 
                 guard
             }
-            LockingStrategy::Dolos(..) => self.root.block().borrow_free_static(),
-            LockingStrategy::WriteCoupling => self.root.block().borrow_mut_exclusive_static(),
-            LockingStrategy::Optimistic(..) if is_root_lock => self.root.block().borrow_mut_static(),
-            LockingStrategy::Optimistic(..) => self.root.block().borrow_read_static(),
+            LockingStrategy::Dolos(..) => root_block.borrow_free_static(),
+            LockingStrategy::WriteCoupling => root_block.borrow_mut_exclusive_static(),
+            LockingStrategy::Optimistic(..) if is_root_lock => root_block.borrow_mut_static(),
+            LockingStrategy::Optimistic(..) => root_block.borrow_read_static(),
         };
 
         if !root_guard.is_valid() {
@@ -91,7 +97,7 @@ impl Index {
         }
 
         if !has_overflow_root {
-            return Ok(root_guard);
+            return Ok((root_guard, root.height()));
         }
 
         debug_assert!(root_guard.is_valid());
@@ -118,6 +124,9 @@ impl Index {
         let root_mut
             = guard_result.assume_mut().unwrap();
 
+        let n_height
+            = root.height() + 1;
+
         match &mut root_mut.node_data {
             Node::Index(index_page) => {
                 let mut keys = index_page.keys_mut();
@@ -126,95 +135,68 @@ impl Index {
                 let keys_mid = keys.len() / 2;
                 let k3 = *keys.get(keys_mid).unwrap();
 
-                let new_keys = if is_optimistic {
-                    keys[keys_mid + 1..].to_vec()
-                } else {
-                    let new_keys = keys.split_off(keys_mid + 1);
-                    keys.pop();
-                    new_keys
-                };
-
-                let new_children = if is_optimistic {
-                    children[keys_mid + 1..].to_vec()
-                } else {
-                    children.split_off(keys_mid + 1)
-                };
+                let mut index_block
+                    = self.block_manager.new_empty_index_block();
 
                 let mut new_node_right =
                     self.block_manager.new_empty_index_block();
 
-                new_node_right.keys_mut().extend(new_keys);
-                new_node_right.children_mut().extend(new_children);
-
-                let new_node_right
-                    = new_node_right.into_cell(is_optimistic);
-
-                let new_keys = if is_optimistic {
-                    keys[..keys_mid + 1].to_vec()
-                } else {
-                    keys.split_off(0)
-                };
-
-                let new_children = if is_optimistic {
-                    children[..keys_mid + 2].to_vec()
-                } else {
-                    children.split_off(0)
-                };
-
                 let mut new_root_left
                     = self.block_manager.new_empty_index_block();
 
-                new_root_left.keys_mut().extend(new_keys);
-                new_root_left.children_mut().extend(new_children);
+                if is_optimistic {
+                    new_node_right.keys_mut().extend_from_slice(&keys[keys_mid + 1..]);
+                    new_node_right.children_mut().extend_from_slice(&children[keys_mid + 1..]);
 
-                let new_root_left: BlockRef
-                    = new_root_left.into_cell(is_optimistic);
+                    new_root_left.keys_mut().extend_from_slice(&keys[..keys_mid + 1]);
+                    new_root_left.children_mut().extend_from_slice(&children[..keys_mid + 2]);
+                } else {
+                    new_node_right.keys_mut().extend(keys.split_off(keys_mid + 1));
+                    keys.pop();
+                    new_node_right.children_mut().extend(children.split_off(keys_mid + 1));
 
-                let mut index_block
-                    = self.block_manager.new_empty_index_block();
+                    new_root_left.keys_mut().extend(keys.split_off(0));
+                    new_root_left.children_mut().extend(children.split_off(0));
+                };
 
                 index_block.keys_mut().push(k3);
-                index_block.children_mut().push(new_root_left);
-                index_block.children_mut().push(new_node_right);
+                index_block.children_mut().push(new_root_left.into_cell(is_optimistic));
+                index_block.children_mut().push(new_node_right.into_cell(is_optimistic));
 
                 self.set_new_root(
                     index_block,
-                    self.height() + 1,
+                    n_height,
                     root_mut,
                 ).map(|guard| root_guard = guard);
             }
             Node::Leaf(records) => {
-                let records_mid = records.len() / 2;
+                let mut records
+                    = records.as_records();
+
+                let records_mid
+                    = records.len() / 2;
+
                 let k3 = records
                     .get(records_mid)
                     .unwrap()
                     .key();
-
-                let mut records
-                    = records.as_records();
-
-                let new_records_right = if is_optimistic {
-                    records[records_mid..].to_vec()
-                } else {
-                    records.split_off(records_mid)
-                };
 
                 let mut new_node_right
                     = self.block_manager.new_empty_leaf_single_version_block();
 
-                new_node_right.records_mut().extend(new_records_right);
-
-                let new_records_left = if is_optimistic {
-                    records[..records_mid].to_vec()
-                } else {
-                    records.split_off(0)
-                };
-
-                let mut new_node_left = self.block_manager.new_empty_leaf();
-                new_node_left.records_mut().extend(new_records_left);
+                let mut new_node_left
+                    = self.block_manager.new_empty_leaf_single_version_block();
 
                 let mut new_root
                     = self.block_manager.new_empty_index_block();
+
+                if is_optimistic {
+                    new_node_right.records_mut().extend_from_slice(&records[records_mid..]);
+                    new_node_left.records_mut().extend_from_slice(&records[..records_mid]);
+                } else {
+                    new_node_right.records_mut().extend(records.split_off(records_mid));
+                    new_node_left.records_mut().extend(records.split_off(0));
+                };
 
                 new_root.keys_mut().push(k3);
                 new_root.children_mut().push(new_node_left.into_cell(is_optimistic));
@@ -222,44 +204,36 @@ impl Index {
 
                 self.set_new_root(
                     new_root,
-                    self.height(),
+                    n_height,
                     root_mut,
                 ).map(|guard| root_guard = guard);
             }
             Node::MultiVersionLeaf(records) => {
+                let mut records
+                    = records.as_records();
+
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get(records_mid)
                     .unwrap()
                     .key();
 
-                let mut records
-                    = records.as_records();
-
-                let new_records_right = if is_optimistic {
-                    records[records_mid..].to_vec()
-                } else {
-                    records.split_off(records_mid)
-                };
-
                 let mut new_node_right
                     = self.block_manager.new_empty_leaf_multi_version_block();
-
-                new_node_right.record_lists_mut().extend(new_records_right);
-
-                let new_records_left = if is_optimistic {
-                    records[..records_mid].to_vec()
-                } else {
-                    records.split_off(0)
-                };
 
                 let mut new_node_left
                     = self.block_manager.new_empty_leaf_multi_version_block();
 
-                new_node_left.record_lists_mut().extend(new_records_left);
-
                 let mut new_root
                     = self.block_manager.new_empty_index_block();
+
+                if is_optimistic {
+                    new_node_right.record_lists_mut().extend_from_slice(&records[records_mid..]);
+                    new_node_left.record_lists_mut().extend_from_slice(&records[..records_mid]);
+                } else {
+                    new_node_right.record_lists_mut().extend(records.split_off(records_mid));
+                    new_node_left.record_lists_mut().extend(records.split_off(0));
+                };
 
                 new_root.keys_mut().push(k3);
                 new_root.children_mut().push(new_node_left.into_cell(is_optimistic));
@@ -267,13 +241,13 @@ impl Index {
 
                 self.set_new_root(
                     new_root,
-                    self.height(),
+                    n_height,
                     root_mut,
                 ).map(|guard| root_guard = guard);
             }
         }
 
-        Ok(root_guard)
+        Ok((root_guard, n_height))
     }
 
     fn do_overflow_correction(
@@ -316,7 +290,6 @@ impl Index {
 
                     new_node_from.keys_mut().extend_from_slice(&keys[..keys_mid]);
                     new_node_from.children_mut().extend_from_slice(&children[..keys_mid + 1]);
-
                 } else {
                     new_node_right.keys_mut().extend(keys.split_off(keys_mid + 1));
                     keys.pop();
@@ -425,15 +398,12 @@ impl Index {
         }
     }
 
-    fn traversal_write_internal(&self, lock_level: Level, attempt: Attempts, key: Key) -> Result<BlockGuard, (Level, Attempts)>
+    fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key) -> Result<BlockGuard, (LockLevel, Attempts)>
     {
         let mut curr_level = Self::INIT_TREE_HEIGHT;
 
-        let (mut current_guard, lock_level, attempt)
+        let (mut current_guard, height, lock_level, attempt)
             = self.retrieve_root(lock_level, attempt);
-
-        let height
-            = self.height();
 
         loop {
             let current_guard_result

@@ -2,20 +2,22 @@ use std::mem;
 use chronicle_db::tools::aliases::Key;
 use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level, LockingStrategy};
 use crate::Index;
-use crate::index::node::{Node, NodeGuard, NodeGuardResult, NodeRef};
-use crate::utils::vcc_cell::{GuardDerefResult, sched_yield};
+use crate::index::aligned_page::IndexPage;
+use crate::index::node::{Node, BlockGuard, BlockGuardResult, BlockRef};
+use crate::utils::vcc_cell::sched_yield;
 
 const DEBUG: bool = false;
 
-impl Index { // TODO: Introduced aligned pages to avoid readers to read unallocated memory!
+impl Index {
+    // TODO: Introduced aligned pages to avoid readers to read unallocated memory!
     fn has_overflow(&self, node: &Node) -> bool {
         match node.is_leaf() {
-            true => node.is_overflow(self.node_manager.allocation_leaf()),
-            false => node.is_overflow(self.node_manager.allocation_directory())
+            true => node.is_overflow(self.block_manager.allocation_leaf()),
+            false => node.is_overflow(self.block_manager.allocation_directory())
         }
     }
 
-    fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (NodeGuard, Level, Attempts) {
+    fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (BlockGuard, Level, Attempts) {
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
                 Err((n_lock_level, n_attempt)) => {
@@ -30,15 +32,15 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
     }
 
     #[inline]
-    fn retrieve_root_internal(&self, lock_level: Level, attempt: Attempts) -> Result<NodeGuard, (Level, Attempts)> {
+    fn retrieve_root_internal(&self, lock_level: Level, attempt: Attempts) -> Result<BlockGuard, (Level, Attempts)> {
         let is_root_lock
             = self.locking_strategy.is_lock_root(lock_level, attempt, self.height());
 
         let mut root_guard = match self.locking_strategy {
-            LockingStrategy::SingleWriter => self.root.borrow_free_static(),
+            LockingStrategy::SingleWriter => self.root.block().borrow_free_static(),
             LockingStrategy::Dolos(..) if is_root_lock => {
                 let guard
-                    = self.root.borrow_mut_static();
+                    = self.root.block().borrow_mut_static();
 
                 if !guard.is_write_lock() {
                     mem::drop(guard);
@@ -48,10 +50,10 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
 
                 guard
             }
-            LockingStrategy::Dolos(..) => self.root.borrow_free_static(),
-            LockingStrategy::WriteCoupling => self.root.borrow_mut_exclusive_static(),
-            LockingStrategy::Optimistic(..) if is_root_lock => self.root.borrow_mut_static(),
-            LockingStrategy::Optimistic(..) => self.root.borrow_read_static(),
+            LockingStrategy::Dolos(..) => self.root.block().borrow_free_static(),
+            LockingStrategy::WriteCoupling => self.root.block().borrow_mut_exclusive_static(),
+            LockingStrategy::Optimistic(..) if is_root_lock => self.root.block().borrow_mut_static(),
+            LockingStrategy::Optimistic(..) => self.root.block().borrow_read_static(),
         };
 
         if !root_guard.is_valid() {
@@ -105,7 +107,7 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
 
         debug_assert!(guard_result.is_mut());
 
-        let copy= match guard_result.is_mut_optimistic() {
+        let is_optimistic = match guard_result.is_mut_optimistic() {
             true => {
                 guard_result.mark_obsolete();
                 true
@@ -116,13 +118,15 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
         let root_mut
             = guard_result.assume_mut().unwrap();
 
-        match root_mut {
-            Node::Index(keys, children) => {
+        match &mut root_mut.node_data {
+            Node::Index(index_page) => {
+                let mut keys = index_page.keys_mut();
+                let mut children = index_page.children_mut();
+
                 let keys_mid = keys.len() / 2;
                 let k3 = *keys.get(keys_mid).unwrap();
 
-                // let new_keys = keys.split_off(keys_mid + 1);
-                let new_keys = if copy {
+                let new_keys = if is_optimistic {
                     keys[keys_mid + 1..].to_vec()
                 } else {
                     let new_keys = keys.split_off(keys_mid + 1);
@@ -130,35 +134,52 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
                     new_keys
                 };
 
-                // let new_children = children.split_off(keys_mid + 1);
-
-                let new_children = if copy {
+                let new_children = if is_optimistic {
                     children[keys_mid + 1..].to_vec()
                 } else {
                     children.split_off(keys_mid + 1)
                 };
 
-                let new_node_right: NodeRef = Node::Index(new_keys, new_children)
-                    .into_node_ref(self.locking_strategy());
+                let mut new_node_right =
+                    self.block_manager.new_empty_index_block();
 
-                let new_keys = if copy {
+                new_node_right.keys_mut().extend(new_keys);
+                new_node_right.children_mut().extend(new_children);
+
+                let new_node_right
+                    = new_node_right.into_cell(is_optimistic);
+
+                let new_keys = if is_optimistic {
                     keys[..keys_mid + 1].to_vec()
                 } else {
                     keys.split_off(0)
                 };
 
-                let new_children = if copy {
+                let new_children = if is_optimistic {
                     children[..keys_mid + 2].to_vec()
                 } else {
                     children.split_off(0)
                 };
 
-                let new_root_left: NodeRef =
-                    Node::Index(new_keys, new_children)
-                        .into_node_ref(self.locking_strategy());
+                let mut new_root_left
+                    = self.block_manager.new_empty_index_block();
+
+                new_root_left.keys_mut().extend(new_keys);
+                new_root_left.children_mut().extend(new_children);
+
+                let new_root_left: BlockRef
+                    = new_root_left.into_cell(is_optimistic);
+
+                let mut index_block
+                    = self.block_manager.new_empty_index_block();
+
+                index_block.keys_mut().push(k3);
+                index_block.children_mut().push(new_root_left);
+                index_block.children_mut().push(new_node_right);
 
                 self.set_new_root(
-                    Node::Index(vec![k3], vec![new_root_left, new_node_right]),
+                    index_block,
+                    self.height() + 1,
                     root_mut,
                 ).map(|guard| root_guard = guard);
             }
@@ -169,25 +190,39 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
                     .unwrap()
                     .key();
 
-                let new_records_right = if copy {
+                let mut records
+                    = records.as_records();
+
+                let new_records_right = if is_optimistic {
                     records[records_mid..].to_vec()
                 } else {
                     records.split_off(records_mid)
                 };
 
-                let new_node_right: NodeRef = Node::Leaf(new_records_right)
-                    .into_node_ref(self.locking_strategy());
+                let mut new_node_right
+                    = self.block_manager.new_empty_leaf_single_version_block();
 
-                let new_records_left = if copy {
+                new_node_right.records_mut().extend(new_records_right);
+
+                let new_records_left = if is_optimistic {
                     records[..records_mid].to_vec()
                 } else {
                     records.split_off(0)
                 };
-                let new_node_left: NodeRef = Node::Leaf(new_records_left)
-                    .into_node_ref(self.locking_strategy());
+
+                let mut new_node_left = self.block_manager.new_empty_leaf();
+                new_node_left.records_mut().extend(new_records_left);
+
+                let mut new_root
+                    = self.block_manager.new_empty_index_block();
+
+                new_root.keys_mut().push(k3);
+                new_root.children_mut().push(new_node_left.into_cell(is_optimistic));
+                new_root.children_mut().push(new_node_right.into_cell(is_optimistic));
 
                 self.set_new_root(
-                    Node::Index(vec![k3], vec![new_node_left, new_node_right]),
+                    new_root,
+                    self.height(),
                     root_mut,
                 ).map(|guard| root_guard = guard);
             }
@@ -198,182 +233,199 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
                     .unwrap()
                     .key();
 
-                let new_records_right = if copy {
+                let mut records
+                    = records.as_records();
+
+                let new_records_right = if is_optimistic {
                     records[records_mid..].to_vec()
                 } else {
                     records.split_off(records_mid)
                 };
 
-                let new_node_right: NodeRef = Node::MultiVersionLeaf(new_records_right)
-                    .into_node_ref(self.locking_strategy());
+                let mut new_node_right
+                    = self.block_manager.new_empty_leaf_multi_version_block();
 
-                let new_records_left = if copy {
+                new_node_right.record_lists_mut().extend(new_records_right);
+
+                let new_records_left = if is_optimistic {
                     records[..records_mid].to_vec()
                 } else {
                     records.split_off(0)
                 };
 
-                let new_node_left: NodeRef = Node::MultiVersionLeaf(new_records_left)
-                    .into_node_ref(self.locking_strategy());
+                let mut new_node_left
+                    = self.block_manager.new_empty_leaf_multi_version_block();
+
+                new_node_left.record_lists_mut().extend(new_records_left);
+
+                let mut new_root
+                    = self.block_manager.new_empty_index_block();
+
+                new_root.keys_mut().push(k3);
+                new_root.children_mut().push(new_node_left.into_cell(is_optimistic));
+                new_root.children_mut().push(new_node_right.into_cell(is_optimistic));
 
                 self.set_new_root(
-                    Node::Index(vec![k3], vec![new_node_left, new_node_right]),
+                    new_root,
+                    self.height(),
                     root_mut,
                 ).map(|guard| root_guard = guard);
             }
         }
-
-        self.inc_height();
 
         Ok(root_guard)
     }
 
     fn do_overflow_correction(
         &self,
-        parent_guard: GuardDerefResult<Node>,
+        parent_guard: BlockGuardResult,
         child_pos: usize,
-        from_guard: GuardDerefResult<Node>)
+        from_guard: BlockGuardResult)
     {
-        let copy= match from_guard.is_mut_optimistic() {
+        let is_optimistic = match from_guard.is_mut_optimistic() {
             true => {
                 from_guard.mark_obsolete();
                 true
             }
             false => false
         };
-        // let copy
-        //     = from_guard.is_mut_optimistic();
 
         let from_node_deref
             = from_guard.assume_mut().unwrap();
 
-        match from_node_deref {
-            Node::Index(keys, children) => {
+        match from_node_deref.as_mut() {
+            Node::Index(index_page) => {
+                let mut keys
+                    = index_page.keys_mut();
+
+                let mut children
+                    = index_page.children_mut();
+
                 let keys_mid = keys.len() / 2;
                 let k3 = *keys.get(keys_mid).unwrap();
 
-                // let new_keys = keys.split_off(keys_mid + 1);
-                let (new_keys_right, new_keys_from) = if copy {
-                    (keys[keys_mid + 1..].to_vec(), keys[..keys_mid].to_vec())
+                let mut new_node_right
+                    = self.block_manager.new_empty_index_block();
+
+                let mut new_node_from
+                    = self.block_manager.new_empty_index_block();
+
+                if is_optimistic {
+                    new_node_right.keys_mut().extend_from_slice(&keys[keys_mid + 1..]);
+                    new_node_right.children_mut().extend_from_slice(&children[keys_mid + 1..]);
+
+                    new_node_from.keys_mut().extend_from_slice(&keys[..keys_mid]);
+                    new_node_from.children_mut().extend_from_slice(&children[..keys_mid + 1]);
+
                 } else {
-                    let new_keys = keys.split_off(keys_mid + 1);
+                    new_node_right.keys_mut().extend(keys.split_off(keys_mid + 1));
                     keys.pop();
-                    (new_keys, keys.split_off(0))
+                    new_node_right.children_mut().extend(children.split_off(keys_mid + 1));
+
+                    new_node_from.keys_mut().extend(keys.split_off(0));
+                    new_node_from.children_mut().extend(children.split_off(0));
                 };
-                // keys.pop();
-
-                // let new_children = children.split_off(keys_mid + 1);
-                let (new_children_right, new_children_from) = if copy {
-                    (children[keys_mid + 1..].to_vec(), children[..keys_mid + 1].to_vec())
-                } else {
-                    (children.split_off(keys_mid + 1), children.split_off(0))
-                };
-
-                let new_node_right: NodeRef = Node::Index(new_keys_right, new_children_right)
-                    .into_node_ref(self.locking_strategy());
-
-                let new_node_from: NodeRef = Node::Index(new_keys_from, new_children_from)
-                    .into_node_ref(self.locking_strategy());
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
 
                 parent_mut
                     .keys_mut()
-                    .unwrap()
                     .insert(child_pos, k3);
 
                 parent_mut
                     .children_mut()
-                    .unwrap()
-                    .insert(child_pos + 1, new_node_right);
+                    .insert(child_pos + 1, new_node_right.into_cell(is_optimistic));
 
                 *parent_mut
                     .children_mut()
-                    .unwrap()
                     .get_mut(child_pos)
-                    .unwrap() = new_node_from;
+                    .unwrap() = new_node_from.into_cell(is_optimistic);
             }
             Node::Leaf(records) => {
+                let mut records
+                    = records.as_records();
+
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get(records_mid)
                     .unwrap()
                     .key();
 
-                let (new_records, new_records_from) = if copy {
-                    (records[records_mid..].to_vec(), records[..records_mid].to_vec())
+                let mut new_node
+                    = self.block_manager.new_empty_leaf_single_version_block();
+
+                let mut new_node_from
+                    = self.block_manager.new_empty_leaf_single_version_block();
+
+                if is_optimistic {
+                    new_node.records_mut().extend_from_slice(&records[records_mid..]);
+                    new_node_from.records_mut().extend_from_slice(&records[..records_mid]);
                 } else {
-                    (records.split_off(records_mid), records.split_off(0))
-                };
-
-                let new_node: NodeRef = Node::Leaf(new_records)
-                    .into_node_ref(self.locking_strategy());
-
-                let new_node_from: NodeRef = Node::Leaf(new_records_from)
-                    .into_node_ref(self.locking_strategy());
+                    new_node.records_mut().extend(records.split_off(records_mid));
+                    new_node_from.records_mut().extend(records.split_off(0));
+                }
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
 
                 parent_mut
                     .keys_mut()
-                    .unwrap()
                     .insert(child_pos, k3);
 
                 parent_mut
                     .children_mut()
-                    .unwrap()
-                    .insert(child_pos + 1, new_node);
+                    .insert(child_pos + 1, new_node.into_cell(is_optimistic));
 
                 *parent_mut
                     .children_mut()
-                    .unwrap()
                     .get_mut(child_pos)
-                    .unwrap() = new_node_from;
+                    .unwrap() = new_node_from.into_cell(is_optimistic);
             }
             Node::MultiVersionLeaf(records) => {
+                let mut records
+                    = records.as_records();
+
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get(records_mid)
                     .unwrap()
                     .key();
 
-                let (new_records, new_records_from) = if copy {
-                    (records[records_mid..].to_vec(), records[..records_mid].to_vec())
+                let mut new_node
+                    = self.block_manager.new_empty_leaf_multi_version_block();
+
+                let mut new_node_from
+                    = self.block_manager.new_empty_leaf_multi_version_block();
+
+                if is_optimistic {
+                    new_node.record_lists_mut().extend_from_slice(&records[records_mid..]);
+                    new_node_from.record_lists_mut().extend_from_slice(&records[..records_mid]);
                 } else {
-                    (records.split_off(records_mid), records.split_off(0))
-                };
-
-                let new_node: NodeRef = Node::MultiVersionLeaf(new_records)
-                    .into_node_ref(self.locking_strategy());
-
-                let new_node_from: NodeRef = Node::MultiVersionLeaf(new_records_from)
-                    .into_node_ref(self.locking_strategy());
+                    new_node.record_lists_mut().extend(records.split_off(records_mid));
+                    new_node_from.record_lists_mut().extend(records.split_off(0));
+                }
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
 
                 parent_mut
                     .keys_mut()
-                    .unwrap()
                     .insert(child_pos, k3);
 
                 parent_mut
                     .children_mut()
-                    .unwrap()
-                    .insert(child_pos + 1, new_node);
+                    .insert(child_pos + 1, new_node.into_cell(is_optimistic));
 
                 *parent_mut
                     .children_mut()
-                    .unwrap()
                     .get_mut(child_pos)
-                    .unwrap() = new_node_from;
+                    .unwrap() = new_node_from.into_cell(is_optimistic);
             }
         }
     }
 
-    fn traversal_write_internal(&self, lock_level: Level, attempt: Attempts, key: Key) -> Result<NodeGuard, (Level, Attempts)>
+    fn traversal_write_internal(&self, lock_level: Level, attempt: Attempts, key: Key) -> Result<BlockGuard, (Level, Attempts)>
     {
         let mut curr_level = Self::INIT_TREE_HEIGHT;
 
@@ -414,14 +466,19 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
                 return Err((curr_level - 1, attempt + 1));
             }
 
-            match current_ref {
-                Node::Index(keys, children) => {
+            match current_ref.as_ref() {
+                Node::Index(
+                    IndexPage {
+                        keys,
+                        children,
+                        ..
+                    }) => {
                     let (next_node, child_pos) = keys
                         .iter()
                         .enumerate()
                         .find(|(_, k)| key.lt(k))
                         .map(|(pos, _)| (children.get(pos).cloned(), pos))
-                        .unwrap_or_else(|| (children.last().cloned(), keys.len()));
+                        .unwrap_or_else(|| (children.get(children.len() - 1).cloned(), keys.len()));
 
                     if next_node.is_none() || !current_guard.is_valid() {
                         mem::drop(current_guard);
@@ -503,24 +560,14 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
                         current_guard = next_guard;
                     }
                 }
-                _ if current_guard_result.is_mut() => return Ok(current_guard),
-                _ => return if !current_guard.upgrade_write_lock() { // is_leaf
-                    mem::drop(height);
-                    mem::drop(current_guard);
-
-                    if DEBUG {
-                        println!("12 \tAttempt = {}", attempt);
-                    }
-
-                    Err((curr_level - 1, attempt + 1))
-                } else {
-                    Ok(current_guard)
-                }
+                _ if current_guard_result.is_mut() || current_guard.upgrade_write_lock() =>
+                    return Ok(current_guard),
+                _ => return Err((curr_level - 1, attempt + 1))
             }
         }
     }
 
-    pub(crate) fn traversal_write(&self, key: Key) -> NodeGuard {
+    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard {
         let mut attempt = ATTEMPT_START;
         let mut lock_level = Self::MAX_TREE_HEIGHT;
 
@@ -537,13 +584,13 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
         }
     }
 
-    fn traversal_read_internal(&self, key: Key) -> Option<NodeGuard> {
+    fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard> {
         let mut current_guard
-            = self.lock_reader(&self.root);
+            = self.lock_reader(&self.root.block());
 
         loop {
             if !current_guard.is_valid() {
-                return None
+                return None;
             }
 
             let current_deref_result
@@ -553,20 +600,25 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
                 = current_deref_result.as_ref();
 
             if current.is_none() || !current_guard.is_valid() {
-               return None
+                return None;
             }
 
-            match current.unwrap() {
-                Node::Index(keys, children) => {
+            match current.unwrap().as_ref() {
+                Node::Index(
+                    IndexPage {
+                        keys,
+                        children,
+                        ..
+                    }) => {
                     let (next_node, _) = keys
                         .iter()
                         .enumerate()
                         .find(|(_, k)| key.lt(k))
                         .map(|(pos, _)| (children.get(pos).cloned(), pos))
-                        .unwrap_or_else(|| (children.last().cloned(), keys.len()));
+                        .unwrap_or_else(|| (children.get(children.len() - 1).cloned(), keys.len()));
 
                     if next_node.is_none() || !current_guard.is_valid() {
-                        return None
+                        return None;
                     }
 
                     let next_node
@@ -579,7 +631,7 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
         }
     }
 
-    pub(crate) fn traversal_read(&self, key: Key) -> NodeGuard {
+    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard {
         let mut attempt = ATTEMPT_START;
 
         loop {
@@ -591,6 +643,5 @@ impl Index { // TODO: Introduced aligned pages to avoid readers to read unalloca
                 }
             }
         }
-
     }
 }

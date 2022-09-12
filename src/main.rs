@@ -230,15 +230,15 @@ fn experiment() {
     let cpu_threads = false;
 
     let mut threads_cpu = vec![
-        // 1,
-        // 2,
-        // 3,
-        // 4,
-        // 8,
-        // 16,
-        // 32,
-        // 64,
-        // 128,
+        1,
+        2,
+        3,
+        4,
+        8,
+        16,
+        32,
+        64,
+        128,
         256,
         512,
         1024,
@@ -257,33 +257,33 @@ fn experiment() {
         1_000_000,
         // 2_000_000,
         // 5_000_000,
-        // 10_000_000,
+        10_000_000,
         // 20_000_000,
         // 50_000_000,
         // 100_000_000,
     ];
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::WriteCoupling);
+    strategies.push(LockingStrategy::WriteCoupling);
 
     for attempt in 1..=3 {
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(0.2_f32), attempt));
-        // strategies.push(LockingStrategy::dolos_custom(
-        //     LevelVariant::new_height_lock(0.2_f32), attempt));
-        //
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(0.5_f32), attempt));
-        // strategies.push(LockingStrategy::dolos_custom(
-        //     LevelVariant::new_height_lock(0.5_f32), attempt));
-        //
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(0.9_f32), attempt));
-        // strategies.push(LockingStrategy::dolos_custom(
-        //     LevelVariant::new_height_lock(0.9_f32), attempt));
-        //
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(1_f32), attempt));
+        strategies.push(LockingStrategy::optimistic_custom(
+            LevelVariant::new_height_lock(0.2_f32), attempt));
+        strategies.push(LockingStrategy::dolos_custom(
+            LevelVariant::new_height_lock(0.2_f32), attempt));
+
+        strategies.push(LockingStrategy::optimistic_custom(
+            LevelVariant::new_height_lock(0.5_f32), attempt));
+        strategies.push(LockingStrategy::dolos_custom(
+            LevelVariant::new_height_lock(0.5_f32), attempt));
+
+        strategies.push(LockingStrategy::optimistic_custom(
+            LevelVariant::new_height_lock(0.9_f32), attempt));
+        strategies.push(LockingStrategy::dolos_custom(
+            LevelVariant::new_height_lock(0.9_f32), attempt));
+
+        strategies.push(LockingStrategy::optimistic_custom(
+            LevelVariant::new_height_lock(1_f32), attempt));
         strategies.push(LockingStrategy::dolos_custom(
             LevelVariant::new_height_lock(1_f32), attempt));
     }
@@ -411,7 +411,7 @@ fn beast_test2(num_thread: usize, index: Index, t1s: &[Key]) -> (u128, CCCell<In
             match next_query {
                 Some(query) => match index.execute(query) { // index.execute(transaction),
                     TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if true
+                    TransactionResult::Updated(key, version) => if false
                     {
                         match index.execute(Transaction::ExactSearch(key, version)) {
                             TransactionResult::MatchedRecord(Some(record))
@@ -500,7 +500,7 @@ fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
             match next_query {
                 Some(query) => match index.execute(query) { // index.execute(transaction),
                     TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if true
+                    TransactionResult::Updated(key, version) => if false
                     {
                         match index.execute(Transaction::ExactSearch(key, version)) {
                             TransactionResult::MatchedRecord(Some(record))

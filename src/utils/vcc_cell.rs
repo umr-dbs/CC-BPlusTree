@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::{hint, mem};
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
@@ -144,10 +143,18 @@ impl<E: Default> OptCell<E> {
 }
 
 #[repr(u8)]
-#[derive(Clone)]
 pub enum ConcurrentCell<E: Default> {
     ConcurrencyControlCell(Arc<CCCell<E>>),
     OptimisticCell(Arc<OptCell<E>>),
+}
+
+impl<E: Default> Clone for ConcurrentCell<E> {
+    fn clone(&self) -> Self {
+        match self {
+            ConcurrencyControlCell(cell) => ConcurrencyControlCell(cell.clone()),
+            OptimisticCell(cell) => OptimisticCell(cell.clone())
+        }
+    }
 }
 
 impl<E: Default + Display> Display for ConcurrentCell<E> {
@@ -465,6 +472,16 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
             } => false
         }
     }
+
+    // pub fn cell(&self) -> Option<ConcurrentCell<E>> {
+    //     match self {
+    //         ConcurrencyControlGuard { cell, .. } =>
+    //             Some(ConcurrencyControlCell(cell.clone())),
+    //         OptimisticGuard { cell: Some(cell), .. } =>
+    //             Some(OptimisticCell(cell.clone())),
+    //         _ => None
+    //     }
+    // }
 
     pub fn guard_result(&self) -> GuardDerefResult<'a, E> {
         match self {

@@ -1,16 +1,8 @@
-use std::borrow::BorrowMut;
-use std::collections::vec_deque::Iter;
-use std::collections::VecDeque;
-use std::mem;
-use std::ops::{Deref, DerefMut};
-use mvcc_bplustree::index::record::Record;
-use mvcc_bplustree::index::version_info::Version;
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
-use mvcc_bplustree::utils::cc_cell::{CCCell, CCCellGuard};
-use mvcc_bplustree::utils::interval::KeyInterval;
 use crate::bplus_tree::Index;
-use crate::index::node::{Node, NodeGuard, NodeRef};
+use crate::index::aligned_page::IndexPage;
+use crate::index::node::Node;
 
 impl Index {
     // pub fn execute_range_query_iter(&self, transaction: Transaction) -> Option<ResultIter> {
@@ -103,7 +95,7 @@ impl Index {
                 let guard
                     = self.traversal_read(key);
 
-                match guard.guard_result().as_ref().unwrap() {
+                match guard.guard_result().as_ref().unwrap().as_ref() {
                     Node::Leaf(records) => records
                         .iter()
                         .find(|record| record.key() == key)
@@ -122,7 +114,7 @@ impl Index {
                 let guard
                     = self.traversal_read(key);
 
-                match guard.guard_result().as_ref().unwrap() {
+                match guard.guard_result().as_ref().unwrap().as_ref() {
                     Node::Leaf(records) => records
                         .iter()
                         .rev()
@@ -146,10 +138,10 @@ impl Index {
                     = (key_interval.lower(), key_interval.upper());
 
                 let current_guard
-                    = self.lock_reader(&self.root);
+                    = self.lock_reader(&self.root.block());
 
                 let current_root
-                    = self.root.clone();
+                    = self.root.block();
 
                 let mut lock_level
                     = vec![(current_root, current_guard)];
@@ -158,8 +150,13 @@ impl Index {
                     match lock_level.first().map(|(_n, guard)| guard.guard_result().as_ref().unwrap().is_directory()).unwrap_or(false) {
                         true => lock_level = lock_level
                             .drain(..)
-                            .flat_map(|(_, guard)| match guard.guard_result().as_ref().unwrap() {
-                                Node::Index(keys, children) => keys
+                            .flat_map(|(_, guard)| match guard.guard_result().as_ref().unwrap().as_ref() {
+                                Node::Index(
+                                    IndexPage {
+                                        keys,
+                                        children,
+                                        ..
+                                    }) => keys
                                     .iter()
                                     .enumerate()
                                     .skip_while(|(_, k)| !lower.lt(k))
@@ -177,7 +174,7 @@ impl Index {
                             }).collect(),
                         false => break TransactionResult::MatchedRecords(lock_level
                             .drain(..)
-                            .flat_map(|(_n, guard)| match guard.guard_result().as_ref().unwrap() {
+                            .flat_map(|(_n, guard)| match guard.guard_result().as_ref().unwrap().as_ref() {
                                 Node::Leaf(records) => records
                                     .iter()
                                     .filter(|record| key_interval.contains(record.key()) &&

@@ -12,9 +12,10 @@ pub(crate) type RecordListsPage = LeafPage<RecordList>;
 
 impl<E: Default> LeafPage<E> {
     pub(crate) fn new(cap: usize) -> Self {
-        let vec
+        let mut vec
             = Vec::with_capacity(cap);
 
+        vec.shrink_to(cap);
         let allocated_units = cap as _;
 
         LeafPage {
@@ -115,12 +116,12 @@ impl IndexPage {
         self.children.len()
     }
 
-    pub(crate) fn keys(&self) -> &FixedArray<Key> {
-        self.keys.as_ref()
+    pub(crate) fn keys(&self) -> &[Key] {
+        self.keys.as_slice()
     }
 
-    pub(crate) fn children(&self) -> &FixedArray<BlockRef> {
-        self.children.as_ref()
+    pub(crate) fn children(&self) -> &[BlockRef] {
+        self.children.as_slice()
     }
 
     pub(crate) fn keys_mut(&mut self) -> ManuallyDrop<Vec<Key>> {
@@ -130,6 +131,14 @@ impl IndexPage {
                 self.keys.len(),
                 self.keys_cap()))
         }
+    }
+
+    pub(crate) fn set_len_keys(&mut self, len: usize) {
+        unsafe { self.keys.set_len(len) }
+    }
+
+    pub(crate) fn set_len_children(&mut self, len: usize) {
+        unsafe { self.children.set_len(len) }
     }
 
     pub(crate) fn children_mut(&mut self) -> ManuallyDrop<Vec<BlockRef>> {
@@ -150,8 +159,8 @@ impl<E: Default> LeafPage<E> {
     pub(crate) fn as_records(&mut self) -> ManuallyDrop<Vec<E>> {
         unsafe {
             ManuallyDrop::new(Vec::from_raw_parts(
-                self.record_data.as_mut_ptr(),
-                self.record_data.len(),
+                self.as_mut_ptr(),
+                self.len(),
                 self.cap()))
         }
     }

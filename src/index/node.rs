@@ -1,10 +1,10 @@
 use std::fmt::{Display, Formatter};
 use std::mem::ManuallyDrop;
-use chronicle_db::tools::aliases::Keys;
+use chronicle_db::tools::aliases::{Keys, ObjectCount};
 use itertools::Itertools;
 use mvcc_bplustree::index::record::Record;
-use crate::index::aligned_page::{IndexPage, RecordListsPage, RecordsPage};
-use crate::index::block::Block;
+use crate::block::aligned_page::{IndexPage, RecordListsPage, RecordsPage};
+use crate::block::block::Block;
 use crate::index::record_list::RecordList;
 use crate::utils::vcc_cell::{ConcurrentCell, ConcurrentGuard, GuardDerefResult, OptCell};
 
@@ -54,10 +54,46 @@ impl Node {
         }
     }
 
+    pub(crate) fn set_records_len(&mut self, len: usize) {
+        match self {
+            Node::Leaf(leaf_page) => unsafe { leaf_page.set_len(len) },
+            Node::MultiVersionLeaf(leaf_page) => unsafe { leaf_page.set_len(len) },
+            _ => unreachable!("Sleepy joe hit me -> len for records on index page!")
+        }
+    }
+
+    pub(crate) fn set_keys_len(&mut self, len: usize) {
+        match self {
+            Node::Index(index_page) => index_page.set_len_keys(len),
+            _ => unreachable!("Sleepy joe hit me -> keys len for index page on leaf page!")
+        }
+    }
+
+    pub(crate) fn set_children_len(&mut self, len: usize) {
+        match self {
+            Node::Index(index_page) => index_page.set_len_children(len),
+            _ => unreachable!("Sleepy joe hit me -> children len for index page on leaf page!")
+        }
+    }
+
     pub(crate) fn children_mut(&mut self) -> ManuallyDrop<Vec<BlockRef>> {
         match self {
             Node::Index(index_page) => index_page.children_mut(),
             _ => unreachable!("Sleepy Joe hit me -> Not index Page .children_mut")
+        }
+    }
+
+    pub(crate) fn children_len(&self) -> usize {
+        match self {
+            Node::Index(index_page) => index_page.children_len(),
+            _ => unreachable!("Sleepy Joe hit me -> Not index Page .children_len")
+        }
+    }
+
+    pub(crate) fn keys_len(&self) -> usize {
+        match self {
+            Node::Index(index_page) => index_page.keys_len(),
+            _ => unreachable!("Sleepy Joe hit me -> Not index Page .keys_len")
         }
     }
 
@@ -95,12 +131,20 @@ impl Node {
                 Ok(pos) if is_update => records_page
                     .get_mut(pos)
                     .delete(record.insertion_version())
-                    .then(|| {
-                        records_page.as_records().insert(pos + 1, record);
+                    .then(|| unsafe {
+                        let mut records
+                            = records_page.as_records();
+
+                        records.insert(pos + 1, record);
+                        records_page.set_len(records.len() as _);
                         true
                     }).unwrap_or(false),
-                Err(pos) if !is_update => {
-                    records_page.as_records().insert(pos, record);
+                Err(pos) if !is_update => unsafe {
+                    let mut records
+                        = records_page.as_records();
+
+                    records.insert(pos, record);
+                    records_page.set_len(records.len() as _);
                     true
                 }
                 _ => false
@@ -119,8 +163,12 @@ impl Node {
                             true
                         }).unwrap_or(false)
                 }
-                Err(pos) if !is_update => {
-                    records_lists.as_records().insert(pos, RecordList::from_record(record));
+                Err(pos) if !is_update => unsafe {
+                    let mut records
+                        = records_lists.as_records();
+
+                    records.insert(pos, RecordList::from_record(record));
+                    records_lists.set_len(records.len() as _);
                     true
                 }
                 _ => false
@@ -135,6 +183,12 @@ impl Node {
             Node::Leaf(records_page) => records_page.len(),
             Node::MultiVersionLeaf(record_lists_page) => record_lists_page.len()
         }
+    }
+}
+
+impl AsRef<Node> for Node {
+    fn as_ref(&self) -> &Node {
+        &self
     }
 }
 

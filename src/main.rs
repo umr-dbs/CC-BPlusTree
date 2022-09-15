@@ -20,13 +20,14 @@ use crate::index::bplus_tree::Index;
 mod index;
 mod transaction;
 mod utils;
+mod block;
 
 
 fn main() {
     make_splash();
 
-    // simple_test();
-    // simple_test2();
+    simple_test();
+    simple_test2();
     experiment();
     //
     // experiment2();
@@ -76,11 +77,11 @@ fn simple_test() {
         3, 9, 5, 2, 13, 40, 38, 41, 27, 16, 28, 42, 1, 43, 23, 26,
         44, 17, 29, 39, 20, 6, 4, 7, 30, 21, 35, 8];
 
-    let mut rand = rand::thread_rng();
-    let mut keys_insert = gen_rand_data(100_000);
-
-    let dups = rand.next_u32().min(keys_insert.len() as _) as usize;
-    keys_insert.extend(keys_insert.get(..dups).unwrap().to_vec());
+    // let mut rand = rand::thread_rng();
+    // let mut keys_insert = gen_rand_data(1_000);
+    //
+    // let dups = rand.next_u32().min(keys_insert.len() as _) as usize;
+    // keys_insert.extend(keys_insert.get(..dups).unwrap().to_vec());
     // let mut rng = thread_rng();
     // keys_insert.shuffle(&mut rng);
 
@@ -105,6 +106,9 @@ fn simple_test() {
     let mut search_queries = vec![];
 
     for (i, tx) in keys_insert.into_iter().enumerate() {
+        if i +1 == 11 {
+            let s = 1312;
+        }
         println!("# {}", i + 1);
         println!("########################################################################################################");
 
@@ -252,12 +256,12 @@ fn experiment() {
         // 10,
         // 100,
         // 1_000,
-        // 10_000,
-        // 100_000,
-        1_000_000,
+        10_000,
+        100_000,
+        // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
+        // 10_000_000,
         // 20_000_000,
         // 50_000_000,
         // 100_000_000,

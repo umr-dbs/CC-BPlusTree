@@ -377,6 +377,41 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     //     }
     // }
 
+    // pub(crate) fn refresh(&mut self) {
+    //     match self {
+    //         ConcurrencyControlGuard {
+    //             cell,
+    //             guard
+    //         } => *guard = unsafe {
+    //             mem::transmute(match mem::take(guard) {
+    //                 CCCellGuard::LockFree(_) =>
+    //                     CCCellGuard::LockFree(cell.unsafe_borrow_mut()),
+    //                 CCCellGuard::Reader(rl, _) =>
+    //                     CCCellGuard::Reader(rl, cell.unsafe_borrow()),
+    //                 CCCellGuard::Writer(wl, _) =>
+    //                     CCCellGuard::Writer(wl, cell.unsafe_borrow_mut()),
+    //                 CCCellGuard::Exclusive(el, _) =>
+    //                     CCCellGuard::Exclusive(el, cell.unsafe_borrow_mut())
+    //             })
+    //         },
+    //         OptimisticGuard {
+    //             cell,
+    //             guard_deref
+    //         } => {
+    //             *guard_deref = unsafe {
+    //                 mem::transmute(match mem::take(guard_deref) {
+    //                     Ref(_) => Ref(cell.as_ref().unwrap().cell.as_ref()),
+    //                     RefMut(_) => RefMut(cell.as_ref().unwrap().cell.get_mut()),
+    //                     ReadHolder((_, rl)) if cell.as_ref().unwrap().is_read_valid(rl) =>
+    //                         ReadHolder((cell.as_ref().unwrap().as_ref(), rl)),
+    //                     WriteHolder((_, wl)) => WriteHolder((cell.as_ref().unwrap(), wl)),
+    //                     _ => Null,
+    //                 })
+    //             }
+    //         }
+    //     }
+    // }
+
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
             ConcurrencyControlGuard { guard, .. } => guard

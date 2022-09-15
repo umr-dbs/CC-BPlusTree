@@ -1,9 +1,10 @@
 use std::mem;
 use chronicle_db::tools::aliases::Key;
+use itertools::Itertools;
 use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level, LockingStrategy};
+use crate::block::aligned_page::IndexPage;
 use crate::bplus_tree::{Height, LockLevel};
 use crate::Index;
-use crate::index::aligned_page::IndexPage;
 use crate::index::node::{Node, BlockGuard, BlockGuardResult, BlockRef};
 use crate::utils::vcc_cell::sched_yield;
 
@@ -37,7 +38,7 @@ impl Index {
             = self.root.clone();
 
         let root_block
-            = &root.block.get().0;
+            = self.root.block();
 
         let is_root_lock
             = self.locking_strategy.is_lock_root(lock_level, attempt, root.height());
@@ -121,16 +122,16 @@ impl Index {
             false => false
         };
 
-        let root_mut
+        let root_block_mut
             = guard_result.assume_mut().unwrap();
 
         let n_height
             = root.height() + 1;
 
-        match &mut root_mut.node_data {
+        match &mut root_block_mut.node_data {
             Node::Index(index_page) => {
-                let mut keys = index_page.keys_mut();
-                let mut children = index_page.children_mut();
+                let keys = index_page.keys();
+                let children = index_page.children();
 
                 let keys_mid = keys.len() / 2;
                 let k3 = *keys.get(keys_mid).unwrap();
@@ -144,34 +145,39 @@ impl Index {
                 let mut new_root_left
                     = self.block_manager.new_empty_index_block();
 
-                if is_optimistic {
-                    new_node_right.keys_mut().extend_from_slice(&keys[keys_mid + 1..]);
-                    new_node_right.children_mut().extend_from_slice(&children[keys_mid + 1..]);
+                let keys_slice = &keys[keys_mid + 1..];
+                new_node_right.keys_mut().extend_from_slice(keys_slice);
+                new_node_right.set_keys_len(keys_slice.len());
 
-                    new_root_left.keys_mut().extend_from_slice(&keys[..keys_mid + 1]);
-                    new_root_left.children_mut().extend_from_slice(&children[..keys_mid + 2]);
-                } else {
-                    new_node_right.keys_mut().extend(keys.split_off(keys_mid + 1));
-                    keys.pop();
-                    new_node_right.children_mut().extend(children.split_off(keys_mid + 1));
+                let children_slice = &children[keys_mid + 1..];
+                new_node_right.children_mut().extend_from_slice(children_slice);
+                new_node_right.set_children_len(children_slice.len());
 
-                    new_root_left.keys_mut().extend(keys.split_off(0));
-                    new_root_left.children_mut().extend(children.split_off(0));
-                };
+                let keys_slice = &keys[..keys_mid];
+                new_root_left.keys_mut().extend_from_slice(keys_slice);
+                new_root_left.set_keys_len(keys_slice.len());
+
+                let children_slice = &children[..=keys_mid];
+                new_root_left.children_mut().extend_from_slice(children_slice);
+                new_root_left.set_children_len(children_slice.len());
 
                 index_block.keys_mut().push(k3);
-                index_block.children_mut().push(new_root_left.into_cell(is_optimistic));
-                index_block.children_mut().push(new_node_right.into_cell(is_optimistic));
+                index_block.set_keys_len(1);
+
+                index_block.children_mut().extend([
+                    new_root_left.into_cell(is_optimistic),
+                    new_node_right.into_cell(is_optimistic)
+                ]);
+                index_block.set_children_len(2);
 
                 self.set_new_root(
+                    &mut root_guard,
                     index_block,
-                    n_height,
-                    root_mut,
-                ).map(|guard| root_guard = guard);
+                    n_height);
             }
             Node::Leaf(records) => {
-                let mut records
-                    = records.as_records();
+                let records
+                    = records.as_slice();
 
                 let records_mid
                     = records.len() / 2;
@@ -190,27 +196,31 @@ impl Index {
                 let mut new_root
                     = self.block_manager.new_empty_index_block();
 
-                if is_optimistic {
-                    new_node_right.records_mut().extend_from_slice(&records[records_mid..]);
-                    new_node_left.records_mut().extend_from_slice(&records[..records_mid]);
-                } else {
-                    new_node_right.records_mut().extend(records.split_off(records_mid));
-                    new_node_left.records_mut().extend(records.split_off(0));
-                };
+                let records_slice = &records[records_mid..];
+                new_node_right.records_mut().extend_from_slice(records_slice);
+                new_node_right.set_records_len(records_slice.len());
+
+                let records_slice = &records[..records_mid];
+                new_node_left.records_mut().extend_from_slice(records_slice);
+                new_node_left.set_records_len(records_slice.len());
 
                 new_root.keys_mut().push(k3);
-                new_root.children_mut().push(new_node_left.into_cell(is_optimistic));
-                new_root.children_mut().push(new_node_right.into_cell(is_optimistic));
+                new_root.set_keys_len(1);
+
+                new_root.children_mut().extend([
+                    new_node_left.into_cell(is_optimistic),
+                    new_node_right.into_cell(is_optimistic)
+                ]);
+                new_root.set_children_len(2);
 
                 self.set_new_root(
+                    &mut root_guard,
                     new_root,
-                    n_height,
-                    root_mut,
-                ).map(|guard| root_guard = guard);
+                    n_height);
             }
             Node::MultiVersionLeaf(records) => {
-                let mut records
-                    = records.as_records();
+                let records
+                    = records.as_slice();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
@@ -227,23 +237,27 @@ impl Index {
                 let mut new_root
                     = self.block_manager.new_empty_index_block();
 
-                if is_optimistic {
-                    new_node_right.record_lists_mut().extend_from_slice(&records[records_mid..]);
-                    new_node_left.record_lists_mut().extend_from_slice(&records[..records_mid]);
-                } else {
-                    new_node_right.record_lists_mut().extend(records.split_off(records_mid));
-                    new_node_left.record_lists_mut().extend(records.split_off(0));
-                };
+                let records_slice = &records[records_mid..];
+                new_node_right.record_lists_mut().extend_from_slice(records_slice);
+                new_node_right.set_records_len(records_slice.len());
+
+                let records_slice = &records[..records_mid];
+                new_node_left.record_lists_mut().extend_from_slice(records_slice);
+                new_node_left.set_records_len(records_slice.len());
 
                 new_root.keys_mut().push(k3);
-                new_root.children_mut().push(new_node_left.into_cell(is_optimistic));
-                new_root.children_mut().push(new_node_right.into_cell(is_optimistic));
+                new_root.set_keys_len(1);
+
+                new_root.children_mut().extend([
+                    new_node_left.into_cell(is_optimistic),
+                    new_node_right.into_cell(is_optimistic)
+                ]);
+                new_root.set_children_len(2);
 
                 self.set_new_root(
+                    &mut root_guard,
                     new_root,
-                    n_height,
-                    root_mut,
-                ).map(|guard| root_guard = guard);
+                    n_height);
             }
         }
 
@@ -269,11 +283,11 @@ impl Index {
 
         match from_node_deref.as_mut() {
             Node::Index(index_page) => {
-                let mut keys
-                    = index_page.keys_mut();
+                let keys
+                    = index_page.keys();
 
-                let mut children
-                    = index_page.children_mut();
+                let children
+                    = index_page.children();
 
                 let keys_mid = keys.len() / 2;
                 let k3 = *keys.get(keys_mid).unwrap();
@@ -284,20 +298,21 @@ impl Index {
                 let mut new_node_from
                     = self.block_manager.new_empty_index_block();
 
-                if is_optimistic {
-                    new_node_right.keys_mut().extend_from_slice(&keys[keys_mid + 1..]);
-                    new_node_right.children_mut().extend_from_slice(&children[keys_mid + 1..]);
+                let keys_slice = &keys[keys_mid + 1..];
+                new_node_right.keys_mut().extend_from_slice(keys_slice);
+                new_node_right.set_keys_len(keys_slice.len());
 
-                    new_node_from.keys_mut().extend_from_slice(&keys[..keys_mid]);
-                    new_node_from.children_mut().extend_from_slice(&children[..keys_mid + 1]);
-                } else {
-                    new_node_right.keys_mut().extend(keys.split_off(keys_mid + 1));
-                    keys.pop();
-                    new_node_right.children_mut().extend(children.split_off(keys_mid + 1));
+                let children_slice = &children[keys_mid + 1..];
+                new_node_right.children_mut().extend_from_slice(children_slice);
+                new_node_right.set_children_len(children_slice.len());
 
-                    new_node_from.keys_mut().extend(keys.split_off(0));
-                    new_node_from.children_mut().extend(children.split_off(0));
-                };
+                let keys_slice = &keys[..keys_mid];
+                new_node_from.keys_mut().extend_from_slice(keys_slice);
+                new_node_from.set_keys_len(keys_slice.len());
+
+                let children_slice = &children[..=keys_mid];
+                new_node_from.children_mut().extend_from_slice(children_slice);
+                new_node_from.set_children_len(children_slice.len());
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
@@ -306,9 +321,15 @@ impl Index {
                     .keys_mut()
                     .insert(child_pos, k3);
 
+                let keys_len = parent_mut.keys_len();
+                parent_mut.set_keys_len(keys_len + 1);
+
                 parent_mut
                     .children_mut()
                     .insert(child_pos + 1, new_node_right.into_cell(is_optimistic));
+
+                let children_len = parent_mut.children_len();
+                parent_mut.set_children_len(children_len + 1);
 
                 *parent_mut
                     .children_mut()
@@ -316,8 +337,8 @@ impl Index {
                     .unwrap() = new_node_from.into_cell(is_optimistic);
             }
             Node::Leaf(records) => {
-                let mut records
-                    = records.as_records();
+                let records
+                    = records.as_slice();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
@@ -331,13 +352,13 @@ impl Index {
                 let mut new_node_from
                     = self.block_manager.new_empty_leaf_single_version_block();
 
-                if is_optimistic {
-                    new_node.records_mut().extend_from_slice(&records[records_mid..]);
-                    new_node_from.records_mut().extend_from_slice(&records[..records_mid]);
-                } else {
-                    new_node.records_mut().extend(records.split_off(records_mid));
-                    new_node_from.records_mut().extend(records.split_off(0));
-                }
+                let records_slice = &records[records_mid..];
+                new_node.records_mut().extend_from_slice(records_slice);
+                new_node.set_records_len(records_slice.len());
+
+                let records_slice = &records[..records_mid];
+                new_node_from.records_mut().extend_from_slice(records_slice);
+                new_node_from.set_records_len(records_slice.len());
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
@@ -346,9 +367,15 @@ impl Index {
                     .keys_mut()
                     .insert(child_pos, k3);
 
+                let keys_len = parent_mut.keys_len();
+                parent_mut.set_keys_len(keys_len + 1);
+
                 parent_mut
                     .children_mut()
                     .insert(child_pos + 1, new_node.into_cell(is_optimistic));
+
+                let children_len = parent_mut.children_len();
+                parent_mut.set_children_len(children_len + 1);
 
                 *parent_mut
                     .children_mut()
@@ -356,8 +383,8 @@ impl Index {
                     .unwrap() = new_node_from.into_cell(is_optimistic);
             }
             Node::MultiVersionLeaf(records) => {
-                let mut records
-                    = records.as_records();
+                let records
+                    = records.as_slice();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
@@ -371,13 +398,13 @@ impl Index {
                 let mut new_node_from
                     = self.block_manager.new_empty_leaf_multi_version_block();
 
-                if is_optimistic {
-                    new_node.record_lists_mut().extend_from_slice(&records[records_mid..]);
-                    new_node_from.record_lists_mut().extend_from_slice(&records[..records_mid]);
-                } else {
-                    new_node.record_lists_mut().extend(records.split_off(records_mid));
-                    new_node_from.record_lists_mut().extend(records.split_off(0));
-                }
+                let records_slice = &records[records_mid..];
+                new_node.record_lists_mut().extend_from_slice(records_slice);
+                new_node.set_records_len(records_slice.len());
+
+                let records_slice = &records[..records_mid];
+                new_node_from.record_lists_mut().extend_from_slice(records_slice);
+                new_node_from.set_records_len(records_slice.len());
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
@@ -386,9 +413,15 @@ impl Index {
                     .keys_mut()
                     .insert(child_pos, k3);
 
+                let parent_keys_len = parent_mut.keys_len();
+                parent_mut.set_keys_len(parent_keys_len + 1);
+
                 parent_mut
                     .children_mut()
                     .insert(child_pos + 1, new_node.into_cell(is_optimistic));
+
+                let parent_children_len = parent_mut.children_len();
+                parent_mut.set_children_len(parent_children_len + 1);
 
                 *parent_mut
                     .children_mut()
@@ -510,7 +543,9 @@ impl Index {
                             return Err((curr_level - 1, attempt + 1));
                         }
 
-                        debug_assert!(current_guard.is_write_lock() && next_guard.is_write_lock());
+                        debug_assert!(self.locking_strategy.additional_lock_required() &&
+                            current_guard.is_write_lock() && next_guard.is_write_lock() ||
+                            !self.locking_strategy.additional_lock_required());
 
                         self.do_overflow_correction(
                             current_guard.guard_result(),
@@ -585,7 +620,9 @@ impl Index {
                         .enumerate()
                         .find(|(_, k)| key.lt(k))
                         .map(|(pos, _)| (children.get(pos).cloned(), pos))
-                        .unwrap_or_else(|| (children.get(children.len() - 1).cloned(), keys.len()));
+                        .unwrap_or_else(||
+                            (children.get(children.len().checked_sub(1).unwrap_or(usize::MAX)).cloned(),
+                             keys.len()));
 
                     if next_node.is_none() || !current_guard.is_valid() {
                         return None;
@@ -596,7 +633,8 @@ impl Index {
 
                     current_guard = self.lock_reader(&next_node);
                 }
-                _ => break Some(current_guard),
+                _ if current_guard.is_valid() => break Some(current_guard),
+                _ => break None
             }
         }
     }

@@ -1,10 +1,12 @@
+use std::mem;
 use std::sync::atomic::Ordering::Relaxed;
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
 use mvcc_bplustree::locking::locking_strategy::{Attempts, Level, LockingStrategy};
-use crate::index::block::Block;
-use crate::index::block_manager::BlockManager;
+use crate::block::block::Block;
+use crate::block::block_manager::BlockManager;
 use crate::index::node::{Node, BlockGuard, BlockRef};
 use crate::index::root::Root;
+use crate::utils::un_cell::UnCell;
 use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
 // use serde::{Serialize, Deserialize};
 
@@ -14,7 +16,7 @@ pub(crate) type Index = BPlusTree;
 
 // #[derive(Serialize, Deserialize)]
 pub struct BPlusTree {
-    pub(crate) root: Root,
+    pub(crate) root: UnCell<Root>,
     pub(crate) locking_strategy: LockingStrategy,
     pub(crate) block_manager: BlockManager,
     pub(crate) version_counter: AtomicVersion,
@@ -31,31 +33,13 @@ impl BPlusTree {
     pub(crate) const MAX_TREE_HEIGHT: Level = usize::MAX;
     pub(crate) const START_VERSION: Version = 0;
 
-    pub(crate) fn set_new_root(&self, new_root: Block, new_height: Level, old_root_ptr: &mut Node) -> Option<BlockGuard> {
-        match self.locking_strategy.is_dolos() {
-            true => {
-                let new_root
-                    = new_root.into_cell_dolos();
+    pub(crate) fn set_new_root<'a>(&self, current_root_guard: &mut BlockGuard<'a>, new_root: Block, new_height: Level){
+        let _ = mem::replace(
+            self.root.block.unsafe_borrow_mut_static(),
+            new_root
+        );
 
-                let new_root_guard = self.apply_for(
-                    Self::INIT_TREE_HEIGHT,
-                    LockLevel::MIN,
-                    Attempts::MAX,
-                    Height::MIN,
-                    new_root.clone());
-
-                debug_assert!(new_root_guard.is_write_lock());
-
-                let _ =
-                    self.root.replace(new_root, new_height);
-
-                Some(new_root_guard)
-            },
-            false => {
-                *old_root_ptr = new_root.node_data;
-                None
-            }
-        }
+        self.root.get_mut().height = new_height;
     }
 
     fn make(block_manager: BlockManager, locking_strategy: LockingStrategy) -> Self {
@@ -63,7 +47,10 @@ impl BPlusTree {
             = block_manager.make_empty_root();
 
         Self {
-            root: (empty_node, Self::INIT_TREE_HEIGHT, &locking_strategy).into(),
+            root: UnCell::new(Root::new(
+                empty_node.into_cell(locking_strategy.is_dolos()),
+                Self::INIT_TREE_HEIGHT
+            )),
             version_counter: AtomicVersion::new(Self::START_VERSION),
             locking_strategy,
             block_manager,

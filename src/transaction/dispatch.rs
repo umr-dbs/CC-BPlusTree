@@ -1,7 +1,7 @@
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
+use crate::block::aligned_page::IndexPage;
 use crate::bplus_tree::Index;
-use crate::index::aligned_page::IndexPage;
 use crate::index::node::Node;
 
 impl Index {

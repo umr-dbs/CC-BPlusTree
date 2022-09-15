@@ -26,10 +26,12 @@ impl Block {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn into_cell_dolos(self) -> BlockRef {
         OptimisticCell(Arc::new(OptCell::new(self)))
     }
 
+    #[inline(always)]
     pub(crate) fn into_cell_cc(self) -> BlockRef {
         ConcurrencyControlCell(Arc::new(CCCell::new(self)))
     }

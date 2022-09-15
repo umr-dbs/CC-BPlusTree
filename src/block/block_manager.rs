@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 use mvcc_bplustree::block::block::{AtomicBlockID, BlockID};
-use crate::index::aligned_page::{IndexPage, RecordListsPage, RecordsPage};
-use crate::index::block::Block;
+use crate::block::aligned_page::{IndexPage, RecordListsPage, RecordsPage};
+use crate::block::block::Block;
 use crate::index::node::Node;
 
 pub(crate) const DEFAULT_ALLOCATION_LEAF: usize = 10;
@@ -76,11 +76,14 @@ impl BlockManager {
 
     /// Crafts a new aligned Index-Block.
     pub(crate) fn new_empty_index_block(&self) -> Block {
-        let keys_vec
+        let mut keys_vec
             = Vec::with_capacity(self.allocation_directory());
 
-        let children_vec
+        let mut children_vec
             = Vec::with_capacity(self.allocation_directory() + 1);
+
+        keys_vec.shrink_to(self.allocation_directory());
+        children_vec.shrink_to(self.allocation_directory() + 1);
 
         debug_assert!(keys_vec.capacity() == self.index_allocation);
         debug_assert!(children_vec.capacity() == self.index_allocation + 1);

@@ -74,7 +74,7 @@ impl<E: Default> OptCell<E> {
     fn read_lock(&self) -> (bool, Version) {
         let version = self.load_version();
         if version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
-            hint::spin_loop();
+            // hint::spin_loop();
             (false, version)
         } else {
             (true, version)
@@ -142,7 +142,7 @@ impl<E: Default> OptCell<E> {
     // }
 }
 
-#[repr(u8)]
+// #[repr(u8)]
 pub enum ConcurrentCell<E: Default> {
     ConcurrencyControlCell(Arc<CCCell<E>>),
     OptimisticCell(Arc<OptCell<E>>),
@@ -301,6 +301,16 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    // pub unsafe fn as_reader(&self) -> Option<&E> {
+    //     match self {
+    //         Ref(e) => Some(e),
+    //         RefMut(e) => e.as_ref(),
+    //         WriteHolder((e, _)) => Some(e.cell.deref()),
+    //         ReadHolder((e, ..)) => Some(e.cell.deref()),
+    //         _ => None
+    //     }
+    // }
+
     pub fn assume_mut(&self) -> Option<&'a mut E> {
         match self {
             RefMut(e) => unsafe { e.as_mut() },
@@ -376,7 +386,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     //         _ => None
     //     }
     // }
-
+    //
     // pub(crate) fn refresh(&mut self) {
     //     match self {
     //         ConcurrencyControlGuard {
@@ -515,6 +525,31 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     //         OptimisticGuard { cell: Some(cell), .. } =>
     //             Some(OptimisticCell(cell.clone())),
     //         _ => None
+    //     }
+    // }
+
+    // pub unsafe fn guard_result_reader(&self) -> GuardDerefResult<'a, E> {
+    //     match self {
+    //         ConcurrencyControlGuard { guard, .. } => match guard {
+    //             CCCellGuard::Reader(_, e) => Ref(*e),
+    //             CCCellGuard::LockFree(e) => {
+    //                 let p: *mut *mut E = mem::transmute(e);
+    //                 RefMut(*p)
+    //             }
+    //             CCCellGuard::Writer(_, e) => {
+    //                 let p: *mut *mut E = mem::transmute(e);
+    //                 RefMut(*p)
+    //             },
+    //             CCCellGuard::Exclusive(_, e) => {
+    //                 let p: *mut *mut E = mem::transmute(e);
+    //                 RefMut(*p)
+    //             },
+    //         },
+    //         OptimisticGuard {
+    //             cell: Some(cell),
+    //             ..
+    //         } => Ref(mem::transmute(cell.as_ref())),
+    //         _ => Null
     //     }
     // }
 

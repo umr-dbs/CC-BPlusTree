@@ -1,6 +1,6 @@
 [package]
 name = "CCBPlusTree"
-version = "0.0.24"
+version = "0.0.25"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "Experimental Concurrency Control B+Tree with and without Version Lists Implementation"
@@ -15,6 +15,6 @@ chrono = "0.4.22"
 rand = "0.8.5"
 num_cpus = "1.13.1"
 libc = "0.2.132"
-itertools = "0.10.3"
+itertools = "0.10.4"
 #serde = { version ="1.0.14", features = ["derive", "rc"] }
 #serde_json = { version = "1.0.8" }

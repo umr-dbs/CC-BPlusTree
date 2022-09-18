@@ -59,7 +59,6 @@ impl Index {
         match transaction {
             Transaction::Empty => TransactionResult::Error,
             Transaction::Insert(event) => {
-                // println!("Inserting Event = {}", event);
                 let key
                     = event.t1();
 
@@ -71,9 +70,12 @@ impl Index {
 
                 debug_assert!(guard.guard_result().is_mut(), "{}", self.locking_strategy);
 
-                guard.guard_result().assume_mut().unwrap().push_record((event, version).into(), false)
+                guard.guard_result()
+                    .assume_mut()
+                    .unwrap()
+                    .push_record((event, version).into(), false)
                     .then(|| TransactionResult::Inserted(key, version))
-                    .unwrap_or(TransactionResult::Error)
+                    .unwrap_or_default()
             }
             Transaction::Update(event) => {
                 let key
@@ -87,15 +89,24 @@ impl Index {
 
                 debug_assert!(guard.guard_result().is_mut());
 
-                guard.guard_result().assume_mut().unwrap().push_record((event, version).into(), true)
+                guard.guard_result()
+                    .assume_mut()
+                    .unwrap()
+                    .push_record((event, version).into(), true)
                     .then(|| TransactionResult::Updated(key, version))
-                    .unwrap_or(TransactionResult::Error)
+                    .unwrap_or_default()
             }
             Transaction::ExactSearch(key, version) => {
                 let guard
                     = self.traversal_read(key);
 
-                match guard.guard_result().as_ref().unwrap().as_ref() {
+                let guard_result
+                    = guard.guard_result();
+
+                let reader
+                    = guard_result.as_ref().unwrap();
+
+                match reader.as_ref() {
                     Node::Leaf(records) => records
                         .iter()
                         .find(|record| record.key() == key)
@@ -114,7 +125,13 @@ impl Index {
                 let guard
                     = self.traversal_read(key);
 
-                match guard.guard_result().as_ref().unwrap().as_ref() {
+                let guard_result
+                    = guard.guard_result();
+
+                let reader
+                    = guard_result.as_ref().unwrap();
+
+                match reader.as_ref() {
                     Node::Leaf(records) => records
                         .iter()
                         .rev()

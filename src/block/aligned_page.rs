@@ -26,7 +26,7 @@ impl<E: Default> LeafPage<E> {
 }
 
 /// Defines a record page, wrapping aligned Records with an allocation size.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct LeafPage<E: Default> {
     pub(crate) record_data: FixedArray<E>,
     pub(crate) allocated_units: ObjectCount
@@ -63,7 +63,7 @@ impl<E: Default> DerefMut for LeafPage<E> {
 
 
 /// Defines a record page, wrapping aligned Records with an allocation size.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct IndexPage {
     pub(crate) keys: FixedArray<Key>,
     pub(crate) children: FixedArray<BlockRef>,

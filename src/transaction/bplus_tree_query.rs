@@ -19,13 +19,16 @@ impl Index {
     }
 
     fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (BlockGuard, Height, LockLevel, Attempts) {
+        let dolos = self.locking_strategy.is_dolos();
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
                 Err((n_lock_level, n_attempt)) => {
                     lock_level = n_lock_level;
                     attempt = n_attempt;
 
-                    sched_yield(attempt);
+                    if dolos {
+                        sched_yield(attempt);
+                    }
                 }
                 Ok((guard, height)) => break (guard, height, lock_level, attempt)
             }
@@ -171,7 +174,6 @@ impl Index {
                 index_block.set_children_len(2);
 
                 self.set_new_root(
-                    &mut root_guard,
                     index_block,
                     n_height);
             }
@@ -214,7 +216,6 @@ impl Index {
                 new_root.set_children_len(2);
 
                 self.set_new_root(
-                    &mut root_guard,
                     new_root,
                     n_height);
             }
@@ -255,7 +256,6 @@ impl Index {
                 new_root.set_children_len(2);
 
                 self.set_new_root(
-                    &mut root_guard,
                     new_root,
                     n_height);
             }
@@ -445,7 +445,9 @@ impl Index {
             let current_ref
                 = current_guard_result.as_ref();
 
-            if current_ref.is_none() || !current_guard.is_valid() {
+            if current_ref.is_none()
+                // || !current_guard.is_valid()
+            {
                 mem::drop(height);
                 mem::drop(current_guard);
 
@@ -459,15 +461,15 @@ impl Index {
             let current_ref = current_ref
                 .unwrap();
 
-            if !current_guard.is_valid() {
-                mem::drop(current_guard);
-
-                if DEBUG {
-                    println!("7 \tAttempt = {}", attempt);
-                }
-
-                return Err((curr_level - 1, attempt + 1));
-            }
+            // if !current_guard.is_valid() {
+            //     mem::drop(current_guard);
+            //
+            //     if DEBUG {
+            //         println!("7 \tAttempt = {}", attempt);
+            //     }
+            //
+            //     return Err((curr_level - 1, attempt + 1));
+            // }
 
             match current_ref.as_ref() {
                 Node::Index(
@@ -575,6 +577,7 @@ impl Index {
     pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard {
         let mut attempt = ATTEMPT_START;
         let mut lock_level = Self::MAX_TREE_HEIGHT;
+        let dolos = self.locking_strategy.is_dolos();
 
         loop {
             match self.traversal_write_internal(lock_level, attempt, key) {
@@ -582,7 +585,9 @@ impl Index {
                     attempt = n_attempt;
                     lock_level = n_lock_level;
 
-                    sched_yield(attempt);
+                    if dolos {
+                        sched_yield(attempt);
+                    }
                 }
                 Ok(guard) => break guard,
             }
@@ -590,8 +595,11 @@ impl Index {
     }
 
     fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard> {
+        let root
+            = self.root.clone();
+
         let mut current_guard
-            = self.lock_reader(&self.root.block());
+            = self.lock_reader(&root.block);
 
         loop {
             if !current_guard.is_valid() {
@@ -604,7 +612,11 @@ impl Index {
             let current
                 = current_deref_result.as_ref();
 
-            if current.is_none() || !current_guard.is_valid() {
+            if current.is_none()
+                // || !current_guard.is_valid()
+                // || self.root.clone().block.unsafe_borrow_static() as *const _ !=
+                //     root.block.unsafe_borrow_static() as *const _
+            {
                 return None;
             }
 
@@ -615,14 +627,12 @@ impl Index {
                         children,
                         ..
                     }) => {
-                    let (next_node, _) = keys
+                    let next_node = keys
                         .iter()
                         .enumerate()
                         .find(|(_, k)| key.lt(k))
-                        .map(|(pos, _)| (children.get(pos).cloned(), pos))
-                        .unwrap_or_else(||
-                            (children.get(children.len().checked_sub(1).unwrap_or(usize::MAX)).cloned(),
-                             keys.len()));
+                        .map(|(pos, _)| children.get(pos).cloned())
+                        .unwrap_or_else(|| children.get(children.len() - 1).cloned());
 
                     if next_node.is_none() || !current_guard.is_valid() {
                         return None;
@@ -633,21 +643,27 @@ impl Index {
 
                     current_guard = self.lock_reader(&next_node);
                 }
-                _ if current_guard.is_valid() => break Some(current_guard),
-                _ => break None
+                _ if self.locking_strategy.is_dolos() => break current_guard
+                    .upgrade_write_lock()
+                    .then(|| current_guard),
+                _ => break Some(current_guard),
             }
         }
     }
 
     pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard {
         let mut attempt = ATTEMPT_START;
+        let dolos = self.locking_strategy.is_dolos();
 
         loop {
             match self.traversal_read_internal(key) {
                 Some(guard) => break guard,
                 _ => {
                     attempt += 1;
-                    sched_yield(attempt)
+
+                    if dolos {
+                        sched_yield(attempt)
+                    }
                 }
             }
         }

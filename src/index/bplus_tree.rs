@@ -29,11 +29,11 @@ impl Default for Index {
 }
 
 impl BPlusTree {
-    pub(crate) const INIT_TREE_HEIGHT: Level = 1;
-    pub(crate) const MAX_TREE_HEIGHT: Level = usize::MAX;
+    pub(crate) const INIT_TREE_HEIGHT: Height = 1;
+    pub(crate) const MAX_TREE_HEIGHT: Height = Height::MAX;
     pub(crate) const START_VERSION: Version = 0;
 
-    pub(crate) fn set_new_root<'a>(&self, current_root_guard: &mut BlockGuard<'a>, new_root: Block, new_height: Level){
+    pub(crate) fn set_new_root(&self, new_root: Block, new_height: Level) {
         let _ = mem::replace(
             self.root.block.unsafe_borrow_mut_static(),
             new_root
@@ -109,7 +109,7 @@ impl BPlusTree {
             LockingStrategy::SingleWriter =>
                 block_cc.borrow_free_static(),
             LockingStrategy::WriteCoupling =>
-                block_cc.borrow_mut_static(),
+                block_cc.borrow_mut_exclusive_static(),
             LockingStrategy::Optimistic(lock_level, attempts)
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut_static(),

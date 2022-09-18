@@ -24,9 +24,19 @@ const READ_FLAG_VERSION: Version = 0x0_000000000000000;
 // const LOCKING_BITS_OFFSET: Version = 2;
 // const VERSIONING_COUNTER_BITS: Version = (8 * mem::size_of::<Version>() as Version) - READERS_NUM_BITS - LOCKING_BITS_OFFSET;
 
+#[cfg(target_os = "linux")]
 pub(crate) fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
         unsafe { libc::sched_yield(); }
+    } else {
+        hint::spin_loop();
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn sched_yield(attempt: Attempts) {
+    if attempt > 3 {
+        thread::sleep(Duration::from_nanos(1))
     } else {
         hint::spin_loop();
     }

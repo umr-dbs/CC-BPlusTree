@@ -41,7 +41,7 @@ impl Index {
             = self.root.clone();
 
         let root_block
-            = self.root.block();
+            = root.block();
 
         let is_root_lock
             = self.locking_strategy.is_lock_root(lock_level, attempt, root.height());

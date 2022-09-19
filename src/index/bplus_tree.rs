@@ -4,10 +4,9 @@ use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
 use mvcc_bplustree::locking::locking_strategy::{Attempts, Level, LockingStrategy};
 use crate::block::block::Block;
 use crate::block::block_manager::BlockManager;
-use crate::index::node::{Node, BlockGuard, BlockRef};
+use crate::index::node::{BlockGuard, BlockRef};
 use crate::index::root::Root;
 use crate::utils::un_cell::UnCell;
-use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
 // use serde::{Serialize, Deserialize};
 
 pub(crate) type Height = Level;

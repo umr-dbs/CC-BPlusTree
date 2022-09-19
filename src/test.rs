@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
-use std::sync::Mutex;
 use std::time::SystemTime;
 use chronicle_db::backbone::core::event::Event;
 use chronicle_db::backbone::core::event::EventVariant::F64;
@@ -11,11 +10,12 @@ use mvcc_bplustree::locking::locking_strategy::LockingStrategy;
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use mvcc_bplustree::utils::cc_cell::CCCell;
+use parking_lot::Mutex;
 use rand::RngCore;
 use crate::{bplus_tree, Index};
 use crate::bplus_tree::BPlusTree;
 
-pub const EXE_LOOP_UPS: bool = true;
+pub const EXE_LOOK_UPS: bool = false;
 
 pub fn log_debug_ln(s: String) {
     println!("> {}", s.replace("\n", "\n>"))
@@ -167,7 +167,8 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
     let index_o
         = CCCell::new(index);
 
-    let mut handles = vec![];
+    let mut handles
+        = Vec::with_capacity(num_thread);
 
     let query_buff = Mutex::new(VecDeque::from_iter(
         t1s.iter().map(|key| Transaction::Insert(
@@ -182,14 +183,14 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
 
     for _ in 1..=num_thread {
         handles.push(thread::spawn(|| loop {
-            let mut buff = query_buff_t.lock().unwrap();
+            let mut buff = query_buff_t.lock();
             let next_query = buff.pop_front();
             mem::drop(buff);
 
             match next_query {
                 Some(query) => match index.execute(query) { // index.execute(transaction),
                     TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if EXE_LOOP_UPS
+                    TransactionResult::Updated(key, version) => if EXE_LOOK_UPS
                     {
                         // loop {
                         match index.execute(Transaction::ExactSearch(key, version)) {
@@ -257,7 +258,7 @@ pub fn beast_test2(num_thread: usize, index: Index, t1s: &[Key]) -> (u128, CCCel
 
     let mut handles = vec![];
 
-    let mut query_buff = Mutex::new(VecDeque::from_iter(
+    let query_buff = Mutex::new(VecDeque::from_iter(
         t1s.iter().map(|key| Transaction::Insert(
             Event::new_single_float_event_t1(*key, *key as _))))
     );
@@ -270,14 +271,14 @@ pub fn beast_test2(num_thread: usize, index: Index, t1s: &[Key]) -> (u128, CCCel
 
     for _ in 1..=num_thread {
         handles.push(thread::spawn(|| loop {
-            let mut buff = query_buff_t.lock().unwrap();
+            let mut buff = query_buff_t.lock();
             let next_query = buff.pop_front();
             mem::drop(buff);
 
             match next_query {
                 Some(query) => match index.execute(query) { // index.execute(transaction),
                     TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if EXE_LOOP_UPS
+                    TransactionResult::Updated(key, version) => if EXE_LOOK_UPS
                     {
                         match index.execute(Transaction::ExactSearch(key, version)) {
                             TransactionResult::MatchedRecord(Some(record))

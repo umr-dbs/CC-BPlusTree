@@ -5,7 +5,7 @@ use chrono::{DateTime, Local};
 use itertools::Itertools;
 use crate::index::bplus_tree;
 use crate::index::bplus_tree::Index;
-use crate::test::{beast_test, EXE_LOOP_UPS, format_insertsions, gen_rand_data, level_order, log_debug, log_debug_ln, simple_test};
+use crate::test::{beast_test, EXE_LOOK_UPS, format_insertsions, gen_rand_data, level_order, log_debug, log_debug_ln, simple_test};
 
 mod index;
 mod transaction;
@@ -157,7 +157,7 @@ fn experiment() {
     cases.iter().for_each(|(t1s, strats)|
         for num_threads in threads_cpu.iter() {
             if *num_threads == 1 {
-                if EXE_LOOP_UPS {
+                if EXE_LOOK_UPS {
                     log_debug_ln(format!("Warning: Look-up queries enabled!"))
                 }
 
@@ -174,27 +174,27 @@ fn experiment() {
 
                 println!(",{}", time);
 
-                if EXE_LOOP_UPS {
-                    log_debug_ln(format!("Warning: Look-up queries enabled!"))
-                }
-
-                print!("{}", t1s.len());
-                print!(",{}", *num_threads);
-
-                let index
-                    = Index::new_single_version_for(LockingStrategy::WriteCoupling);
-
-                let time = beast_test(
-                    1,
-                    index,
-                    t1s.as_slice());
-
-                println!(",{}", time);
+                // if EXE_LOOK_UPS {
+                //     log_debug_ln(format!("Warning: Look-up queries enabled!"))
+                // }
+                //
+                // print!("{}", t1s.len());
+                // print!(",{}", *num_threads);
+                //
+                // let index
+                //     = Index::new_single_version_for(LockingStrategy::WriteCoupling);
+                //
+                // let time = beast_test(
+                //     1,
+                //     index,
+                //     t1s.as_slice());
+                //
+                // println!(",{}", time);
 
                 // thread::sleep(Duration::from_millis(200));
             } else {
                 for ls in strats.iter() {
-                    if EXE_LOOP_UPS {
+                    if EXE_LOOK_UPS {
                         log_debug_ln(format!("Warning: Look-up queries enabled!"))
                     }
 

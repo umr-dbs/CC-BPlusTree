@@ -1,10 +1,9 @@
 use std::mem;
-use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use chronicle_db::tools::aliases::{Key, ObjectCount};
 use chronicle_db::tools::arrays::array::FixedArray;
 use mvcc_bplustree::index::record::Record;
-use crate::index::node::BlockRef;
+use crate::index::node::{BlockRef, ShadowVec};
 use crate::index::record_list::RecordList;
 
 pub(crate) type RecordsPage = LeafPage<Record>;
@@ -20,7 +19,7 @@ impl<E: Default> LeafPage<E> {
 
         LeafPage {
             record_data: vec.into(),
-            allocated_units
+            allocated_units,
         }
     }
 }
@@ -29,19 +28,19 @@ impl<E: Default> LeafPage<E> {
 #[derive(Default)]
 pub(crate) struct LeafPage<E: Default> {
     pub(crate) record_data: FixedArray<E>,
-    pub(crate) allocated_units: ObjectCount
+    pub(crate) allocated_units: ObjectCount,
 }
 
 impl<E: Default> Drop for LeafPage<E> {
     fn drop(&mut self) {
-        let record_data
-            = ManuallyDrop::into_inner(self.as_records());
-
         unsafe {
+            mem::drop(Vec::from_raw_parts(
+                self.as_mut_ptr(),
+                self.len(),
+                self.cap()));
+
             self.record_data.set_len(0);
         }
-
-        mem::drop(record_data);
     }
 }
 
@@ -67,24 +66,29 @@ impl<E: Default> DerefMut for LeafPage<E> {
 pub(crate) struct IndexPage {
     pub(crate) keys: FixedArray<Key>,
     pub(crate) children: FixedArray<BlockRef>,
-    pub(crate) allocated_units: ObjectCount
+    pub(crate) allocated_units: ObjectCount,
 }
 
 impl Drop for IndexPage {
     fn drop(&mut self) {
-        let keys
-            = ManuallyDrop::into_inner(self.keys_mut());
-
-        let children
-            = ManuallyDrop::into_inner(self.children_mut());
-
         unsafe {
+            mem::drop(
+                Vec::from_raw_parts(
+                    self.keys.as_mut_ptr(),
+                    self.keys_len(),
+                    self.keys_cap(),
+                ));
+
+            mem::drop(
+                Vec::from_raw_parts(
+                    self.children.as_mut_ptr(),
+                    self.children_len(),
+                    self.children_cap(),
+                ));
+
             self.keys.set_len(0);
             self.children.set_len(0);
         }
-
-        mem::drop(keys);
-        mem::drop(children);
     }
 }
 
@@ -96,7 +100,7 @@ impl IndexPage {
         Self {
             keys: keys.into(),
             children: children.into(),
-            allocated_units
+            allocated_units,
         }
     }
 
@@ -124,30 +128,12 @@ impl IndexPage {
         self.children.as_slice()
     }
 
-    pub(crate) fn keys_mut(&mut self) -> ManuallyDrop<Vec<Key>> {
-        unsafe {
-            ManuallyDrop::new(Vec::from_raw_parts(
-                self.keys.as_mut_ptr(),
-                self.keys.len(),
-                self.keys_cap()))
-        }
+    pub(crate) fn keys_mut(&mut self) -> ShadowVec<Key> {
+        (self.keys_cap(), self.keys.as_mut()).into()
     }
 
-    pub(crate) fn set_len_keys(&mut self, len: usize) {
-        unsafe { self.keys.set_len(len) }
-    }
-
-    pub(crate) fn set_len_children(&mut self, len: usize) {
-        unsafe { self.children.set_len(len) }
-    }
-
-    pub(crate) fn children_mut(&mut self) -> ManuallyDrop<Vec<BlockRef>> {
-        unsafe {
-            ManuallyDrop::new(Vec::from_raw_parts(
-                self.children.as_mut_ptr(),
-                self.children.len(),
-                self.children_cap()))
-        }
+    pub(crate) fn children_mut(&mut self) -> ShadowVec<BlockRef> {
+        (self.children_cap(), self.children.as_mut()).into()
     }
 }
 
@@ -156,12 +142,7 @@ impl<E: Default> LeafPage<E> {
         self.allocated_units as _
     }
 
-    pub(crate) fn as_records(&mut self) -> ManuallyDrop<Vec<E>> {
-        unsafe {
-            ManuallyDrop::new(Vec::from_raw_parts(
-                self.as_mut_ptr(),
-                self.len(),
-                self.cap()))
-        }
+    pub(crate) fn as_records(&mut self) -> ShadowVec<E> {
+        (self.cap(), self.as_mut()).into()
     }
 }

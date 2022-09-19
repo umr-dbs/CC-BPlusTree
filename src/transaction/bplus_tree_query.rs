@@ -1,6 +1,5 @@
 use std::mem;
 use chronicle_db::tools::aliases::Key;
-use itertools::Itertools;
 use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level, LockingStrategy};
 use crate::block::aligned_page::IndexPage;
 use crate::bplus_tree::{Height, LockLevel};
@@ -132,12 +131,12 @@ impl Index {
             = root.height() + 1;
 
         match &mut root_block_mut.node_data {
-            Node::Index(index_page) => {
+            Node::Index(index_page) => unsafe {
                 let keys = index_page.keys();
                 let children = index_page.children();
 
                 let keys_mid = keys.len() / 2;
-                let k3 = *keys.get(keys_mid).unwrap();
+                let k3 = *keys.get_unchecked(keys_mid);
 
                 let mut index_block
                     = self.block_manager.new_empty_index_block();
@@ -148,36 +147,31 @@ impl Index {
                 let mut new_root_left
                     = self.block_manager.new_empty_index_block();
 
-                let keys_slice = &keys[keys_mid + 1..];
-                new_node_right.keys_mut().extend_from_slice(keys_slice);
-                new_node_right.set_keys_len(keys_slice.len());
+                new_node_right
+                    .keys_mut()
+                    .extend_from_slice(keys.get_unchecked(keys_mid + 1..));
+                new_node_right
+                    .children_mut()
+                    .extend_from_slice(children.get_unchecked(keys_mid + 1..));
 
-                let children_slice = &children[keys_mid + 1..];
-                new_node_right.children_mut().extend_from_slice(children_slice);
-                new_node_right.set_children_len(children_slice.len());
-
-                let keys_slice = &keys[..keys_mid];
-                new_root_left.keys_mut().extend_from_slice(keys_slice);
-                new_root_left.set_keys_len(keys_slice.len());
-
-                let children_slice = &children[..=keys_mid];
-                new_root_left.children_mut().extend_from_slice(children_slice);
-                new_root_left.set_children_len(children_slice.len());
+                new_root_left
+                    .keys_mut()
+                    .extend_from_slice(keys.get_unchecked(..keys_mid));
+                new_root_left
+                    .children_mut()
+                    .extend_from_slice(children.get_unchecked(..=keys_mid));
 
                 index_block.keys_mut().push(k3);
-                index_block.set_keys_len(1);
-
                 index_block.children_mut().extend([
                     new_root_left.into_cell(is_optimistic),
                     new_node_right.into_cell(is_optimistic)
                 ]);
-                index_block.set_children_len(2);
 
                 self.set_new_root(
                     index_block,
                     n_height);
             }
-            Node::Leaf(records) => {
+            Node::Leaf(records) => unsafe {
                 let records
                     = records.as_slice();
 
@@ -185,8 +179,7 @@ impl Index {
                     = records.len() / 2;
 
                 let k3 = records
-                    .get(records_mid)
-                    .unwrap()
+                    .get_unchecked(records_mid)
                     .key();
 
                 let mut new_node_right
@@ -198,35 +191,30 @@ impl Index {
                 let mut new_root
                     = self.block_manager.new_empty_index_block();
 
-                let records_slice = &records[records_mid..];
-                new_node_right.records_mut().extend_from_slice(records_slice);
-                new_node_right.set_records_len(records_slice.len());
-
-                let records_slice = &records[..records_mid];
-                new_node_left.records_mut().extend_from_slice(records_slice);
-                new_node_left.set_records_len(records_slice.len());
+                new_node_right
+                    .records_mut()
+                    .extend_from_slice(records.get_unchecked(records_mid..));
+                new_node_left
+                    .records_mut()
+                    .extend_from_slice(records.get_unchecked(..records_mid));
 
                 new_root.keys_mut().push(k3);
-                new_root.set_keys_len(1);
-
                 new_root.children_mut().extend([
                     new_node_left.into_cell(is_optimistic),
                     new_node_right.into_cell(is_optimistic)
                 ]);
-                new_root.set_children_len(2);
 
                 self.set_new_root(
                     new_root,
                     n_height);
             }
-            Node::MultiVersionLeaf(records) => {
+            Node::MultiVersionLeaf(records) => unsafe {
                 let records
                     = records.as_slice();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
-                    .get(records_mid)
-                    .unwrap()
+                    .get_unchecked(records_mid)
                     .key();
 
                 let mut new_node_right
@@ -238,22 +226,18 @@ impl Index {
                 let mut new_root
                     = self.block_manager.new_empty_index_block();
 
-                let records_slice = &records[records_mid..];
-                new_node_right.record_lists_mut().extend_from_slice(records_slice);
-                new_node_right.set_records_len(records_slice.len());
-
-                let records_slice = &records[..records_mid];
-                new_node_left.record_lists_mut().extend_from_slice(records_slice);
-                new_node_left.set_records_len(records_slice.len());
+                new_node_right
+                    .record_lists_mut()
+                    .extend_from_slice(records.get_unchecked(records_mid..));
+                new_node_left
+                    .record_lists_mut()
+                    .extend_from_slice(records.get_unchecked(..records_mid));
 
                 new_root.keys_mut().push(k3);
-                new_root.set_keys_len(1);
-
                 new_root.children_mut().extend([
                     new_node_left.into_cell(is_optimistic),
                     new_node_right.into_cell(is_optimistic)
                 ]);
-                new_root.set_children_len(2);
 
                 self.set_new_root(
                     new_root,
@@ -282,7 +266,7 @@ impl Index {
             = from_guard.assume_mut().unwrap();
 
         match from_node_deref.as_mut() {
-            Node::Index(index_page) => {
+            Node::Index(index_page) => unsafe {
                 let keys
                     = index_page.keys();
 
@@ -290,7 +274,8 @@ impl Index {
                     = index_page.children();
 
                 let keys_mid = keys.len() / 2;
-                let k3 = *keys.get(keys_mid).unwrap();
+                let k3 = *keys
+                    .get_unchecked(keys_mid);
 
                 let mut new_node_right
                     = self.block_manager.new_empty_index_block();
@@ -298,52 +283,44 @@ impl Index {
                 let mut new_node_from
                     = self.block_manager.new_empty_index_block();
 
-                let keys_slice = &keys[keys_mid + 1..];
-                new_node_right.keys_mut().extend_from_slice(keys_slice);
-                new_node_right.set_keys_len(keys_slice.len());
+                new_node_right
+                    .keys_mut()
+                    .extend_from_slice(keys.get_unchecked(keys_mid + 1..));
+                new_node_right
+                    .children_mut()
+                    .extend_from_slice(children.get_unchecked(keys_mid + 1..));
 
-                let children_slice = &children[keys_mid + 1..];
-                new_node_right.children_mut().extend_from_slice(children_slice);
-                new_node_right.set_children_len(children_slice.len());
+                new_node_from
+                    .keys_mut()
+                    .extend_from_slice(keys.get_unchecked(..keys_mid));
+                new_node_from
+                    .children_mut()
+                    .extend_from_slice(children.get_unchecked(..=keys_mid));
 
-                let keys_slice = &keys[..keys_mid];
-                new_node_from.keys_mut().extend_from_slice(keys_slice);
-                new_node_from.set_keys_len(keys_slice.len());
-
-                let children_slice = &children[..=keys_mid];
-                new_node_from.children_mut().extend_from_slice(children_slice);
-                new_node_from.set_children_len(children_slice.len());
-
-                let parent_mut
-                    = parent_guard.assume_mut().unwrap();
+                let parent_mut = parent_guard
+                    .assume_mut()
+                    .unwrap();
 
                 parent_mut
                     .keys_mut()
                     .insert(child_pos, k3);
-
-                let keys_len = parent_mut.keys_len();
-                parent_mut.set_keys_len(keys_len + 1);
 
                 parent_mut
                     .children_mut()
                     .insert(child_pos + 1, new_node_right.into_cell(is_optimistic));
 
-                let children_len = parent_mut.children_len();
-                parent_mut.set_children_len(children_len + 1);
-
                 *parent_mut
                     .children_mut()
                     .get_mut(child_pos)
                     .unwrap() = new_node_from.into_cell(is_optimistic);
             }
-            Node::Leaf(records) => {
+            Node::Leaf(records) => unsafe {
                 let records
                     = records.as_slice();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
-                    .get(records_mid)
-                    .unwrap()
+                    .get_unchecked(records_mid)
                     .key();
 
                 let mut new_node
@@ -352,13 +329,13 @@ impl Index {
                 let mut new_node_from
                     = self.block_manager.new_empty_leaf_single_version_block();
 
-                let records_slice = &records[records_mid..];
-                new_node.records_mut().extend_from_slice(records_slice);
-                new_node.set_records_len(records_slice.len());
+                new_node
+                    .records_mut()
+                    .extend_from_slice(records.get_unchecked(records_mid..));
 
-                let records_slice = &records[..records_mid];
-                new_node_from.records_mut().extend_from_slice(records_slice);
-                new_node_from.set_records_len(records_slice.len());
+                new_node_from
+                    .records_mut()
+                    .extend_from_slice(records.get_unchecked(..records_mid));
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
@@ -367,29 +344,22 @@ impl Index {
                     .keys_mut()
                     .insert(child_pos, k3);
 
-                let keys_len = parent_mut.keys_len();
-                parent_mut.set_keys_len(keys_len + 1);
-
-                parent_mut
+                 parent_mut
                     .children_mut()
                     .insert(child_pos + 1, new_node.into_cell(is_optimistic));
-
-                let children_len = parent_mut.children_len();
-                parent_mut.set_children_len(children_len + 1);
 
                 *parent_mut
                     .children_mut()
                     .get_mut(child_pos)
                     .unwrap() = new_node_from.into_cell(is_optimistic);
             }
-            Node::MultiVersionLeaf(records) => {
+            Node::MultiVersionLeaf(records) => unsafe {
                 let records
                     = records.as_slice();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
-                    .get(records_mid)
-                    .unwrap()
+                    .get_unchecked(records_mid)
                     .key();
 
                 let mut new_node
@@ -398,13 +368,13 @@ impl Index {
                 let mut new_node_from
                     = self.block_manager.new_empty_leaf_multi_version_block();
 
-                let records_slice = &records[records_mid..];
-                new_node.record_lists_mut().extend_from_slice(records_slice);
-                new_node.set_records_len(records_slice.len());
+                new_node
+                    .record_lists_mut()
+                    .extend_from_slice(records.get_unchecked(records_mid..));
 
-                let records_slice = &records[..records_mid];
-                new_node_from.record_lists_mut().extend_from_slice(records_slice);
-                new_node_from.set_records_len(records_slice.len());
+                new_node_from
+                    .record_lists_mut()
+                    .extend_from_slice(records.get_unchecked(..records_mid));
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
@@ -413,15 +383,9 @@ impl Index {
                     .keys_mut()
                     .insert(child_pos, k3);
 
-                let parent_keys_len = parent_mut.keys_len();
-                parent_mut.set_keys_len(parent_keys_len + 1);
-
                 parent_mut
                     .children_mut()
                     .insert(child_pos + 1, new_node.into_cell(is_optimistic));
-
-                let parent_children_len = parent_mut.children_len();
-                parent_mut.set_children_len(parent_children_len + 1);
 
                 *parent_mut
                     .children_mut()

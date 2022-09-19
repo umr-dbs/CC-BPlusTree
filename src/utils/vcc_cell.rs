@@ -36,7 +36,7 @@ pub(crate) fn sched_yield(attempt: Attempts) {
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
-        thread::sleep(Duration::from_nanos(1))
+        std::thread::sleep(std::time::Duration::from_nanos(1))
     } else {
         hint::spin_loop();
     }
@@ -311,15 +311,15 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
-    // pub unsafe fn as_reader(&self) -> Option<&E> {
-    //     match self {
-    //         Ref(e) => Some(e),
-    //         RefMut(e) => e.as_ref(),
-    //         WriteHolder((e, _)) => Some(e.cell.deref()),
-    //         ReadHolder((e, ..)) => Some(e.cell.deref()),
-    //         _ => None
-    //     }
-    // }
+    pub unsafe fn as_reader(&self) -> Option<&E> {
+        match self {
+            Ref(e) => Some(e),
+            RefMut(e) => e.as_ref(),
+            WriteHolder((e, _)) => Some(e.cell.deref()),
+            ReadHolder((e, ..)) => Some(e.cell.deref()),
+            _ => None
+        }
+    }
 
     pub fn assume_mut(&self) -> Option<&'a mut E> {
         match self {
@@ -538,30 +538,30 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     //     }
     // }
 
-    // pub unsafe fn guard_result_reader(&self) -> GuardDerefResult<'a, E> {
-    //     match self {
-    //         ConcurrencyControlGuard { guard, .. } => match guard {
-    //             CCCellGuard::Reader(_, e) => Ref(*e),
-    //             CCCellGuard::LockFree(e) => {
-    //                 let p: *mut *mut E = mem::transmute(e);
-    //                 RefMut(*p)
-    //             }
-    //             CCCellGuard::Writer(_, e) => {
-    //                 let p: *mut *mut E = mem::transmute(e);
-    //                 RefMut(*p)
-    //             },
-    //             CCCellGuard::Exclusive(_, e) => {
-    //                 let p: *mut *mut E = mem::transmute(e);
-    //                 RefMut(*p)
-    //             },
-    //         },
-    //         OptimisticGuard {
-    //             cell: Some(cell),
-    //             ..
-    //         } => Ref(mem::transmute(cell.as_ref())),
-    //         _ => Null
-    //     }
-    // }
+    pub unsafe fn guard_result_reader(&self) -> GuardDerefResult<'a, E> {
+        match self {
+            ConcurrencyControlGuard { guard, .. } => match guard {
+                CCCellGuard::Reader(_, e) => Ref(*e),
+                CCCellGuard::LockFree(e) => {
+                    let p: *mut *mut E = mem::transmute(e);
+                    RefMut(*p)
+                }
+                CCCellGuard::Writer(_, e) => {
+                    let p: *mut *mut E = mem::transmute(e);
+                    RefMut(*p)
+                },
+                CCCellGuard::Exclusive(_, e) => {
+                    let p: *mut *mut E = mem::transmute(e);
+                    RefMut(*p)
+                },
+            },
+            OptimisticGuard {
+                cell: Some(cell),
+                ..
+            } => Ref(mem::transmute(cell.as_ref())),
+            _ => Null
+        }
+    }
 
     pub fn guard_result(&self) -> GuardDerefResult<'a, E> {
         match self {

@@ -1,8 +1,14 @@
+use std::{mem, ptr};
+use chronicle_db::backbone::core::event::EventVariant::Empty;
+use mvcc_bplustree::index::record::Record;
+use mvcc_bplustree::index::version_info::Version;
+use mvcc_bplustree::locking::locking_strategy::Attempts;
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use crate::block::aligned_page::IndexPage;
 use crate::bplus_tree::Index;
-use crate::index::node::Node;
+use crate::index::node::{BlockGuard, Node};
+use crate::utils::vcc_cell::{sched_yield, WRITE_FLAG_VERSION};
 
 impl Index {
     // pub fn execute_range_query_iter(&self, transaction: Transaction) -> Option<ResultIter> {
@@ -96,6 +102,48 @@ impl Index {
                     .then(|| TransactionResult::Updated(key, version))
                     .unwrap_or_default()
             }
+            Transaction::ExactSearch(key, version) if self.is_olc() => unsafe {
+                let guard
+                    = self.traversal_read(key);
+
+                let guard_result
+                    = guard.guard_result_reader();
+
+                let reader
+                    = guard_result.as_reader().unwrap();
+
+                let mut attempts
+                    = Attempts::MIN;
+
+                loop {
+                    let cell_version
+                        = read_guard_reader_cell_version(&guard);
+
+                    let maybe_record = match reader.as_ref() {
+                        Node::Leaf(records) => records
+                            .iter()
+                            .skip_while(|record| record.key() != key)
+                            .find(|record| record.match_version(version))
+                            .map(|record| raw_copy_record(record)),
+                        Node::MultiVersionLeaf(record_list) => record_list
+                            .iter()
+                            .find(|record_list| record_list.key() == key)
+                            .map(|version_list| version_list.record_for_version(version))
+                            .unwrap_or_default(),
+                        _ => None
+                    };
+
+                    if guard.cell_version().unwrap() == cell_version {
+                        break maybe_record.into();
+                    } else {
+                        maybe_record.map(|mut inner|
+                            ptr::write(&mut inner.event.payload, Empty));
+
+                        attempts += 1;
+                        sched_yield(attempts)
+                    }
+                }
+            }
             Transaction::ExactSearch(key, version) => {
                 let guard
                     = self.traversal_read(key);
@@ -109,8 +157,8 @@ impl Index {
                 match reader.as_ref() {
                     Node::Leaf(records) => records
                         .iter()
-                        .find(|record| record.key() == key)
-                        .filter(|record| record.match_version(version))
+                        .skip_while(|record| record.key() != key)
+                        .find(|record| record.match_version(version))
                         .cloned()
                         .into(),
                     Node::MultiVersionLeaf(record_list) => record_list
@@ -119,6 +167,50 @@ impl Index {
                         .map(|version_list| version_list.record_for_version(version).into())
                         .unwrap_or(None.into()),
                     _ => TransactionResult::Error
+                }
+            }
+            Transaction::ExactSearchLatest(key) if self.is_olc() => unsafe {
+                let guard
+                    = self.traversal_read(key);
+
+                let guard_result
+                    = guard.guard_result_reader();
+
+                let reader
+                    = guard_result.as_reader().unwrap();
+
+                let mut attempts
+                    = Attempts::MIN;
+
+                loop {
+                    let cell_version
+                        = read_guard_reader_cell_version(&guard);
+
+                    let maybe_record = match reader.as_ref() {
+                        Node::Leaf(records) => records
+                            .iter()
+                            .rev()
+                            .skip_while(|record| record.key() != key)
+                            .filter(|record| !record.is_deleted())
+                            .next()
+                            .map(|record| raw_copy_record(record)),
+                        Node::MultiVersionLeaf(record_list) => record_list
+                            .iter()
+                            .find(|record_list| record_list.key() == key)
+                            .map(|version_list| version_list.youngest_record())
+                            .unwrap_or_default(),
+                        _ => None
+                    };
+
+                    if guard.cell_version().unwrap() == cell_version {
+                        break maybe_record.into();
+                    } else {
+                        maybe_record.map(|mut inner|
+                            ptr::write(&mut inner.event.payload, Empty));
+
+                        attempts += 1;
+                        sched_yield(attempts)
+                    }
                 }
             }
             Transaction::ExactSearchLatest(key) => {
@@ -211,6 +303,41 @@ impl Index {
                 }
             }
             _ => unimplemented!("bro hang on, im working on it..")
+        }
+    }
+}
+
+unsafe fn raw_copy_record(record: &Record) -> Record {
+    let mut record_copy
+        = mem::MaybeUninit::<Record>::uninit().assume_init();
+
+    let raw
+        = record as *const Record as *const u8;
+
+    let dst
+        = (&mut record_copy) as *mut Record as *mut u8;
+
+    ptr::copy_nonoverlapping(
+        raw, dst, mem::size_of::<Record>());
+
+    record_copy
+}
+
+fn read_guard_reader_cell_version(guard: &BlockGuard) -> Version {
+    let mut attempts
+        = Attempts::MIN;
+
+    loop {
+        let version
+            = guard.cell_version().unwrap();
+
+        if version & WRITE_FLAG_VERSION != 0 {
+            sched_yield(attempts);
+
+            attempts += 1;
+        }
+        else {
+            break version
         }
     }
 }

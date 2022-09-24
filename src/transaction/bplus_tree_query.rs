@@ -18,14 +18,14 @@ impl Index {
     }
 
     fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (BlockGuard, Height, LockLevel, Attempts) {
-        let dolos = self.locking_strategy.is_dolos();
+        let is_olc = self.is_olc();
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
                 Err((n_lock_level, n_attempt)) => {
                     lock_level = n_lock_level;
                     attempt = n_attempt;
 
-                    if dolos {
+                    if is_olc {
                         sched_yield(attempt);
                     }
                 }
@@ -541,7 +541,7 @@ impl Index {
     pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard {
         let mut attempt = ATTEMPT_START;
         let mut lock_level = Self::MAX_TREE_HEIGHT;
-        let dolos = self.locking_strategy.is_dolos();
+        let olc = self.is_olc();
 
         loop {
             match self.traversal_write_internal(lock_level, attempt, key) {
@@ -549,7 +549,7 @@ impl Index {
                     attempt = n_attempt;
                     lock_level = n_lock_level;
 
-                    if dolos {
+                    if olc {
                         sched_yield(attempt);
                     }
                 }
@@ -607,9 +607,9 @@ impl Index {
 
                     current_guard = self.lock_reader(&next_node);
                 }
-                _ if self.locking_strategy.is_dolos() => break current_guard
-                    .upgrade_write_lock()
-                    .then(|| current_guard),
+                // _ if self.is_olc() => break current_guard
+                //     .upgrade_write_lock()
+                //     .then(|| current_guard),
                 _ => break Some(current_guard),
             }
         }
@@ -617,7 +617,7 @@ impl Index {
 
     pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard {
         let mut attempt = ATTEMPT_START;
-        let dolos = self.locking_strategy.is_dolos();
+        let olc = self.is_olc();
 
         loop {
             match self.traversal_read_internal(key) {
@@ -625,7 +625,7 @@ impl Index {
                 _ => {
                     attempt += 1;
 
-                    if dolos {
+                    if olc {
                         sched_yield(attempt)
                     }
                 }

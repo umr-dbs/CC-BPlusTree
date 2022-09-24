@@ -199,7 +199,7 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
                             joe => { //  if !index.locking_strategy().is_dolos()
                                 log_debug_ln(format!("\nERROR Search -> Transaction::{}",
                                                      Transaction::ExactSearch(key, version)));
-                                log_debug_ln(format!("\n****ERROR: {}, {}", index.locking_strategy, joe));
+                                log_debug_ln(format!("\n****ERROR: {}, TransactionResult::{}", index.locking_strategy, joe));
                                 panic!()
                             }
                             // _ => {}

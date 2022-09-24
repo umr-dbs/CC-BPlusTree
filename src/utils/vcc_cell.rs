@@ -12,8 +12,8 @@ use crate::utils::vcc_cell::ConcurrentGuard::{ConcurrencyControlGuard, Optimisti
 use crate::utils::vcc_cell::GuardDerefResult::{ReadHolder, Null, Ref, WriteHolder, RefMut};
 
 pub const OBSOLETE_FLAG_VERSION: Version = 0x8_000000000000000;
-const WRITE_FLAG_VERSION: Version = 0x4_000000000000000;
-const WRITE_OBSOLETE_FLAG_VERSION: Version = 0xC_000000000000000;
+pub const WRITE_FLAG_VERSION: Version = 0x4_000000000000000;
+pub const WRITE_OBSOLETE_FLAG_VERSION: Version = 0xC_000000000000000;
 const READ_FLAG_VERSION: Version = 0x0_000000000000000;
 // const LOCK_FREE_FLAG_VERSION: Version = 0x00_00_00_00_00_00_00_00;
 // const LOCKING_FLAG_VERSION: Version = OBSOLETE_FLAG_VERSION;
@@ -24,6 +24,7 @@ const READ_FLAG_VERSION: Version = 0x0_000000000000000;
 // const LOCKING_BITS_OFFSET: Version = 2;
 // const VERSIONING_COUNTER_BITS: Version = (8 * mem::size_of::<Version>() as Version) - READERS_NUM_BITS - LOCKING_BITS_OFFSET;
 
+#[inline]
 #[cfg(target_os = "linux")]
 pub(crate) fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
@@ -33,6 +34,7 @@ pub(crate) fn sched_yield(attempt: Attempts) {
     }
 }
 
+#[inline]
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
@@ -114,7 +116,7 @@ impl<E: Default> OptCell<E> {
         {
             Ok(..) => Some(WRITE_FLAG_VERSION | (read_version + 1)),
             Err(..) => {
-                hint::spin_loop();
+                // hint::spin_loop();
                 None
             }
         }
@@ -311,6 +313,14 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    fn latch_version(&self) -> Option<LatchVersion> {
+        match self {
+            ReadHolder((.., latch_version)) => Some(*latch_version),
+            WriteHolder((.., latch_version)) => Some(*latch_version),
+            _ => None
+        }
+    }
+
     pub unsafe fn as_reader(&self) -> Option<&E> {
         match self {
             Ref(e) => Some(e),
@@ -383,6 +393,26 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
 // }
 
 impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
+    pub(crate) fn guard_latch_version(&self) -> Option<LatchVersion> {
+        match self {
+            OptimisticGuard {
+                guard_deref,
+                ..
+            } => guard_deref.latch_version(),
+            _ => None
+        }
+    }
+
+    pub(crate) fn cell_version(&self) -> Option<Version> {
+        match self {
+            OptimisticGuard {
+                cell: Some(cell),
+                ..
+            } => Some(cell.load_version()),
+            _ => None
+        }
+    }
+
     // pub(crate) fn data(&self) -> Option<&'a E> {
     //     match self {
     //         ConcurrencyControlGuard {

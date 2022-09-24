@@ -21,6 +21,11 @@ pub struct BPlusTree {
     pub(crate) version_counter: AtomicVersion,
 }
 
+#[inline(always)]
+pub const fn is_olc(ls: &LockingStrategy) -> bool {
+    ls.is_dolos()
+}
+
 impl Default for Index {
     fn default() -> Self {
         Index::new_multi_versioned()
@@ -47,7 +52,7 @@ impl BPlusTree {
 
         Self {
             root: UnCell::new(Root::new(
-                empty_node.into_cell(locking_strategy.is_dolos()),
+                empty_node.into_cell(is_olc(&locking_strategy)),
                 Self::INIT_TREE_HEIGHT
             )),
             version_counter: AtomicVersion::new(Self::START_VERSION),
@@ -84,6 +89,11 @@ impl BPlusTree {
 
     pub const fn locking_strategy(&self) -> &LockingStrategy {
         &self.locking_strategy
+    }
+
+    #[inline]
+    pub const fn is_olc(&self) -> bool {
+        is_olc(self.locking_strategy())
     }
 
     pub fn height(&self) -> Height {

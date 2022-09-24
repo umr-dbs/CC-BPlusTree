@@ -93,7 +93,7 @@ fn experiment() {
     let mut strategies = vec![];
     strategies.push(LockingStrategy::WriteCoupling);
 
-    for attempt in 1..=3 {
+    for attempt in 1..=10 {
         // strategies.push(LockingStrategy::optimistic_custom(
         //     LevelVariant::new_height_lock(0.2_f32), attempt));
         // strategies.push(LockingStrategy::dolos_custom(
@@ -104,15 +104,17 @@ fn experiment() {
         // strategies.push(LockingStrategy::dolos_custom(
         //     LevelVariant::new_height_lock(0.5_f32), attempt));
 
-        strategies.push(LockingStrategy::optimistic_custom(
-            LevelVariant::new_height_lock(0.9_f32), attempt));
-        strategies.push(LockingStrategy::dolos_custom(
-            LevelVariant::new_height_lock(0.9_f32), attempt));
+        // strategies.push(LockingStrategy::optimistic_custom(
+        //     LevelVariant::new_height_lock(0.9_f32), attempt));
+        // strategies.push(LockingStrategy::dolos_custom(
+        //     LevelVariant::new_height_lock(0.9_f32), attempt));
 
         strategies.push(LockingStrategy::optimistic_custom(
             LevelVariant::new_height_lock(1_f32), attempt));
         strategies.push(LockingStrategy::dolos_custom(
             LevelVariant::new_height_lock(1_f32), attempt));
+        strategies.push(LockingStrategy::dolos_custom(
+            LevelVariant::new_height_lock(1_f32), attempt*100));
     }
 
     insertions.iter().enumerate().for_each(|(i, insertion)| {

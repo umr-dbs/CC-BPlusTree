@@ -311,8 +311,7 @@ impl Index {
 
                 *parent_mut
                     .children_mut()
-                    .get_mut(child_pos)
-                    .unwrap() = new_node_from.into_cell(is_optimistic);
+                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(is_optimistic);
             }
             Node::Leaf(records) => unsafe {
                 let records
@@ -350,8 +349,7 @@ impl Index {
 
                 *parent_mut
                     .children_mut()
-                    .get_mut(child_pos)
-                    .unwrap() = new_node_from.into_cell(is_optimistic);
+                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(is_optimistic);
             }
             Node::MultiVersionLeaf(records) => unsafe {
                 let records
@@ -389,8 +387,7 @@ impl Index {
 
                 *parent_mut
                     .children_mut()
-                    .get_mut(child_pos)
-                    .unwrap() = new_node_from.into_cell(is_optimistic);
+                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(is_optimistic);
             }
         }
     }
@@ -409,9 +406,7 @@ impl Index {
             let current_ref
                 = current_guard_result.as_ref();
 
-            if current_ref.is_none()
-                // || !current_guard.is_valid()
-            {
+            if current_ref.is_none() {
                 mem::drop(height);
                 mem::drop(current_guard);
 
@@ -424,16 +419,6 @@ impl Index {
 
             let current_ref = current_ref
                 .unwrap();
-
-            // if !current_guard.is_valid() {
-            //     mem::drop(current_guard);
-            //
-            //     if DEBUG {
-            //         println!("7 \tAttempt = {}", attempt);
-            //     }
-            //
-            //     return Err((curr_level - 1, attempt + 1));
-            // }
 
             match current_ref.as_ref() {
                 Node::Index(
@@ -576,11 +561,7 @@ impl Index {
             let current
                 = current_deref_result.as_ref();
 
-            if current.is_none()
-                // || !current_guard.is_valid()
-                // || self.root.clone().block.unsafe_borrow_static() as *const _ !=
-                //     root.block.unsafe_borrow_static() as *const _
-            {
+            if current.is_none() {
                 return None;
             }
 
@@ -607,9 +588,6 @@ impl Index {
 
                     current_guard = self.lock_reader(&next_node);
                 }
-                // _ if self.is_olc() => break current_guard
-                //     .upgrade_write_lock()
-                //     .then(|| current_guard),
                 _ => break Some(current_guard),
             }
         }

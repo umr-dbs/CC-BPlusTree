@@ -2,7 +2,7 @@ use std::{mem, ptr};
 use chronicle_db::backbone::core::event::EventVariant::Empty;
 use mvcc_bplustree::index::record::Record;
 use mvcc_bplustree::index::version_info::Version;
-use mvcc_bplustree::locking::locking_strategy::Attempts;
+use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts};
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use crate::block::aligned_page::IndexPage;
@@ -113,11 +113,11 @@ impl Index {
                     = guard_result.as_reader().unwrap();
 
                 let mut attempts
-                    = Attempts::MIN;
+                    = ATTEMPT_START;
 
                 loop {
                     let cell_version
-                        = read_guard_reader_cell_version(&guard);
+                        = guard.read_cell_version_as_reader();
 
                     let maybe_record = match reader.as_ref() {
                         Node::Leaf(records) => records
@@ -133,7 +133,7 @@ impl Index {
                         _ => None
                     };
 
-                    if guard.cell_version().unwrap() == cell_version {
+                    if guard.cell_version_olc() == cell_version {
                         break maybe_record.into();
                     } else {
                         maybe_record.map(|mut inner|
@@ -180,11 +180,11 @@ impl Index {
                     = guard_result.as_reader().unwrap();
 
                 let mut attempts
-                    = Attempts::MIN;
+                    = ATTEMPT_START;
 
                 loop {
                     let cell_version
-                        = read_guard_reader_cell_version(&guard);
+                        = guard.read_cell_version_as_reader();
 
                     let maybe_record = match reader.as_ref() {
                         Node::Leaf(records) => records
@@ -202,7 +202,7 @@ impl Index {
                         _ => None
                     };
 
-                    if guard.cell_version().unwrap() == cell_version {
+                    if guard.cell_version_olc() == cell_version {
                         break maybe_record.into();
                     } else {
                         maybe_record.map(|mut inner|
@@ -323,24 +323,49 @@ unsafe fn raw_copy_record(record: &Record) -> Record {
     record_copy
 }
 
-fn read_guard_reader_cell_version(guard: &BlockGuard) -> Version {
-    let mut attempts
-        = Attempts::MIN;
+impl BlockGuard<'_> {
+    #[inline(always)]
+    unsafe fn cell_version_olc(&self) -> Version {
+        self.cell_version().unwrap_or(Version::MIN)
+    }
 
-    loop {
-        let version
-            = guard.cell_version().unwrap();
+    unsafe fn read_cell_version_as_reader(&self) -> Version {
+        let mut attempts
+            = ATTEMPT_START;
 
-        if version & WRITE_FLAG_VERSION != 0 {
-            sched_yield(attempts);
+        loop {
+            let version
+                = self.cell_version_olc();
 
-            attempts += 1;
-        }
-        else {
-            break version
+            if version & WRITE_FLAG_VERSION != 0 {
+                sched_yield(attempts);
+
+                attempts += 1;
+            } else {
+                break version;
+            }
         }
     }
 }
+
+// fn read_guard_reader_cell_version(guard: &BlockGuard) -> Version {
+//     let mut attempts
+//         = Attempts::MIN;
+//
+//     loop {
+//         let version
+//             = guard.cell_version().unwrap();
+//
+//         if version & WRITE_FLAG_VERSION != 0 {
+//             sched_yield(attempts);
+//
+//             attempts += 1;
+//         }
+//         else {
+//             break version
+//         }
+//     }
+// }
 
 // pub struct TransactionResultIter {
 //     transaction: Transaction,

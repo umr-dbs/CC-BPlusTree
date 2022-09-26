@@ -64,7 +64,20 @@ impl Index {
     pub fn execute(&self, transaction: Transaction) -> TransactionResult {
         match transaction {
             Transaction::Empty => TransactionResult::Error,
-            Transaction::Insert(event) => {
+            Transaction::Delete(key, version) => unsafe {
+                let guard
+                    = self.traversal_write(key);
+
+                debug_assert!(guard.guard_result().is_mut());
+
+                guard.guard_result()
+                    .assume_mut()
+                    .unwrap()
+                    .delete_record(key, version)
+                    .then(|| TransactionResult::Deleted(key, version))
+                    .unwrap_or_default()
+            }
+            Transaction::Insert(event) => unsafe {
                 let key
                     = event.t1();
 

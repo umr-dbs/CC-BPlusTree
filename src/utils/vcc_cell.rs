@@ -339,6 +339,14 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    // pub unsafe fn as_mut(&self) -> &'a mut E {
+    //     match self {
+    //         RefMut(e) => &mut **e,
+    //         WriteHolder((e, _)) => e.cell.get_mut(),
+    //         _ => unreachable!("Sleepy joe hit me -> .as_mut() on non-mut GuardDerefResult")
+    //     }
+    // }
+
     fn force_mut(&mut self) -> Option<&'a mut E> {
         self.assume_mut().or_else(|| match self {
             ReadHolder((cell, latch_version)) =>
@@ -566,6 +574,47 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     //             Some(OptimisticCell(cell.clone())),
     //         _ => None
     //     }
+    // }
+
+    // pub unsafe fn as_reader(&self) -> &'a E {
+    //     mem::transmute(match self {
+    //         ConcurrencyControlGuard { guard, .. } => match guard {
+    //             CCCellGuard::Reader(_, e) => *e,
+    //             CCCellGuard::LockFree(e) => *e,
+    //             CCCellGuard::Writer(_, e) => *e,
+    //             CCCellGuard::Exclusive(_, e) => *e,
+    //         },
+    //         OptimisticGuard {
+    //             cell: Some(cell),
+    //             ..
+    //         } => cell.cell.as_ref(),
+    //         _ => unreachable!("Sleepy Joe hit me -> guard_as_reader on invalid guard!")
+    //     })
+    // }
+
+    // pub unsafe fn as_mut(&self) -> &'a mut E {
+    //     mem::transmute(match self {
+    //         ConcurrencyControlGuard { guard, .. } => match guard {
+    //             CCCellGuard::LockFree(e) => {
+    //                 let p: *const *mut E = mem::transmute(e);
+    //                 *p
+    //             },
+    //             CCCellGuard::Writer(_, e) => {
+    //                 let p: *const *mut E = mem::transmute(e);
+    //                 *p
+    //             },
+    //             CCCellGuard::Exclusive(_, e) => {
+    //                 let p: *const *mut E = mem::transmute(e);
+    //                 *p
+    //             },
+    //             _ => unreachable!("Sleepy joe hit me -> .as_mut() on invalid guard!")
+    //         },
+    //         OptimisticGuard {
+    //             cell: Some(cell),
+    //             ..
+    //         } => cell.cell.get_mut(),
+    //         _ => unreachable!("Sleepy Joe hit me -> guard_as_reader on invalid guard!")
+    //     })
     // }
 
     pub unsafe fn guard_result_reader(&self) -> GuardDerefResult<'a, E> {

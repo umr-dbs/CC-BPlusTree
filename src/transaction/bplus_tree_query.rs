@@ -4,7 +4,7 @@ use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level, 
 use crate::block::aligned_page::IndexPage;
 use crate::bplus_tree::{Height, LockLevel};
 use crate::Index;
-use crate::index::node::{Node, BlockGuard, BlockGuardResult, BlockRef};
+use crate::index::node::{Node, BlockGuard, BlockGuardResult, NodeUnsafeDegree};
 use crate::utils::vcc_cell::sched_yield;
 
 const DEBUG: bool = false;
@@ -14,6 +14,20 @@ impl Index {
         match node.is_leaf() {
             true => node.is_overflow(self.block_manager.allocation_leaf()),
             false => node.is_overflow(self.block_manager.allocation_directory())
+        }
+    }
+
+    fn has_underflow(&self, node: &Node) -> bool {
+        match node.is_leaf() {
+            true => node.is_underflow(self.block_manager.allocation_leaf()),
+            false => node.is_underflow(self.block_manager.allocation_directory())
+        }
+    }
+
+    fn unsafe_degree_of(&self, node: &Node) -> NodeUnsafeDegree {
+        match node.is_leaf() {
+            true => node.unsafe_degree(self.block_manager.allocation_leaf()),
+            false => node.unsafe_degree(self.block_manager.allocation_directory()),
         }
     }
 

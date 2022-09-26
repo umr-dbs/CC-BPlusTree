@@ -5,9 +5,11 @@ use chronicle_db::tools::aliases::Key;
 use chronicle_db::tools::arrays::array::FixedArray;
 use itertools::Itertools;
 use mvcc_bplustree::index::record::Record;
+use mvcc_bplustree::index::version_info::Version;
 use crate::block::aligned_page::{IndexPage, RecordListsPage, RecordsPage};
 use crate::block::block::Block;
 use crate::index::record_list::RecordList;
+use crate::utils::shadow_vec::ShadowVec;
 use crate::utils::vcc_cell::{ConcurrentCell, ConcurrentGuard, GuardDerefResult};
 
 pub(crate) type BlockGuardResult<'a> = GuardDerefResult<'a, Block>;
@@ -42,11 +44,61 @@ impl Display for Node {
     }
 }
 
+#[repr(u8)]
+pub(crate) enum NodeUnsafeDegree {
+    Ok,
+    Overflow,
+    Underflow
+}
+
+impl NodeUnsafeDegree {
+    pub(crate) const fn is_ok(&self) -> bool {
+        match self {
+            Self::Ok => true,
+            _ => false
+        }
+    }
+
+    pub(crate) const fn is_overflow(&self) -> bool {
+        match self {
+            Self::Overflow => true,
+            _ => false
+        }
+    }
+
+    pub(crate) const fn is_underflow(&self) -> bool {
+        match self {
+            Self::Underflow => true,
+            _ => false
+        }
+    }
+}
+
 impl Node {
     pub(crate) fn is_overflow(&self, allocation: usize) -> bool {
         debug_assert!(allocation >= self.len());
 
         self.len() >= allocation
+    }
+
+    pub(crate) fn is_underflow(&self, allocation: usize) -> bool {
+        debug_assert!(allocation > 0 && allocation >= self.len());
+
+        self.len() < allocation / 2
+    }
+
+    pub(crate) fn unsafe_degree(&self, allocation: usize) -> NodeUnsafeDegree {
+        let len = self.len();
+
+        if len >= allocation {
+            NodeUnsafeDegree::Overflow
+        }
+        else if len < allocation / 2 {
+            NodeUnsafeDegree::Underflow
+        }
+        else {
+            NodeUnsafeDegree::Ok
+        }
     }
 
     pub const fn is_leaf(&self) -> bool {
@@ -86,6 +138,25 @@ impl Node {
 
     pub const fn is_directory(&self) -> bool {
         !self.is_leaf()
+    }
+
+    pub(crate) fn delete_record(&mut self, key: Key, del_version: Version) -> bool {
+        match self {
+            Node::Leaf(records) => records
+                .iter_mut()
+                .rev()
+                .find(|record| record.key() == key)
+                .filter(|record| record.match_version(del_version))
+                .map(|record| record.delete(del_version))
+                .unwrap_or(false),
+            Node::MultiVersionLeaf(records_lists) => records_lists
+                .iter_mut()
+                .rev()
+                .find(|record_list| record_list.key() == key)
+                .map(|record_list| record_list.delete(del_version))
+                .unwrap_or(false),
+            _ => false,
+        }
     }
 
     pub(crate) fn push_record(&mut self, record: Record, is_update: bool) -> bool {
@@ -159,52 +230,5 @@ impl AsRef<Node> for Node {
 impl Default for Node {
     fn default() -> Self {
         Self::Leaf(RecordsPage::default())
-    }
-}
-
-pub(crate) struct ShadowVec<'a, E: Default> {
-    pub(crate) unreal_vec: ManuallyDrop<Vec<E>>,
-    pub(crate) p_array: &'a mut FixedArray<E>
-}
-
-impl<'a, E: Default> ShadowVec<'a, E> {
-    pub(crate) fn new(cap: usize, p_array: &'a mut FixedArray<E>) -> Self {
-        unsafe {
-            ShadowVec {
-                unreal_vec: ManuallyDrop::new(Vec::from_raw_parts(
-                    p_array.as_mut_ptr(),
-                    p_array.len(),
-                    cap)),
-                p_array
-            }
-        }
-    }
-}
-
-impl<'a, E: Default> Drop for ShadowVec<'a, E> {
-    fn drop(&mut self) {
-        unsafe {
-            self.p_array.set_len(self.unreal_vec.len())
-        }
-    }
-}
-
-impl<'a, E: Default> Deref for ShadowVec<'a, E> {
-    type Target = Vec<E>;
-
-    fn deref(&self) -> &Self::Target {
-        self.unreal_vec.as_ref()
-    }
-}
-
-impl<'a, E: Default> DerefMut for ShadowVec<'a, E> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.unreal_vec.as_mut()
-    }
-}
-
-impl<'a, E: Default> Into<ShadowVec<'a, E>> for (usize, &'a mut FixedArray<E>) {
-    fn into(self) -> ShadowVec<'a, E> {
-        ShadowVec::new(self.0, self.1)
     }
 }

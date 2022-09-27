@@ -15,7 +15,7 @@ use rand::RngCore;
 use crate::{bplus_tree, Index};
 use crate::bplus_tree::BPlusTree;
 
-pub const EXE_LOOK_UPS: bool = false;
+pub const EXE_LOOK_UPS: bool = true;
 
 pub fn log_debug_ln(s: String) {
     println!("> {}", s.replace("\n", "\n>"))

@@ -1,6 +1,6 @@
 use mvcc_bplustree::block::block::BlockID;
+use crate::block::block::BlockRef;
 use crate::bplus_tree::Height;
-use crate::index::node::BlockRef;
 
 #[derive(Clone, Default)]
 pub(crate) struct Root {

@@ -2,9 +2,11 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use mvcc_bplustree::block::block::BlockID;
 use mvcc_bplustree::utils::cc_cell::CCCell;
-use crate::index::node::{BlockRef, Node};
-use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
-use crate::utils::vcc_cell::OptCell;
+use crate::index::node::Node;
+use crate::utils::hybrid_cell::HybridCell::{ConcurrencyControlCell, OptimisticCell};
+use crate::utils::hybrid_cell::{HybridCell, OptCell};
+
+pub(crate) type BlockRef = HybridCell<Block>;
 
 #[derive(Default)]
 pub(crate) struct Block {

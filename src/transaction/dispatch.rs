@@ -1,70 +1,19 @@
-use std::{mem, ptr};
+use std::ptr;
 use chronicle_db::backbone::core::event::EventVariant::Empty;
-use mvcc_bplustree::index::record::Record;
-use mvcc_bplustree::index::version_info::Version;
-use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts};
+use mvcc_bplustree::locking::locking_strategy::ATTEMPT_START;
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use crate::block::aligned_page::IndexPage;
 use crate::bplus_tree::Index;
-use crate::index::node::{BlockGuard, Node};
-use crate::utils::vcc_cell::{sched_yield, WRITE_FLAG_VERSION};
+use crate::index::node::Node;
+use crate::log_debug;
+use crate::utils::unsafe_clone::UnsafeClone;
+use crate::utils::hybrid_cell::sched_yield;
 
 impl Index {
-    // pub fn execute_range_query_iter(&self, transaction: Transaction) -> Option<ResultIter> {
-    //     let index: &'static Index = unsafe {
-    //         mem::transmute(self)
-    //     };
-    //
-    //     let (key_interval, version) = match &transaction {
-    //         Transaction::RangeSearch(key_interval, version) => (key_interval.clone(), *version),
-    //         _ => return None
-    //     };
-    //
-    //     let father_ref
-    //         = index.root.clone();
-    //
-    //     let father_guard: NodeGuard
-    //         = index.lock_reader(father_ref.deref());
-    //
-    //     let filter = RangeFilter {
-    //         key_interval,
-    //         version,
-    //     };
-    //
-    //     let fan_out = match father_guard.deref().unwrap() {
-    //         Node::Index(keys, children) => {
-    //             let fan_out = keys
-    //                 .iter()
-    //                 .enumerate()
-    //                 .skip_while(|(_, k)| !filter.key_interval.lower().lt(k))
-    //                 .take_while(|(pos, k)| filter.key_interval.upper().ge(k) || *pos == 0)
-    //                 .map(|(pos, _)| children.get(pos).unwrap().clone())
-    //                 .collect::<VecDeque<_>>();
-    //
-    //             Fanout::Fan {
-    //                 index,
-    //                 father: (father_ref, father_guard),
-    //                 filter,
-    //                 fan_out,
-    //             }
-    //         }
-    //         _ => Fanout::Filter {
-    //             filter,
-    //             leaf: (father_ref, father_guard),
-    //         },
-    //     };
-    //
-    //     Some(ResultIter(
-    //         VecDeque::from(vec![fan_out]),
-    //         VecDeque::from(vec![]))
-    //     )
-    // }
-
     pub fn execute(&self, transaction: Transaction) -> TransactionResult {
         match transaction {
-            Transaction::Empty => TransactionResult::Error,
-            Transaction::Delete(key, version) => unsafe {
+            Transaction::Delete(key, version) => {
                 let guard
                     = self.traversal_write(key);
 
@@ -77,7 +26,7 @@ impl Index {
                     .then(|| TransactionResult::Deleted(key, version))
                     .unwrap_or_default()
             }
-            Transaction::Insert(event) => unsafe {
+            Transaction::Insert(event) => {
                 let key
                     = event.t1();
 
@@ -92,7 +41,7 @@ impl Index {
                 guard.guard_result()
                     .assume_mut()
                     .unwrap()
-                    .push_record((event, version).into(), false)
+                    .push_record((event, version).into())
                     .then(|| TransactionResult::Inserted(key, version))
                     .unwrap_or_default()
             }
@@ -111,7 +60,7 @@ impl Index {
                 guard.guard_result()
                     .assume_mut()
                     .unwrap()
-                    .push_record((event, version).into(), true)
+                    .update_record((event, version).into())
                     .then(|| TransactionResult::Updated(key, version))
                     .unwrap_or_default()
             }
@@ -129,7 +78,7 @@ impl Index {
                     = ATTEMPT_START;
 
                 loop {
-                    let cell_version
+                    let reader_cell_version
                         = guard.read_cell_version_as_reader();
 
                     let maybe_record = match reader.as_ref() {
@@ -137,7 +86,7 @@ impl Index {
                             .iter()
                             .skip_while(|record| record.key() != key)
                             .find(|record| record.match_version(version))
-                            .map(|record| raw_copy_record(record)),
+                            .map(|record| record.unsafe_clone()),
                         Node::MultiVersionLeaf(record_list) => record_list
                             .iter()
                             .find(|record_list| record_list.key() == key)
@@ -146,7 +95,7 @@ impl Index {
                         _ => None
                     };
 
-                    if guard.cell_version_olc() == cell_version {
+                    if guard.match_cell_version(reader_cell_version) {
                         break maybe_record.into();
                     } else {
                         maybe_record.map(|mut inner|
@@ -196,7 +145,7 @@ impl Index {
                     = ATTEMPT_START;
 
                 loop {
-                    let cell_version
+                    let reader_cell_version
                         = guard.read_cell_version_as_reader();
 
                     let maybe_record = match reader.as_ref() {
@@ -206,7 +155,7 @@ impl Index {
                             .skip_while(|record| record.key() != key)
                             .filter(|record| !record.is_deleted())
                             .next()
-                            .map(|record| raw_copy_record(record)),
+                            .map(|record| record.unsafe_clone()),
                         Node::MultiVersionLeaf(record_list) => record_list
                             .iter()
                             .find(|record_list| record_list.key() == key)
@@ -215,7 +164,7 @@ impl Index {
                         _ => None
                     };
 
-                    if guard.cell_version_olc() == cell_version {
+                    if guard.match_cell_version(reader_cell_version) {
                         break maybe_record.into();
                     } else {
                         maybe_record.map(|mut inner|
@@ -255,15 +204,21 @@ impl Index {
                     _ => TransactionResult::Error
                 }
             }
+            Transaction::RangeSearch(key_interval, version) if self.is_olc() => {
+                unimplemented!("RangeSearch in olc not implemented yet!")
+            }
             Transaction::RangeSearch(key_interval, version) => {
                 let (lower, upper)
                     = (key_interval.lower(), key_interval.upper());
 
-                let current_guard
-                    = self.lock_reader(&self.root.block());
+                let root
+                    = self.root.clone();
 
                 let current_root
-                    = self.root.block();
+                    = root.block();
+
+                let current_guard
+                    = self.lock_reader(&current_root);
 
                 let mut lock_level
                     = vec![(current_root, current_guard)];
@@ -315,221 +270,16 @@ impl Index {
                     }
                 }
             }
-            _ => unimplemented!("bro hang on, im working on it..")
-        }
-    }
-}
-
-unsafe fn raw_copy_record(record: &Record) -> Record {
-    let mut record_copy
-        = mem::MaybeUninit::<Record>::uninit().assume_init();
-
-    let raw
-        = record as *const Record as *const u8;
-
-    let dst
-        = (&mut record_copy) as *mut Record as *mut u8;
-
-    ptr::copy_nonoverlapping(
-        raw, dst, mem::size_of::<Record>());
-
-    record_copy
-}
-
-impl BlockGuard<'_> {
-    #[inline(always)]
-    unsafe fn cell_version_olc(&self) -> Version {
-        self.cell_version().unwrap_or(Version::MIN)
-    }
-
-    unsafe fn read_cell_version_as_reader(&self) -> Version {
-        let mut attempts
-            = ATTEMPT_START;
-
-        loop {
-            let version
-                = self.cell_version_olc();
-
-            if version & WRITE_FLAG_VERSION != 0 {
-                sched_yield(attempts);
-
-                attempts += 1;
-            } else {
-                break version;
+            Transaction::DEBUGExactSearch(key, version) => {
+                log_debug(format!("Transaction::DEBUGExactSearch(key: {}, version: {})",
+                                  key, version));
+                self.execute(Transaction::ExactSearch(key, version))
             }
+            Transaction::DEBUGExactSearchLatest(key) => {
+                log_debug(format!("Transaction::DEBUGExactSearchLatest(key: {})", key));
+                self.execute(Transaction::ExactSearchLatest(key))
+            }
+            Transaction::Empty => TransactionResult::Error
         }
     }
 }
-
-// fn read_guard_reader_cell_version(guard: &BlockGuard) -> Version {
-//     let mut attempts
-//         = Attempts::MIN;
-//
-//     loop {
-//         let version
-//             = guard.cell_version().unwrap();
-//
-//         if version & WRITE_FLAG_VERSION != 0 {
-//             sched_yield(attempts);
-//
-//             attempts += 1;
-//         }
-//         else {
-//             break version
-//         }
-//     }
-// }
-
-// pub struct TransactionResultIter {
-//     transaction: Transaction,
-//     index: &'static Index,
-// }
-//
-// pub struct ResultIter(VecDeque<Fanout>, VecDeque<Record>);
-//
-// impl Iterator for ResultIter {
-//     type Item = Record;
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if !self.1.is_empty() {
-//             return self.1.pop_front();
-//         }
-//
-//         let fan_out
-//             = self.0.borrow_mut();
-//
-//         if fan_out.is_empty() {
-//             return None;
-//         }
-//
-//         let mut next_fan
-//             = fan_out.pop_front().unwrap();
-//
-//         while !next_fan.is_results() {
-//             let newer_fans = fan_out.split_off(0);
-//             fan_out.extend(next_fan.flatten());
-//             fan_out.extend(newer_fans);
-//
-//             next_fan = fan_out.pop_front().unwrap();
-//         }
-//
-//         self.1.extend(next_fan.into_results());
-//
-//         self.next()
-//     }
-// }
-//
-// #[derive(Clone)]
-// struct RangeFilter {
-//     key_interval: KeyInterval,
-//     version: Version,
-// }
-//
-// enum Fanout {
-//     Fan {
-//         index: &'static Index,
-//         filter: RangeFilter,
-//         father: (NodeRef, NodeGuard<'static>),
-//         fan_out: VecDeque<NodeRef>,
-//     },
-//     Filter {
-//         filter: RangeFilter,
-//         leaf: (NodeRef, NodeGuard<'static>),
-//     },
-//     Results(Vec<Record>),
-// }
-//
-// impl Fanout {
-//     const fn is_results(&self) -> bool {
-//         match self {
-//             Self::Results(..) => true,
-//             _ => false
-//         }
-//     }
-//
-//     fn into_results(self) -> Vec<Record> {
-//         match self {
-//             Self::Results(records) => records,
-//             _ => unreachable!()
-//         }
-//     }
-// }
-//
-// impl Iterator for Fanout {
-//     type Item = Vec<Fanout>;
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         match self {
-//             Fanout::Results(..) => None,
-//             Fanout::Filter {
-//                 filter,
-//                 leaf: (.., leaf)
-//             } => {
-//                 Some(vec![Fanout::Results(match NodeGuard::deref(leaf) {
-//                     Node::Index(..) => unreachable!(),
-//                     Node::Leaf(records) => records
-//                         .iter()
-//                         .filter(|record| filter.key_interval
-//                             .contains(record.key()) && record
-//                             .match_version(filter.version))
-//                         .cloned()
-//                         .collect::<Vec<_>>(),
-//                     Node::MultiVersionLeaf(record_lists) => record_lists
-//                         .iter()
-//                         .filter(|record_list| filter.key_interval.contains(record_list.key()))
-//                         .map(|record_list| record_list.record_for_version(filter.version))
-//                         .filter(|record| record.is_some())
-//                         .map(|record| record.unwrap())
-//                         .collect::<Vec<_>>(),
-//                 })])
-//             }
-//             Fanout::Fan {
-//                 index,
-//                 father: (father_ref, ..),
-//                 filter,
-//                 fan_out,
-//             } => {
-//                 let next_fan = if !fan_out.is_empty() {
-//                     let next_child
-//                         = fan_out.pop_front().unwrap();
-//
-//                     let next_guard
-//                         = index.lock_reader(next_child.deref());
-//
-//                      match next_guard.deref() {
-//                         Node::Index(keys, children) => Self::Fan {
-//                             index,
-//                             filter: filter.clone(),
-//                             fan_out: keys
-//                                 .iter()
-//                                 .enumerate()
-//                                 .skip_while(|(_, k)| !filter.key_interval.lower().lt(k))
-//                                 .take_while(|(pos, k)| filter.key_interval.upper().ge(k) || *pos == 0)
-//                                 .map(|(pos, _)| children.get(pos).unwrap().clone())
-//                                 .collect(),
-//                             father: (next_child, next_guard),
-//                         },
-//                         _ => Self::Filter {
-//                             filter: filter.clone(),
-//                             leaf: (next_child, next_guard),
-//                         }
-//                     }
-//                 } else {
-//                     Self::Results(vec![])
-//                 };
-//
-//                 if next_fan.is_results() {
-//                     Some(vec![next_fan])
-//                 }
-//                 else {
-//                     Some(vec![Self::Fan {
-//                         index,
-//                         filter: filter.clone(),
-//                         father: (father_ref.clone(), index.lock_reader(father_ref.deref())),
-//                         fan_out: fan_out.split_off(0),
-//                     }, next_fan])
-//                 }
-//             }
-//         }
-//     }
-// }

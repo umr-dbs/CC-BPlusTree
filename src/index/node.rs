@@ -7,14 +7,10 @@ use itertools::Itertools;
 use mvcc_bplustree::index::record::Record;
 use mvcc_bplustree::index::version_info::Version;
 use crate::block::aligned_page::{IndexPage, RecordListsPage, RecordsPage};
-use crate::block::block::Block;
+use crate::block::block::{Block, BlockRef};
 use crate::index::record_list::RecordList;
 use crate::utils::shadow_vec::ShadowVec;
-use crate::utils::vcc_cell::{ConcurrentCell, ConcurrentGuard, GuardDerefResult};
-
-pub(crate) type BlockGuardResult<'a> = GuardDerefResult<'a, Block>;
-pub(crate) type BlockRef = ConcurrentCell<Block>;
-pub(crate) type BlockGuard<'a> = ConcurrentGuard<'a, Block>;
+use crate::utils::hybrid_cell::{HybridCell, ConcurrentGuard, GuardDerefResult};
 
 pub(crate) enum Node {
     Index(IndexPage),
@@ -48,7 +44,7 @@ impl Display for Node {
 pub(crate) enum NodeUnsafeDegree {
     Ok,
     Overflow,
-    Underflow
+    Underflow,
 }
 
 impl NodeUnsafeDegree {
@@ -92,11 +88,9 @@ impl Node {
 
         if len >= allocation {
             NodeUnsafeDegree::Overflow
-        }
-        else if len < allocation / 2 {
+        } else if len < allocation / 2 {
             NodeUnsafeDegree::Underflow
-        }
-        else {
+        } else {
             NodeUnsafeDegree::Ok
         }
     }
@@ -159,23 +153,43 @@ impl Node {
         }
     }
 
-    pub(crate) fn push_record(&mut self, record: Record, is_update: bool) -> bool {
+    pub(crate) fn update_record(&mut self, record: Record) -> bool {
+        match self {
+            Node::Leaf(records) => records
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find(|(_, entry)| entry.key() == record.key())
+                .map(|(pos, entry)| (pos, entry.delete(record.insertion_version())))
+                .map(|(pos, success)| if success {
+                    records.as_records().insert(pos + 1, record);
+                    true
+                } else {
+                    false
+                }).unwrap_or_default(),
+            Node::MultiVersionLeaf(records_lists) => records_lists
+                .as_slice()
+                .binary_search_by_key(&record.key(), |record_list| record_list.key())
+                .map(|pos| {
+                    let list = records_lists.get_mut(pos);
+                    if list.delete(record.insertion_version()) {
+                        list.push_front(record);
+                        true
+                    } else {
+                        false
+                    }
+                }).unwrap_or_default(),
+            _ => false
+        }
+    }
+
+    pub(crate) fn push_record(&mut self, record: Record) -> bool {
         match self {
             Node::Leaf(records_page) => match records_page
                 .as_slice()
                 .binary_search(&record)
             {
-                Ok(pos) if is_update => records_page
-                    .get_mut(pos)
-                    .delete(record.insertion_version())
-                    .then(|| {
-                        records_page
-                            .as_records()
-                            .insert(pos + 1, record);
-
-                        true
-                    }).unwrap_or(false),
-                Err(pos) if !is_update => {
+                Err(pos) => {
                     records_page
                         .as_records()
                         .insert(pos, record);
@@ -188,18 +202,7 @@ impl Node {
                 .as_slice()
                 .binary_search_by_key(&record.key(), |record_list| record_list.key())
             {
-                Ok(pos) if is_update => {
-                    let record_list = records_lists
-                        .get_mut(pos);
-
-                    record_list.delete(record.insertion_version())
-                        .then(|| {
-                            record_list.push_front(record);
-
-                            true
-                        }).unwrap_or(false)
-                }
-                Err(pos) if !is_update => {
+                Err(pos) => {
                     records_lists
                         .as_records()
                         .insert(pos, RecordList::from_record(record));

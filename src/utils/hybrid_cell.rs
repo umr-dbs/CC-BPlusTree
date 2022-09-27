@@ -7,9 +7,9 @@ use chronicle_db::tools::safe_cell::SafeCell;
 use mvcc_bplustree::index::version_info::{AtomicVersion, Version};
 use mvcc_bplustree::locking::locking_strategy::Attempts;
 use mvcc_bplustree::utils::cc_cell::{CCCell, CCCellGuard};
-use crate::utils::vcc_cell::ConcurrentCell::{ConcurrencyControlCell, OptimisticCell};
-use crate::utils::vcc_cell::ConcurrentGuard::{ConcurrencyControlGuard, OptimisticGuard};
-use crate::utils::vcc_cell::GuardDerefResult::{ReadHolder, Null, Ref, WriteHolder, RefMut};
+use crate::utils::hybrid_cell::HybridCell::{ConcurrencyControlCell, OptimisticCell};
+use crate::utils::hybrid_cell::ConcurrentGuard::{ConcurrencyControlGuard, OptimisticGuard};
+use crate::utils::hybrid_cell::GuardDerefResult::{ReadHolder, Null, Ref, WriteHolder, RefMut};
 
 pub const OBSOLETE_FLAG_VERSION: Version = 0x8_000000000000000;
 pub const WRITE_FLAG_VERSION: Version = 0x4_000000000000000;
@@ -38,7 +38,7 @@ pub(crate) fn sched_yield(attempt: Attempts) {
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
-        std::thread::sleep(std::time::Duration::from_nanos(1))
+        std::thread::sleep(std::time::Duration::from_nanos(0))
     } else {
         hint::spin_loop();
     }
@@ -83,7 +83,7 @@ impl<E: Default> OptCell<E> {
         self.cell_version.load(Relaxed)
     }
 
-    fn read_lock(&self) -> (bool, Version) {
+    fn read_lock(&self) -> (bool, LatchVersion) {
         let version = self.load_version();
         if version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
             // hint::spin_loop();
@@ -98,12 +98,12 @@ impl<E: Default> OptCell<E> {
     //     v == load && load & OBSOLETE_FLAG_VERSION == 0
     // }
 
-    fn is_read_valid(&self, v: Version) -> bool {
+    fn is_read_valid(&self, v: LatchVersion) -> bool {
         let load = self.load_version();
         v == load && load & WRITE_OBSOLETE_FLAG_VERSION == 0
     }
 
-    fn write_lock(&self, read_version: Version) -> Option<Version> {
+    fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
         if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
             return None;
         }
@@ -123,7 +123,7 @@ impl<E: Default> OptCell<E> {
     }
 
     #[inline(always)]
-    fn write_unlock(&self, write_version: Version) {
+    fn write_unlock(&self, write_version: LatchVersion) {
         // if write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION {
             // println!("Dropping {} to {}", write_version, write_version ^ WRITE_FLAG_VERSION);
         debug_assert!(write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
@@ -132,7 +132,7 @@ impl<E: Default> OptCell<E> {
     }
 
     #[inline(always)]
-    fn write_obsolete(&self, write_version: Version) {
+    fn write_obsolete(&self, write_version: LatchVersion) {
         debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
         self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, SeqCst);
@@ -155,12 +155,12 @@ impl<E: Default> OptCell<E> {
 }
 
 // #[repr(u8)]
-pub enum ConcurrentCell<E: Default> {
+pub enum HybridCell<E: Default> {
     ConcurrencyControlCell(Arc<CCCell<E>>),
     OptimisticCell(Arc<OptCell<E>>),
 }
 
-impl<E: Default> Clone for ConcurrentCell<E> {
+impl<E: Default> Clone for HybridCell<E> {
     fn clone(&self) -> Self {
         match self {
             ConcurrencyControlCell(cell) => ConcurrencyControlCell(cell.clone()),
@@ -169,7 +169,7 @@ impl<E: Default> Clone for ConcurrentCell<E> {
     }
 }
 
-impl<E: Default + Display> Display for ConcurrentCell<E> {
+impl<E: Default + Display> Display for HybridCell<E> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ConcurrencyControlCell(cell) =>
@@ -180,27 +180,27 @@ impl<E: Default + Display> Display for ConcurrentCell<E> {
     }
 }
 
-impl<E: Default> Default for ConcurrentCell<E> {
+impl<E: Default> Default for HybridCell<E> {
     fn default() -> Self {
         ConcurrencyControlCell(Arc::new(CCCell::default()))
     }
 }
 
-impl<E: Default> Into<ConcurrentCell<E>> for Arc<CCCell<E>> {
-    fn into(self) -> ConcurrentCell<E> {
+impl<E: Default> Into<HybridCell<E>> for Arc<CCCell<E>> {
+    fn into(self) -> HybridCell<E> {
         ConcurrencyControlCell(self)
     }
 }
 
-impl<E: Default> Into<ConcurrentCell<E>> for Arc<OptCell<E>> {
-    fn into(self) -> ConcurrentCell<E> {
+impl<E: Default> Into<HybridCell<E>> for Arc<OptCell<E>> {
+    fn into(self) -> HybridCell<E> {
         OptimisticCell(self)
     }
 }
 
-unsafe impl<E: Default> Sync for ConcurrentCell<E> {}
+unsafe impl<E: Default> Sync for HybridCell<E> {}
 
-unsafe impl<E: Default> Send for ConcurrentCell<E> {}
+unsafe impl<E: Default> Send for HybridCell<E> {}
 
 #[repr(u8)]
 pub enum ConcurrentGuard<'a, E: Default + 'a> {
@@ -693,7 +693,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     // }
 }
 
-impl<'a, E: Default + 'a> ConcurrentCell<E> {
+impl<'a, E: Default + 'a> HybridCell<E> {
     pub fn new_optimistic(data: E) -> Self {
         OptimisticCell(Arc::new(OptCell::new(data)))
     }

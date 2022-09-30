@@ -1,5 +1,7 @@
 use std::ptr;
 use chronicle_db::backbone::core::event::EventVariant::Empty;
+use mvcc_bplustree::index::record::Record;
+use mvcc_bplustree::index::version_info::Version;
 use mvcc_bplustree::locking::locking_strategy::ATTEMPT_START;
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
@@ -22,11 +24,11 @@ impl Index {
                 guard.guard_result()
                     .assume_mut()
                     .unwrap()
-                    .delete_record(key, version)
+                    .delete_key(key, version)
                     .then(|| TransactionResult::Deleted(key, version))
                     .unwrap_or_default()
             }
-            Transaction::Insert(event) => {
+            Transaction::Insert(event) if self.block_manager.is_multi_version => {
                 let key
                     = event.t1();
 
@@ -45,7 +47,23 @@ impl Index {
                     .then(|| TransactionResult::Inserted(key, version))
                     .unwrap_or_default()
             }
-            Transaction::Update(event) => {
+            Transaction::Insert(event) => {
+                let key
+                    = event.t1();
+
+                let guard
+                    = self.traversal_write(key);
+
+                debug_assert!(guard.guard_result().is_mut(), "{}", self.locking_strategy);
+
+                guard.guard_result()
+                    .assume_mut()
+                    .unwrap()
+                    .push_event(event)
+                    .then(|| TransactionResult::Inserted(key, Version::MIN))
+                    .unwrap_or_default()
+            }
+            Transaction::Update(event) if self.block_manager.is_multi_version => {
                 let key
                     = event.t1();
 
@@ -62,6 +80,22 @@ impl Index {
                     .unwrap()
                     .update_record((event, version).into())
                     .then(|| TransactionResult::Updated(key, version))
+                    .unwrap_or_default()
+            }
+            Transaction::Update(event) => {
+                let key
+                    = event.t1();
+
+                let guard
+                    = self.traversal_write(key);
+
+                debug_assert!(guard.guard_result().is_mut());
+
+                guard.guard_result()
+                    .assume_mut()
+                    .unwrap()
+                    .update_event(event)
+                    .then(|| TransactionResult::Updated(key, Version::MIN))
                     .unwrap_or_default()
             }
             Transaction::ExactSearch(key, version) if self.is_olc() => unsafe {
@@ -82,11 +116,12 @@ impl Index {
                         = guard.read_cell_version_as_reader();
 
                     let maybe_record = match reader.as_ref() {
-                        Node::Leaf(records) => records
+                        Node::Leaf(events) => events
                             .iter()
-                            .skip_while(|record| record.key() != key)
-                            .find(|record| record.match_version(version))
-                            .map(|record| record.unsafe_clone()),
+                            .skip_while(|event| event.t1() != key)
+                            .next()
+                            .map(|event| event.unsafe_clone())
+                            .map(|event| Record::new(event.t1, event.payload, Version::MIN)),
                         Node::MultiVersionLeaf(record_list) => record_list
                             .iter()
                             .find(|record_list| record_list.key() == key)
@@ -119,9 +154,9 @@ impl Index {
                 match reader.as_ref() {
                     Node::Leaf(records) => records
                         .iter()
-                        .skip_while(|record| record.key() != key)
-                        .find(|record| record.match_version(version))
-                        .cloned()
+                        .skip_while(|event| event.t1() != key)
+                        .next()
+                        .map(|event| Record::new(event.t1, event.payload.clone(), Version::MIN))
                         .into(),
                     Node::MultiVersionLeaf(record_list) => record_list
                         .iter()
@@ -152,10 +187,10 @@ impl Index {
                         Node::Leaf(records) => records
                             .iter()
                             .rev()
-                            .skip_while(|record| record.key() != key)
-                            .filter(|record| !record.is_deleted())
+                            .skip_while(|event| event.t1() != key)
                             .next()
-                            .map(|record| record.unsafe_clone()),
+                            .map(|event| event.unsafe_clone())
+                            .map(|event| Record::new(event.t1, event.payload, Version::MIN)),
                         Node::MultiVersionLeaf(record_list) => record_list
                             .iter()
                             .find(|record_list| record_list.key() == key)
@@ -189,10 +224,9 @@ impl Index {
                     Node::Leaf(records) => records
                         .iter()
                         .rev()
-                        .skip_while(|record| record.key() != key)
-                        .filter(|record| !record.is_deleted())
+                        .skip_while(|event| event.t1() != key)
                         .next()
-                        .cloned()
+                        .map(|event| Record::new(event.t1, event.payload.clone(), Version::MIN))
                         .into(),
                     Node::MultiVersionLeaf(record_list) => record_list
                         .iter()
@@ -254,9 +288,8 @@ impl Index {
                             .flat_map(|(_n, guard)| match guard.guard_result().as_ref().unwrap().as_ref() {
                                 Node::Leaf(records) => records
                                     .iter()
-                                    .filter(|record| key_interval.contains(record.key()) &&
-                                        record.match_version(version))
-                                    .cloned()
+                                    .filter(|event| key_interval.contains(event.t1()))
+                                    .map(|event| Record::new(event.t1, event.payload.clone(), Version::MIN))
                                     .collect(),
                                 Node::MultiVersionLeaf(record_list) => record_list
                                     .iter()

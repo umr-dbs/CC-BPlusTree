@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 use mvcc_bplustree::block::block::{AtomicBlockID, BlockID};
-use crate::block::aligned_page::{IndexPage, RecordListsPage, RecordsPage};
+use crate::block::aligned_page::{IndexPage, RecordListsPage, EventsPage};
 use crate::block::block::Block;
 use crate::index::node::Node;
 
@@ -97,7 +97,7 @@ impl BlockManager {
     pub(crate) fn new_empty_leaf_single_version_block(&self) -> Block {
         Block::new(
             self.next_block_id(),
-            Node::Leaf(RecordsPage::new(self.leaf_allocation)))
+            Node::Leaf(EventsPage::new(self.leaf_allocation)))
     }
 
     /// Crafts a new aligned Multi-Version-Leaf-Block.

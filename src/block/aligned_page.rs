@@ -1,13 +1,14 @@
 use std::mem;
 use std::ops::{Deref, DerefMut};
+use chronicle_db::backbone::core::event::Event;
 use chronicle_db::tools::aliases::{Key, ObjectCount};
 use chronicle_db::tools::arrays::array::FixedArray;
-use mvcc_bplustree::index::record::Record;
 use crate::block::block::BlockRef;
 use crate::index::record_list::RecordList;
 use crate::utils::shadow_vec::ShadowVec;
+use serde::{Serialize, Deserialize};
 
-pub(crate) type RecordsPage = LeafPage<Record>;
+pub(crate) type EventsPage = LeafPage<Event>;
 pub(crate) type RecordListsPage = LeafPage<RecordList>;
 
 impl<E: Default> LeafPage<E> {
@@ -26,7 +27,7 @@ impl<E: Default> LeafPage<E> {
 }
 
 /// Defines a record page, wrapping aligned Records with an allocation size.
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub(crate) struct LeafPage<E: Default> {
     pub(crate) record_data: FixedArray<E>,
     pub(crate) allocated_units: ObjectCount,
@@ -63,7 +64,7 @@ impl<E: Default> DerefMut for LeafPage<E> {
 
 
 /// Defines a record page, wrapping aligned Records with an allocation size.
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub(crate) struct IndexPage {
     pub(crate) keys: FixedArray<Key>,
     pub(crate) children: FixedArray<BlockRef>,

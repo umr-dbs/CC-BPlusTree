@@ -1,8 +1,9 @@
 use mvcc_bplustree::block::block::BlockID;
 use crate::block::block::BlockRef;
 use crate::bplus_tree::Height;
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub(crate) struct Root {
     pub(crate) block: BlockRef,
     pub(crate) height: Height

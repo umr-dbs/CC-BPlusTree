@@ -195,7 +195,7 @@ impl Index {
 
                 let k3 = records
                     .get_unchecked(records_mid)
-                    .key();
+                    .t1();
 
                 let mut new_node_right
                     = self.block_manager.new_empty_leaf_single_version_block();
@@ -335,7 +335,7 @@ impl Index {
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get_unchecked(records_mid)
-                    .key();
+                    .t1();
 
                 let mut new_node
                     = self.block_manager.new_empty_leaf_single_version_block();

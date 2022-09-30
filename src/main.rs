@@ -55,8 +55,8 @@ fn experiment() {
     let cpu_threads = false;
 
     let mut threads_cpu = vec![
-        // 1,
-        // 2,
+        1,
+        2,
         // 3,
         // 4,
         // 8,
@@ -94,7 +94,7 @@ fn experiment() {
     let mut strategies = vec![];
     strategies.push(LockingStrategy::WriteCoupling);
 
-    for attempt in 1..=10 {
+    for attempt in 1..=8 {
         // strategies.push(LockingStrategy::optimistic_custom(
         //     LevelVariant::new_height_lock(0.2_f32), attempt));
         // strategies.push(LockingStrategy::dolos_custom(
@@ -114,10 +114,6 @@ fn experiment() {
             LevelVariant::new_height_lock(1_f32), attempt));
         strategies.push(LockingStrategy::dolos_custom(
             LevelVariant::new_height_lock(1_f32), attempt));
-        strategies.push(LockingStrategy::optimistic_custom(
-            LevelVariant::new_height_lock(1_f32), 100 * attempt));
-        strategies.push(LockingStrategy::dolos_custom(
-            LevelVariant::new_height_lock(1_f32), 100 * attempt));
     }
 
     insertions.iter().enumerate().for_each(|(i, insertion)| {

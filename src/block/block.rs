@@ -5,10 +5,11 @@ use mvcc_bplustree::utils::cc_cell::CCCell;
 use crate::index::node::Node;
 use crate::utils::hybrid_cell::HybridCell::{ConcurrencyControlCell, OptimisticCell};
 use crate::utils::hybrid_cell::{HybridCell, OptCell};
+use serde::{Serialize, Deserialize};
 
 pub(crate) type BlockRef = HybridCell<Block>;
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub(crate) struct Block {
     pub(crate) block_id: BlockID,
     pub(crate) node_data: Node

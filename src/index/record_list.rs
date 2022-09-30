@@ -5,8 +5,9 @@ use chronicle_db::backbone::core::event::Event;
 use chronicle_db::tools::aliases::Key;
 use mvcc_bplustree::index::record::{Payload, Record};
 use mvcc_bplustree::index::version_info::{Version, VersionInfo};
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct PayloadVersioned {
     payload: Payload,
     version_info: VersionInfo,
@@ -77,7 +78,7 @@ impl DerefMut for PayloadVersioned {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RecordList {
     key: Key,
     payload: LinkedList<PayloadVersioned>,
@@ -97,6 +98,10 @@ impl RecordList {
             key,
             payload: LinkedList::from_iter(vec![(payload, version_info).into()]),
         }
+    }
+
+    pub fn versions_count(&self) -> usize {
+        self.payload.len()
     }
 
     pub const fn key(&self) -> Key {

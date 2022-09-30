@@ -10,6 +10,7 @@ use mvcc_bplustree::utils::cc_cell::{CCCell, CCCellGuard};
 use crate::utils::hybrid_cell::HybridCell::{ConcurrencyControlCell, OptimisticCell};
 use crate::utils::hybrid_cell::ConcurrentGuard::{ConcurrencyControlGuard, OptimisticGuard};
 use crate::utils::hybrid_cell::GuardDerefResult::{ReadHolder, Null, Ref, WriteHolder, RefMut};
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 
 pub const OBSOLETE_FLAG_VERSION: Version = 0x8_000000000000000;
 pub const WRITE_FLAG_VERSION: Version = 0x4_000000000000000;
@@ -53,6 +54,18 @@ pub type LatchVersion = Version;
 pub struct OptCell<E: Default> {
     cell: SafeCell<E>,
     cell_version: AtomicVersion,
+}
+
+impl<E: Default + Serialize> Serialize for OptCell<E> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        self.cell.serialize(serializer)
+    }
+}
+
+impl<'de, E: Default + Deserialize<'de>> Deserialize<'de> for OptCell<E> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+        Ok(OptCell::new(E::deserialize(deserializer)?))
+    }
 }
 
 impl<E: Default + Display> Display for OptCell<E> {
@@ -155,6 +168,7 @@ impl<E: Default> OptCell<E> {
 }
 
 // #[repr(u8)]
+#[derive(Serialize, Deserialize)]
 pub enum HybridCell<E: Default> {
     ConcurrencyControlCell(Arc<CCCell<E>>),
     OptimisticCell(Arc<OptCell<E>>),

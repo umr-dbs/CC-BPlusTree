@@ -1,20 +1,19 @@
 use std::fmt::{Display, Formatter};
-use std::mem::ManuallyDrop;
-use std::ops::{Deref, DerefMut};
+use chronicle_db::backbone::core::event::Event;
 use chronicle_db::tools::aliases::Key;
-use chronicle_db::tools::arrays::array::FixedArray;
 use itertools::Itertools;
 use mvcc_bplustree::index::record::Record;
 use mvcc_bplustree::index::version_info::Version;
-use crate::block::aligned_page::{IndexPage, RecordListsPage, RecordsPage};
-use crate::block::block::{Block, BlockRef};
+use crate::block::aligned_page::{IndexPage, RecordListsPage, EventsPage};
+use crate::block::block::BlockRef;
 use crate::index::record_list::RecordList;
 use crate::utils::shadow_vec::ShadowVec;
-use crate::utils::hybrid_cell::{HybridCell, ConcurrentGuard, GuardDerefResult};
+use serde::{Serialize, Deserialize};
 
+#[derive(Serialize, Deserialize)]
 pub(crate) enum Node {
     Index(IndexPage),
-    Leaf(RecordsPage),
+    Leaf(EventsPage),
     MultiVersionLeaf(RecordListsPage),
 }
 
@@ -116,7 +115,7 @@ impl Node {
         }
     }
 
-    pub(crate) fn records_mut(&mut self) -> ShadowVec<Record> {
+    pub(crate) fn records_mut(&mut self) -> ShadowVec<Event> {
         match self {
             Node::Leaf(records_page) => records_page.as_records(),
             _ => unreachable!("Sleepy Joe hit me -> Not index Page .records_mut")
@@ -134,15 +133,14 @@ impl Node {
         !self.is_leaf()
     }
 
-    pub(crate) fn delete_record(&mut self, key: Key, del_version: Version) -> bool {
+    pub(crate) fn delete_key(&mut self, key: Key, del_version: Version) -> bool {
         match self {
-            Node::Leaf(records) => records
-                .iter_mut()
-                .rev()
-                .find(|record| record.key() == key)
-                .filter(|record| record.match_version(del_version))
-                .map(|record| record.delete(del_version))
-                .unwrap_or(false),
+            Node::Leaf(events_page) => events_page
+                .as_slice()
+                .binary_search_by_key(&key, |event| event.t1())
+                .map(|found| events_page.as_records().remove(found))
+                .map(|_| true)
+                .unwrap_or_default(),
             Node::MultiVersionLeaf(records_lists) => records_lists
                 .iter_mut()
                 .rev()
@@ -153,20 +151,20 @@ impl Node {
         }
     }
 
+    pub(crate) fn update_event(&mut self, event: Event) -> bool {
+        match self {
+            Node::Leaf(events_page) => events_page
+                .as_slice()
+                .binary_search_by_key(&event.t1(), |e| e.t1())
+                .map(|found| events_page.get_mut(found).payload = event.payload)
+                .map(|_| true)
+                .unwrap_or_default(),
+            _ => false
+        }
+    }
+
     pub(crate) fn update_record(&mut self, record: Record) -> bool {
         match self {
-            Node::Leaf(records) => records
-                .iter_mut()
-                .enumerate()
-                .rev()
-                .find(|(_, entry)| entry.key() == record.key())
-                .map(|(pos, entry)| (pos, entry.delete(record.insertion_version())))
-                .map(|(pos, success)| if success {
-                    records.as_records().insert(pos + 1, record);
-                    true
-                } else {
-                    false
-                }).unwrap_or_default(),
             Node::MultiVersionLeaf(records_lists) => records_lists
                 .as_slice()
                 .binary_search_by_key(&record.key(), |record_list| record_list.key())
@@ -183,21 +181,27 @@ impl Node {
         }
     }
 
-    pub(crate) fn push_record(&mut self, record: Record) -> bool {
+    pub(crate) fn push_event(&mut self, event: Event) -> bool {
         match self {
             Node::Leaf(records_page) => match records_page
                 .as_slice()
-                .binary_search(&record)
+                .binary_search_by_key(&event.t1(), |event| event.t1())
             {
                 Err(pos) => {
                     records_page
                         .as_records()
-                        .insert(pos, record);
+                        .insert(pos, event);
 
                     true
                 }
                 _ => false
             }
+            _ => false
+        }
+    }
+
+    pub(crate) fn push_record(&mut self, record: Record) -> bool {
+        match self {
             Node::MultiVersionLeaf(records_lists, ..) => match records_lists
                 .as_slice()
                 .binary_search_by_key(&record.key(), |record_list| record_list.key())
@@ -232,6 +236,6 @@ impl AsRef<Node> for Node {
 
 impl Default for Node {
     fn default() -> Self {
-        Self::Leaf(RecordsPage::default())
+        Self::Leaf(EventsPage::default())
     }
 }

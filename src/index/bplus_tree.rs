@@ -40,20 +40,20 @@ impl BPlusTree {
     pub(crate) fn set_new_root(&self, new_root: Block, new_height: Level) {
         let _ = mem::replace(
             self.root.block.unsafe_borrow_mut_static(),
-            new_root
+            new_root,
         );
 
         self.root.get_mut().height = new_height;
     }
 
-    fn make(block_manager: BlockManager, locking_strategy: LockingStrategy) -> Self {
+    pub fn make(block_manager: BlockManager, locking_strategy: LockingStrategy) -> Self {
         let empty_node
             = block_manager.make_empty_root();
 
         Self {
             root: UnCell::new(Root::new(
                 empty_node.into_cell(is_olc(&locking_strategy)),
-                Self::INIT_TREE_HEIGHT
+                Self::INIT_TREE_HEIGHT,
             )),
             version_counter: AtomicVersion::new(Self::START_VERSION),
             locking_strategy,

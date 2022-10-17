@@ -1,10 +1,12 @@
 use std::{fs, mem};
 use chronicle_db::tools::aliases::Key;
-use mvcc_bplustree::locking::locking_strategy::{LevelVariant, LockingStrategy};
+use mvcc_bplustree::locking::locking_strategy::{Attempts, LevelVariant, LockingStrategy};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
+use mvcc_bplustree::index::record::Payload;
 use crate::index::bplus_tree;
 use crate::index::bplus_tree::Index;
+use crate::index::settings::{BlockSettings, CONFIG_INI_PATH, init_from_config_ini, load_config};
 use crate::test::{beast_test, EXE_LOOK_UPS, format_insertsions, gen_rand_data, level_order, log_debug, log_debug_ln, simple_test};
 
 mod index;
@@ -52,24 +54,26 @@ fn make_splash() {
 }
 
 fn experiment() {
-    let cpu_threads = false;
+    let cpu_threads = true;
 
-    let mut threads_cpu = vec![
+    let threads_cpu = vec![
         1,
         2,
-        // 3,
-        // 4,
-        // 8,
-        // 16,
-        // 32,
-        // 64,
+        3,
+        4,
+        8,
+        16,
+        32,
+        64,
         128,
         256,
         512,
         1024,
     ];
 
-    // let mut threads_cpu = (1..=1024).collect::<Vec<_>>();
+    let mut threads_cpu = (1..=usize::max(num_cpus::get(), *threads_cpu.last().unwrap()))
+        .collect::<Vec<_>>();
+
     if cpu_threads {
         threads_cpu = (1..=num_cpus::get()).collect();
     }
@@ -83,60 +87,66 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
+        // 10_000_000,
         // 20_000_000,
         // 50_000_000,
-        // 100_000_000,
+        100_000_000,
     ];
 
-    log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
+    let bszs = vec![
+        1,
+        2,
+        3,
+        4,
+        8,
+        10,
+        12,
+        14,
+        16,
+        32,
+    ].into_iter().map(|bsz| bsz * 1024);
+
+    log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len() * bszs.clone().len()));
 
     let mut strategies = vec![];
     strategies.push(LockingStrategy::WriteCoupling);
 
-    for attempt in 1..=8 {
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(0.2_f32), attempt));
-        // strategies.push(LockingStrategy::dolos_custom(
-        //     LevelVariant::new_height_lock(0.2_f32), attempt));
-        //
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(0.5_f32), attempt));
-        // strategies.push(LockingStrategy::dolos_custom(
-        //     LevelVariant::new_height_lock(0.5_f32), attempt));
+    strategies.push(LockingStrategy::optimistic_custom(
+        LevelVariant::new_height_lock(1_f32), 2));
+    strategies.push(LockingStrategy::optimistic_custom(
+        LevelVariant::new_height_lock(1_f32), 5));
+    strategies.push(LockingStrategy::optimistic_custom(
+        LevelVariant::new_height_lock(1_f32), 10));
 
-        // strategies.push(LockingStrategy::optimistic_custom(
-        //     LevelVariant::new_height_lock(0.9_f32), attempt));
-        // strategies.push(LockingStrategy::dolos_custom(
-        //     LevelVariant::new_height_lock(0.9_f32), attempt));
+    strategies.push(LockingStrategy::dolos_custom(
+        LevelVariant::new_height_lock(1_f32), 2));
+    strategies.push(LockingStrategy::dolos_custom(
+        LevelVariant::new_height_lock(1_f32), 5));
+    strategies.push(LockingStrategy::dolos_custom(
+        LevelVariant::new_height_lock(1_f32), 10));
 
-        strategies.push(LockingStrategy::optimistic_custom(
-            LevelVariant::new_height_lock(1_f32), attempt));
-        strategies.push(LockingStrategy::dolos_custom(
-            LevelVariant::new_height_lock(1_f32), attempt));
-    }
+    bszs.clone().enumerate().for_each(|(b_i, bsz)| {
+        insertions.iter().enumerate().for_each(|(i, insertion)| {
+            log_debug_ln(format!("# {}.{}\n\t- Records: \t{}\n\t- Threads: \t{}\n\t- Block Size: \t{} kb",
+                                 i + 1, b_i + 1,
+                                 format_insertsions(*insertion),
+                                 threads_cpu.iter().join(","),
+                                 bsz / 1024)
+            );
 
-    insertions.iter().enumerate().for_each(|(i, insertion)| {
-        log_debug_ln(format!("# {} - Experiment:\n\t- Records: \t{}\n\t- Threads: \t{}",
-                             i + 1,
-                             format_insertsions(*insertion),
-                             threads_cpu.iter().join(","))
-        );
-
-        log_debug(format!("\t- Strategy:"));
-        if threads_cpu.contains(&1) {
-            println!("\t{}", LockingStrategy::SingleWriter);
-            strategies
-                .iter()
-                .for_each(|st| log_debug_ln(format!("\t\t\t{}", st)))
-        }
-        else {
-            log_debug_ln(format!("\t{}", strategies[0]));
-            (&strategies[1..])
-                .iter()
-                .for_each(|st| log_debug_ln(format!("\t\t\t{}", st)))
-        }
-
+            log_debug(format!("\t- Strategy:"));
+            if threads_cpu.contains(&1) {
+                println!("\t{}", LockingStrategy::SingleWriter);
+                strategies
+                    .iter()
+                    .for_each(|st| log_debug_ln(format!("\t\t\t{}", st)))
+            } else {
+                log_debug_ln(format!("\t{}", strategies[0]));
+                (&strategies[1..])
+                    .iter()
+                    .for_each(|st| log_debug_ln(format!("\t\t\t{}", st)))
+            }
+        });
     });
 
     log_debug_ln(format!("Preparing data, hold on.."));
@@ -153,66 +163,67 @@ fn experiment() {
 
     mem::drop(strategies);
 
-    println!("Number Insertions,Number Threads,Locking Strategy,Height,Time");
+    println!("Number Insertions,Number Threads,Locking Strategy,Height,Time,Block Size");
 
-    cases.iter().for_each(|(t1s, strats)|
-        for num_threads in threads_cpu.iter() {
-            if *num_threads == 1 {
-                if EXE_LOOK_UPS {
-                    log_debug_ln(format!("Warning: Look-up queries enabled!"))
-                }
+    let index_anker
+        = init_from_config_ini(); // anker
 
-                print!("{}", t1s.len());
-                print!(",{}", *num_threads);
+    let payload_anker: Payload = serde_json::from_str(
+        load_config(CONFIG_INI_PATH, true)
+            .get("payload")
+            .unwrap()
+    ).unwrap(); // anker layout
 
-                let index
-                    = Index::new_single_version_for(LockingStrategy::SingleWriter);
-
-                let time = beast_test(
-                    1,
-                    index,
-                    t1s.as_slice());
-
-                println!(",{}", time);
-
-                // if EXE_LOOK_UPS {
-                //     log_debug_ln(format!("Warning: Look-up queries enabled!"))
-                // }
-                //
-                // print!("{}", t1s.len());
-                // print!(",{}", *num_threads);
-                //
-                // let index
-                //     = Index::new_single_version_for(LockingStrategy::WriteCoupling);
-                //
-                // let time = beast_test(
-                //     1,
-                //     index,
-                //     t1s.as_slice());
-                //
-                // println!(",{}", time);
-
-                // thread::sleep(Duration::from_millis(200));
-            } else {
-                for ls in strats.iter() {
+    bszs.for_each(|bsz| {
+        cases.iter().for_each(|(t1s, strats)|
+            for num_threads in threads_cpu.iter() {
+                if *num_threads == 1 {
                     if EXE_LOOK_UPS {
                         log_debug_ln(format!("Warning: Look-up queries enabled!"))
                     }
 
                     print!("{}", t1s.len());
                     print!(",{}", *num_threads);
-                    let index
-                        = Index::new_single_version_for(ls.clone());
+
+                    let index = Index::make(BlockSettings::new(
+                        bsz,
+                        index_anker.block_manager.is_multi_version,
+                        payload_anker.clone(),
+                    ).into(), LockingStrategy::SingleWriter);
 
                     let time = beast_test(
-                        *num_threads,
+                        1,
                         index,
                         t1s.as_slice());
 
-                    println!(",{}", time);
+                    print!(",{}", time);
+                    println!(",{}", bsz);
+                } else {
+                    for ls in strats.iter() {
+                        if EXE_LOOK_UPS {
+                            log_debug_ln(format!("Warning: Look-up queries enabled!"))
+                        }
 
-                    // thread::sleep(Duration::from_millis(200));
+                        print!("{}", t1s.len());
+                        print!(",{}", *num_threads);
+
+                        let mut index = Index::make(BlockSettings::new(
+                            bsz,
+                            index_anker.block_manager.is_multi_version,
+                            payload_anker.clone(),
+                        ).into(), ls.clone());
+
+                        let time = beast_test(
+                            *num_threads,
+                            index,
+                            t1s.as_slice());
+
+                        print!(",{}", time);
+                        println!(",{}", bsz);
+
+                        // thread::sleep(Duration::from_millis(200));
+                    }
                 }
-            }
-        });
+            });
+    });
 }

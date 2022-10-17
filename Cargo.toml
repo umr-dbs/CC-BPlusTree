@@ -1,6 +1,6 @@
 [package]
 name = "CCBPlusTree"
-version = "0.0.33"
+version = "0.0.34"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "Experimental Concurrency Control B+Tree single versioned and versioned via version lists Implementation"
@@ -9,7 +9,7 @@ repository = "https://github.com/umr-dbs/CC-BPlusTree"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ChronicleDB = { git = "ssh://git@github.com/umr-dbs/ChronicleDB", version = "1.0.49" }
+ChronicleDB = { git = "ssh://git@github.com/umr-dbs/ChronicleDB", version = "1.0.51" }
 MVCCBPlusTree = { git = "ssh://git@github.com/umr-dbs/MVCC-BPlusTree", version = "0.0.65" }
 chrono = "0.4.22"
 rand = "0.8.5"
@@ -19,4 +19,4 @@ parking_lot = "0.12.1"
 serde = { version ="1.0.14", features = ["derive", "rc"] }
 serde_json = { version = "1.0.8" }
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2.134"
+libc = "0.2.135"

@@ -3,24 +3,30 @@ use mvcc_bplustree::block::block::{AtomicBlockID, BlockID};
 use crate::block::aligned_page::{IndexPage, RecordListsPage, EventsPage};
 use crate::block::block::Block;
 use crate::index::node::Node;
+use crate::index::settings::BlockSettings;
 
-pub(crate) const DEFAULT_ALLOCATION_LEAF: usize = 10;
-pub(crate) const DEFAULT_ALLOCATION_INDEX: usize = 10;
-
-pub(crate) struct BlockManager {
+pub struct BlockManager {
     block_id_counter: AtomicBlockID,
     leaf_allocation: usize,
     index_allocation: usize,
     pub(crate) is_multi_version: bool
 }
 
+impl Clone for BlockManager {
+    fn clone(&self) -> Self {
+        Self {
+            block_id_counter: AtomicBlockID::new(BlockManager::START_BLOCK_ID),
+            leaf_allocation: self.leaf_allocation,
+            index_allocation: self.index_allocation,
+            is_multi_version: self.is_multi_version
+        }
+    }
+}
+
 /// Default implementation for BlockManager with default BlockSettings.
 impl Default for BlockManager {
     fn default() -> Self {
-        BlockManager::new(
-            DEFAULT_ALLOCATION_LEAF,
-            DEFAULT_ALLOCATION_INDEX,
-            false)
+        BlockSettings::default().into()
     }
 }
 
@@ -36,7 +42,7 @@ impl Block {
 /// Main functionality implementation for BlockManager.
 impl BlockManager {
     /// Default starting numerical value for a valid BlockID.
-    const START_BLOCK_ID: BlockID = BlockID::MIN;
+    pub(crate) const START_BLOCK_ID: BlockID = BlockID::MIN;
 
     /// Generates and returns a new atomic (unique across callers) BlockID.
     pub(crate) fn next_block_id(&self) -> BlockID {

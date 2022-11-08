@@ -1,0 +1,1 @@
+gcc -Wall -g main.cpp -o Leis_OLC -Llibs -lrandGen -lstdc++

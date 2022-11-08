@@ -66,17 +66,17 @@ fn experiment() {
         32,
         64,
         128,
-        256,
-        512,
-        1024,
+        // 256,
+        // 512,
+        // 1024,
     ];
 
-    let mut threads_cpu = (1..=usize::max(num_cpus::get(), *threads_cpu.last().unwrap()))
-        .collect::<Vec<_>>();
-
-    if cpu_threads {
-        threads_cpu = (1..=num_cpus::get()).collect();
-    }
+    // let mut threads_cpu = (1..=usize::max(num_cpus::get(), *threads_cpu.last().unwrap()))
+    //     .collect::<Vec<_>>();
+    //
+    // if cpu_threads {
+    //     threads_cpu = (1..=num_cpus::get()).collect();
+    // }
 
     let insertions: Vec<Key> = vec![
         // 10,
@@ -112,16 +112,16 @@ fn experiment() {
     strategies.push(LockingStrategy::WriteCoupling);
 
     strategies.push(LockingStrategy::optimistic_custom(
-        LevelVariant::new_height_lock(1_f32), 2));
+        LevelVariant::new_height_lock(1_f32), 1));
     strategies.push(LockingStrategy::optimistic_custom(
-        LevelVariant::new_height_lock(1_f32), 5));
+        LevelVariant::new_height_lock(1_f32), 3));
     strategies.push(LockingStrategy::optimistic_custom(
         LevelVariant::new_height_lock(1_f32), 10));
 
     strategies.push(LockingStrategy::dolos_custom(
-        LevelVariant::new_height_lock(1_f32), 2));
+        LevelVariant::new_height_lock(1_f32), 1));
     strategies.push(LockingStrategy::dolos_custom(
-        LevelVariant::new_height_lock(1_f32), 5));
+        LevelVariant::new_height_lock(1_f32), 3));
     strategies.push(LockingStrategy::dolos_custom(
         LevelVariant::new_height_lock(1_f32), 10));
 

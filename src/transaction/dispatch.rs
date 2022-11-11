@@ -98,7 +98,7 @@ impl Index {
                     .then(|| TransactionResult::Updated(key, Version::MIN))
                     .unwrap_or_default()
             }
-            Transaction::ExactSearch(key, version) if self.is_olc() => unsafe {
+            Transaction::ExactSearch(key, version) if self.locking_strategy.is_olc() => unsafe {
                 let guard
                     = self.traversal_read(key);
 
@@ -166,7 +166,7 @@ impl Index {
                     _ => TransactionResult::Error
                 }
             }
-            Transaction::ExactSearchLatest(key) if self.is_olc() => unsafe {
+            Transaction::ExactSearchLatest(key) if self.locking_strategy.is_olc() => unsafe {
                 let guard
                     = self.traversal_read(key);
 
@@ -238,7 +238,7 @@ impl Index {
                     _ => TransactionResult::Error
                 }
             }
-            Transaction::RangeSearch(key_interval, version) if self.is_olc() => {
+            Transaction::RangeSearch(key_interval, version) if self.locking_strategy.is_olc() => {
                 unimplemented!("RangeSearch in olc not implemented yet!")
             }
             Transaction::RangeSearch(key_interval, version) => {

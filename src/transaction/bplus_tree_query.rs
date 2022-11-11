@@ -5,6 +5,7 @@ use crate::block::aligned_page::IndexPage;
 use crate::block::block_lock::{BlockGuard, BlockGuardResult};
 use crate::bplus_tree::{Height, LockLevel};
 use crate::Index;
+use crate::index::cclocking_strategy::{CCLockingStrategy, LevelConstraints};
 use crate::index::node::{Node, NodeUnsafeDegree};
 use crate::utils::hybrid_cell::sched_yield;
 
@@ -33,7 +34,7 @@ impl Index {
     }
 
     fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (BlockGuard, Height, LockLevel, Attempts) {
-        let is_olc = self.is_olc();
+        let is_olc = self.locking_strategy.is_olc();
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
                 Err((n_lock_level, n_attempt)) => {
@@ -57,12 +58,12 @@ impl Index {
         let root_block
             = root.block();
 
-        let is_root_lock
-            = self.locking_strategy.is_lock_root(lock_level, attempt, root.height());
-
         let mut root_guard = match self.locking_strategy {
-            LockingStrategy::SingleWriter => root_block.borrow_free_static(),
-            LockingStrategy::Dolos(..) if is_root_lock => {
+            CCLockingStrategy::MonoWriter => root_block.borrow_free_static(),
+            CCLockingStrategy::LockCoupling => root_block.borrow_mut_exclusive_static(),
+            CCLockingStrategy::OLC(LevelConstraints::None) => root_block.borrow_free_static(),
+            CCLockingStrategy::OLC(LevelConstraints::OptimisticLimit { .. })
+            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) => {
                 let guard
                     = root_block.borrow_mut_static();
 
@@ -74,10 +75,12 @@ impl Index {
 
                 guard
             }
-            LockingStrategy::Dolos(..) => root_block.borrow_free_static(),
-            LockingStrategy::WriteCoupling => root_block.borrow_mut_exclusive_static(),
-            LockingStrategy::Optimistic(..) if is_root_lock => root_block.borrow_mut_static(),
-            LockingStrategy::Optimistic(..) => root_block.borrow_read_static(),
+            CCLockingStrategy::OLC(..) => root_block.borrow_free_static(),
+            CCLockingStrategy::RWLockCoupling(..)
+            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+                root_block.borrow_mut_static(),
+            CCLockingStrategy::RWLockCoupling(..) =>
+                root_block.borrow_read_static(),
         };
 
         if !root_guard.is_valid() {
@@ -104,11 +107,11 @@ impl Index {
             = self.has_overflow(root_ref);
 
         let force_restart = match self.locking_strategy {
-            LockingStrategy::SingleWriter | LockingStrategy::WriteCoupling => false,
-            _ => !is_root_lock
+            CCLockingStrategy::MonoWriter | CCLockingStrategy::LockCoupling => false,
+            _ => !root_guard.is_write_lock()
         };
 
-        if !root_guard.is_valid() || force_restart && has_overflow_root {
+        if !root_guard.is_valid() || force_restart && has_overflow_root && !root_guard.upgrade_write_lock() {
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
@@ -120,7 +123,7 @@ impl Index {
 
         debug_assert!(root_guard.is_valid());
 
-        if !root_guard.upgrade_write_lock() && self.locking_strategy().additional_lock_required() {
+        if !root_guard.upgrade_write_lock() && self.locking_strategy.additional_lock_required() {
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
@@ -541,7 +544,7 @@ impl Index {
     pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard {
         let mut attempt = ATTEMPT_START;
         let mut lock_level = Self::MAX_TREE_HEIGHT;
-        let olc = self.is_olc();
+        let olc = self.locking_strategy.is_olc();
 
         loop {
             match self.traversal_write_internal(lock_level, attempt, key) {
@@ -610,7 +613,8 @@ impl Index {
 
     pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard {
         let mut attempt = ATTEMPT_START;
-        let olc = self.is_olc();
+        let olc = self.locking_strategy.is_olc();
+        // let olc_limited = self.locking_strategy.is_olc_limited();
 
         loop {
             match self.traversal_read_internal(key) {

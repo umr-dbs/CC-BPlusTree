@@ -6,6 +6,7 @@ use itertools::Itertools;
 use mvcc_bplustree::index::record::Payload;
 use crate::index::bplus_tree;
 use crate::index::bplus_tree::Index;
+use crate::index::cclocking_strategy::{CCLockingStrategy, LevelConstraints};
 use crate::index::settings::{BlockSettings, CONFIG_INI_PATH, init_from_config_ini, load_config};
 use crate::test::{beast_test, EXE_LOOK_UPS, format_insertsions, gen_rand_data, level_order, log_debug, log_debug_ln, simple_test};
 
@@ -94,36 +95,40 @@ fn experiment() {
     ];
 
     let bszs = vec![
-        1,
-        2,
-        3,
+        // 1,
+        // 2,
+        // 3,
         4,
-        8,
-        10,
-        12,
-        14,
-        16,
-        32,
+        // 8,
+        // 10,
+        // 12,
+        // 14,
+        // 16,
+        // 32,
     ].into_iter().map(|bsz| bsz * 1024);
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len() * bszs.clone().len()));
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::WriteCoupling);
+    // strategies.push(LockingStrategy::WriteCoupling);
+    //
+    // strategies.push(LockingStrategy::optimistic_custom(
+    //     LevelVariant::new_height_lock(1_f32), 1));
+    // strategies.push(LockingStrategy::optimistic_custom(
+    //     LevelVariant::new_height_lock(1_f32), 3));
+    // strategies.push(LockingStrategy::optimistic_custom(
+    //     LevelVariant::new_height_lock(1_f32), 10));
 
-    strategies.push(LockingStrategy::optimistic_custom(
-        LevelVariant::new_height_lock(1_f32), 1));
-    strategies.push(LockingStrategy::optimistic_custom(
-        LevelVariant::new_height_lock(1_f32), 3));
-    strategies.push(LockingStrategy::optimistic_custom(
-        LevelVariant::new_height_lock(1_f32), 10));
+    strategies.push(CCLockingStrategy::OLC(
+        LevelConstraints::OptimisticLimit { attempts: 1, level: LevelVariant::new_height_lock(1_f32) }));
 
-    strategies.push(LockingStrategy::dolos_custom(
-        LevelVariant::new_height_lock(1_f32), 1));
-    strategies.push(LockingStrategy::dolos_custom(
-        LevelVariant::new_height_lock(1_f32), 3));
-    strategies.push(LockingStrategy::dolos_custom(
-        LevelVariant::new_height_lock(1_f32), 10));
+    strategies.push(CCLockingStrategy::OLC(
+        LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
+
+    strategies.push(CCLockingStrategy::OLC(
+        LevelConstraints::OptimisticLimit { attempts: 10, level: LevelVariant::new_height_lock(1_f32) }));
+
+    strategies.push(CCLockingStrategy::OLC(LevelConstraints::None));
 
     bszs.clone().enumerate().for_each(|(b_i, bsz)| {
         insertions.iter().enumerate().for_each(|(i, insertion)| {
@@ -136,7 +141,7 @@ fn experiment() {
 
             log_debug(format!("\t- Strategy:"));
             if threads_cpu.contains(&1) {
-                println!("\t{}", LockingStrategy::SingleWriter);
+                println!("\t{}", CCLockingStrategy::MonoWriter);
                 strategies
                     .iter()
                     .for_each(|st| log_debug_ln(format!("\t\t\t{}", st)))
@@ -189,7 +194,7 @@ fn experiment() {
                         bsz,
                         index_anker.block_manager.is_multi_version,
                         payload_anker.clone(),
-                    ).into(), LockingStrategy::SingleWriter);
+                    ).into(), CCLockingStrategy::MonoWriter);
 
                     let time = beast_test(
                         1,

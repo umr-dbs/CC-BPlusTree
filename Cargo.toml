@@ -1,6 +1,6 @@
 [package]
 name = "CCBPlusTree"
-version = "0.0.34"
+version = "0.0.35"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "Experimental Concurrency Control B+Tree single versioned and versioned via version lists Implementation"
@@ -13,10 +13,10 @@ ChronicleDB = { git = "ssh://git@github.com/umr-dbs/ChronicleDB", version = "1.0
 MVCCBPlusTree = { git = "ssh://git@github.com/umr-dbs/MVCC-BPlusTree", version = "0.0.65" }
 chrono = "0.4.22"
 rand = "0.8.5"
-num_cpus = "1.13.1"
+num_cpus = "1.14"
 itertools = "0.10.5"
 parking_lot = "0.12.1"
 serde = { version ="1.0.14", features = ["derive", "rc"] }
 serde_json = { version = "1.0.8" }
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2.135"
+libc = "0.2.137"

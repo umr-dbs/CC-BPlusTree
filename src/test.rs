@@ -5,6 +5,8 @@ use std::time::SystemTime;
 use chronicle_db::backbone::core::event::Event;
 use chronicle_db::backbone::core::event::EventVariant::F64;
 use chronicle_db::tools::aliases::Key;
+use chronicle_db::tools::safe_cell::SafeCell;
+use itertools::Itertools;
 use mvcc_bplustree::index::record::Record;
 use mvcc_bplustree::locking::locking_strategy::LockingStrategy;
 use mvcc_bplustree::transaction::transaction::Transaction;
@@ -14,6 +16,7 @@ use parking_lot::Mutex;
 use rand::RngCore;
 use crate::{bplus_tree, Index};
 use crate::bplus_tree::BPlusTree;
+use crate::index::cclocking_strategy::CCLockingStrategy;
 
 pub const EXE_LOOK_UPS: bool = false;
 
@@ -66,7 +69,7 @@ pub fn simple_test() {
 
     // let mut keys_insert = gen_rand_data(10_000_000);
 
-    let tree = Index::new_multi_version_for(LockingStrategy::SingleWriter);
+    let tree = Index::new_multi_version_for(CCLockingStrategy::default());
     let mut search_queries = vec![];
 
     for (i, tx) in keys_insert.into_iter().enumerate() {
@@ -170,62 +173,63 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
     let mut handles
         = Vec::with_capacity(num_thread);
 
-    let query_buff = Mutex::new(VecDeque::from_iter(
-        t1s.iter().map(|key| Transaction::Insert(
-            Event::new_single_float_event_t1(*key, *key as _))))
-    );
 
-    let query_buff_t: &'static Mutex<VecDeque<Transaction>>
-        = unsafe { mem::transmute(query_buff.borrow()) };
+    let query_buff = t1s
+        .iter()
+        .map(|key| Transaction::Insert(Event::new_single_float_event_t1(*key, *key as _)))
+        .collect::<Vec<_>>();
 
-    let index = index_o.unsafe_borrow_mut_static();
+    let mut data_buff = query_buff
+        .chunks(t1s.len() / num_thread)
+        .into_iter()
+        .map(|s| SafeCell::new(s.to_vec()))
+        .collect::<Vec<_>>();
+
+    let index: &'static Index = unsafe { mem::transmute(index_o.unsafe_borrow_mut_static()) };
     let start = SystemTime::now();
 
     for _ in 1..=num_thread {
-        handles.push(thread::spawn(|| loop {
-            let mut buff = query_buff_t.lock();
-            let next_query = buff.pop_front();
-            mem::drop(buff);
+        let mut current_chunk
+            = data_buff.pop().unwrap();
 
-            match next_query {
-                Some(query) => match index.execute(query) { // index.execute(transaction),
-                    TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if EXE_LOOK_UPS
-                    {
-                        // loop {
-                        match index.execute(Transaction::ExactSearch(key, version)) {
-                            TransactionResult::MatchedRecord(Some(record))
-                            if record.key() == key && record.match_version(version) => {}//,
-                            joe => { //  if !index.locking_strategy().is_dolos()
-                                log_debug_ln(format!("\nERROR Search -> Transaction::{}",
-                                                     Transaction::ExactSearch(key, version)));
-                                log_debug_ln(format!("\n****ERROR: {}, TransactionResult::{}", index.locking_strategy, joe));
-                                panic!()
-                            }
-                            // _ => {}
-                        };
-                        // }
+        handles.push(thread::spawn(move || current_chunk.into_inner().into_iter().for_each(|next_query| {
+            match index.execute(next_query) { // index.execute(transaction),
+                TransactionResult::Inserted(key, version) |
+                TransactionResult::Updated(key, version) => if EXE_LOOK_UPS
+                {
+                    // loop {
+                    match index.execute(Transaction::ExactSearch(key, version)) {
+                        TransactionResult::MatchedRecord(Some(record))
+                        if record.key() == key && record.match_version(version) => {}//,
+                        joe => { //  if !index.locking_strategy().is_dolos()
+                            log_debug_ln(format!("\nERROR Search -> Transaction::{}",
+                                                 Transaction::ExactSearch(key, version)));
+                            log_debug_ln(format!("\n****ERROR: {}, TransactionResult::{}", index.locking_strategy, joe));
+                            panic!()
+                        }
+                        // _ => {}
+                    };
+                    // }
 
-                        // match index.execute(RangeSearch((key..=key).into(), version)) {
-                        //     TransactionResult::MatchedRecords(records)
-                        //     if records.len() != 1 =>
-                        //         panic!("Sleepy Joe => len = {} - {}",
-                        //                records.len(),
-                        //                records.iter().join("\n")),
-                        //     TransactionResult::MatchedRecords(ref records)
-                        //     if records[0].key() != key || !records[0].insertion_version() == version =>
-                        //         panic!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
-                        //     _ => {}
-                        // };
-                    },
-                    joey => {
-                        log_debug_ln(format!("\n#### ERROR: {}, {}", index.locking_strategy, joey));
-                        panic!()
-                    }
+                    // match index.execute(RangeSearch((key..=key).into(), version)) {
+                    //     TransactionResult::MatchedRecords(records)
+                    //     if records.len() != 1 =>
+                    //         panic!("Sleepy Joe => len = {} - {}",
+                    //                records.len(),
+                    //                records.iter().join("\n")),
+                    //     TransactionResult::MatchedRecords(ref records)
+                    //     if records[0].key() != key || !records[0].insertion_version() == version =>
+                    //         panic!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
+                    //     _ => {}
+                    // };
+                },
+                joey => {
+                    log_debug_ln(format!("\n#### ERROR: {}, {}", index.locking_strategy, joey));
+                    panic!()
                 }
-                None => break
             };
-        }));
+        })
+        ));
     }
 
     handles
@@ -342,7 +346,6 @@ pub fn simple_test2() {
     log_debug_ln(format!(""));
     log_debug_ln(format!(""));
     log_debug_ln(format!(""));
-
 }
 
 fn experiment2() {
@@ -357,7 +360,7 @@ fn experiment2() {
     print!(",{}", threads_cpu);
 
     let index
-        = Index::new_single_version_for(LockingStrategy::WriteCoupling);
+        = Index::new_single_version_for(CCLockingStrategy::LockCoupling);
 
     let (time, index_o) = beast_test2(
         threads_cpu,
@@ -369,32 +372,26 @@ fn experiment2() {
     let index = index_o.unsafe_borrow();
     for key in data {
         match index.execute(Transaction::ExactSearchLatest(key)) {
-            TransactionResult::MatchedRecord(Some(..)) => {},
+            TransactionResult::MatchedRecord(Some(..)) => {}
             joe => println!("ERROR: {}", joe)
         }
     }
 }
 
-pub fn format_insertsions(i: Key) -> String{
+pub fn format_insertsions(i: Key) -> String {
     if i == 100_000_000 {
         "100 Mio".to_string()
-    }
-    else if i == 10_000_000 {
+    } else if i == 10_000_000 {
         "10 Mio".to_string()
-    }
-    else if i == 1_000_000 {
+    } else if i == 1_000_000 {
         "1 Mio".to_string()
-    }
-    else if i == 100_000 {
+    } else if i == 100_000 {
         "100 K".to_string()
-    }
-    else if i == 10_000 {
+    } else if i == 10_000 {
         "10 K".to_string()
-    }
-    else if i == 1_000 {
+    } else if i == 1_000 {
         "1 K".to_string()
-    }
-    else {
+    } else {
         i.to_string()
     }
 }

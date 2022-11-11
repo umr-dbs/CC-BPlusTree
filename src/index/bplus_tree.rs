@@ -5,6 +5,8 @@ use mvcc_bplustree::locking::locking_strategy::{Attempts, Level, LockingStrategy
 use crate::block::block::{Block, BlockRef};
 use crate::block::block_lock::BlockGuard;
 use crate::block::block_manager::BlockManager;
+use crate::index::cclocking_strategy::{CCLockingStrategy, LevelConstraints};
+use crate::index::cclocking_strategy::LevelConstraints::OptimisticLimit;
 use crate::index::root::Root;
 use crate::utils::un_cell::UnCell;
 // use serde::{Serialize, Deserialize};
@@ -16,14 +18,9 @@ pub(crate) type Index = BPlusTree;
 // #[derive(Serialize, Deserialize)]
 pub struct BPlusTree {
     pub(crate) root: UnCell<Root>,
-    pub(crate) locking_strategy: LockingStrategy,
+    pub(crate) locking_strategy: CCLockingStrategy,
     pub(crate) block_manager: BlockManager,
     pub(crate) version_counter: AtomicVersion,
-}
-
-#[inline(always)]
-pub const fn is_olc(ls: &LockingStrategy) -> bool {
-    ls.is_dolos()
 }
 
 impl Default for Index {
@@ -46,13 +43,13 @@ impl BPlusTree {
         self.root.get_mut().height = new_height;
     }
 
-    pub fn make(block_manager: BlockManager, locking_strategy: LockingStrategy) -> Self {
+    pub fn make(block_manager: BlockManager, locking_strategy: CCLockingStrategy) -> Self {
         let empty_node
             = block_manager.make_empty_root();
 
         Self {
             root: UnCell::new(Root::new(
-                empty_node.into_cell(is_olc(&locking_strategy)),
+                empty_node.into_cell(locking_strategy.is_olc()),
                 Self::INIT_TREE_HEIGHT,
             )),
             version_counter: AtomicVersion::new(Self::START_VERSION),
@@ -61,7 +58,7 @@ impl BPlusTree {
         }
     }
 
-    pub fn new_single_version_for(locking_strategy: LockingStrategy) -> Self {
+    pub fn new_single_version_for(locking_strategy: CCLockingStrategy) -> Self {
         let mut block_manager
             = BlockManager::default();
 
@@ -70,7 +67,7 @@ impl BPlusTree {
         Self::make(block_manager, locking_strategy)
     }
 
-    pub fn new_multi_version_for(locking_strategy: LockingStrategy) -> Self {
+    pub fn new_multi_version_for(locking_strategy: CCLockingStrategy) -> Self {
         let mut block_manager
             = BlockManager::default();
 
@@ -80,20 +77,15 @@ impl BPlusTree {
     }
 
     pub fn new_single_versioned() -> Self {
-        Self::new_single_version_for(LockingStrategy::SingleWriter)
+        Self::new_single_version_for(CCLockingStrategy::default())
     }
 
     pub fn new_multi_versioned() -> Self {
-        Self::new_multi_version_for(LockingStrategy::SingleWriter)
+        Self::new_multi_version_for(CCLockingStrategy::default())
     }
 
-    pub const fn locking_strategy(&self) -> &LockingStrategy {
+    pub const fn locking_strategy(&self) -> &CCLockingStrategy {
         &self.locking_strategy
-    }
-
-    #[inline]
-    pub const fn is_olc(&self) -> bool {
-        is_olc(self.locking_strategy())
     }
 
     pub fn height(&self) -> Height {
@@ -106,8 +98,8 @@ impl BPlusTree {
 
     pub(crate) fn lock_reader(&self, node: &BlockRef) -> BlockGuard {
         match self.locking_strategy {
-            LockingStrategy::SingleWriter => node.borrow_free_static(),
-            LockingStrategy::WriteCoupling => node.borrow_mut_exclusive_static(),
+            CCLockingStrategy::MonoWriter => node.borrow_free_static(),
+            CCLockingStrategy::LockCoupling => node.borrow_mut_exclusive_static(),
             _ => node.borrow_read_static(),
         }
     }
@@ -115,19 +107,21 @@ impl BPlusTree {
     #[inline]
     pub(crate) fn apply_for(&self, curr_level: Level, max_level: Level, attempt: Attempts, height: Level, block_cc: BlockRef) -> BlockGuard {
         match self.locking_strategy() {
-            LockingStrategy::SingleWriter =>
+            CCLockingStrategy::MonoWriter =>
                 block_cc.borrow_free_static(),
-            LockingStrategy::WriteCoupling =>
+            CCLockingStrategy::LockCoupling =>
                 block_cc.borrow_mut_exclusive_static(),
-            LockingStrategy::Optimistic(lock_level, attempts)
+            CCLockingStrategy::RWLockCoupling(lock_level, attempts)
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut_static(),
-            LockingStrategy::Dolos(lock_level, attempts)
-            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut_static(),
-            LockingStrategy::Optimistic(..) =>
+            CCLockingStrategy::RWLockCoupling(..) =>
                 block_cc.borrow_read_static(),
-            LockingStrategy::Dolos(..) =>
+            CCLockingStrategy::OLC(LevelConstraints::None) =>
+                block_cc.borrow_free_static(),
+            CCLockingStrategy::OLC(OptimisticLimit { attempts, level })
+            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
+                block_cc.borrow_mut_static(),
+            CCLockingStrategy::OLC(..) =>
                 block_cc.borrow_free_static(),
         }
     }

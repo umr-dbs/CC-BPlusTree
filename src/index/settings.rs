@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter, write};
 use std::mem;
 use chronicle_db::backbone::core::event::Event;
 use chronicle_db::backbone::core::event::EventVariant::F64;
@@ -7,14 +6,12 @@ use chronicle_db::configuration::configs::configuration_of;
 use chronicle_db::tools::aliases::{Key, ObjectCount};
 use mvcc_bplustree::index::record::Payload;
 use mvcc_bplustree::index::version_info::AtomicVersion;
-use mvcc_bplustree::locking::locking_strategy::{Attempts, Level, LevelVariant, LockingStrategy};
 use crate::block::block::Block;
 use crate::block::block_manager::BlockManager;
 use crate::index::record_list::RecordList;
-use serde::{Deserialize, Serialize};
 use crate::bplus_tree::BPlusTree;
-use crate::index::cclocking_strategy::CCLockingStrategy;
 use crate::index::root::Root;
+use crate::locking::locking_strategy::LockingStrategy;
 use crate::utils::un_cell::UnCell;
 
 pub const CONFIG_INI_PATH: &'static str = "config.ini";
@@ -35,7 +32,7 @@ pub fn load_config(path: &str, is_file: bool) -> HashMap<String, String> {
 
 fn init_from(config: HashMap<String, String>) -> BPlusTree {
     let locking_strategy
-        = CCLockingStrategy::load(&config);
+        = LockingStrategy::load(&config);
 
     let block_manager: BlockManager = BlockSettings::load(&config)
         .into();
@@ -54,7 +51,7 @@ fn init_from(config: HashMap<String, String>) -> BPlusTree {
 
 pub(crate) const DEFAULT_BLOCK_SIZE: usize = mem::size_of::<Block>() + 10 * mem::size_of::<Payload>();
 pub(crate) const DEFAULT_IS_MULTI_VERSION: bool = false;
-pub(crate) const DEFAULT_PAYLOAD: Payload = F64(0 as _);
+const DEFAULT_PAYLOAD: Payload = F64(0 as _);
 
 #[derive(Clone)]
 pub(crate) struct BlockSettings {

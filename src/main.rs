@@ -1,13 +1,13 @@
 use std::{fs, mem};
 use chronicle_db::tools::aliases::Key;
-use mvcc_bplustree::locking::locking_strategy::{Attempts, LevelVariant, LockingStrategy};
+use mvcc_bplustree::locking::locking_strategy::LevelVariant;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use mvcc_bplustree::index::record::Payload;
 use crate::index::bplus_tree;
 use crate::index::bplus_tree::Index;
-use crate::index::cclocking_strategy::{CCLockingStrategy, LevelConstraints};
 use crate::index::settings::{BlockSettings, CONFIG_INI_PATH, init_from_config_ini, load_config};
+use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::test::{beast_test, EXE_LOOK_UPS, format_insertsions, gen_rand_data, level_order, log_debug, log_debug_ln, simple_test};
 
 mod index;
@@ -15,6 +15,7 @@ mod transaction;
 mod utils;
 mod block;
 mod test;
+mod locking;
 
 fn main() {
     make_splash();
@@ -67,9 +68,9 @@ fn experiment() {
         32,
         64,
         128,
-        // 256,
-        // 512,
-        // 1024,
+        256,
+        512,
+        1024,
     ];
 
     // let mut threads_cpu = (1..=usize::max(num_cpus::get(), *threads_cpu.last().unwrap()))
@@ -95,22 +96,22 @@ fn experiment() {
     ];
 
     let bszs = vec![
-        // 1,
-        // 2,
+        1,
+        2,
         // 3,
         4,
-        // 8,
+        8,
         // 10,
-        // 12,
+        12,
         // 14,
-        // 16,
-        // 32,
+        16,
+        32,
     ].into_iter().map(|bsz| bsz * 1024);
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len() * bszs.clone().len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::WriteCoupling);
+    // strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -119,21 +120,34 @@ fn experiment() {
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 10));
 
-    strategies.push(CCLockingStrategy::OLC(
-        LevelConstraints::OptimisticLimit { attempts: 1, level: LevelVariant::new_height_lock(1_f32) }));
+    // strategies.push(LockingStrategy::OLC(
+    //     LevelConstraints::OptimisticLimit { attempts: 1, level: LevelVariant::new_height_lock(1_f32) }));
+    //
+    // strategies.push(LockingStrategy::OLC(
+    //     LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
+    //
+    // strategies.push(LockingStrategy::OLC(
+    //     LevelConstraints::OptimisticLimit { attempts: 10, level: LevelVariant::new_height_lock(1_f32) }));
 
-    strategies.push(CCLockingStrategy::OLC(
-        LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
+    strategies.push(LockingStrategy::OLC(LevelConstraints::Unlimited));
 
-    strategies.push(CCLockingStrategy::OLC(
-        LevelConstraints::OptimisticLimit { attempts: 10, level: LevelVariant::new_height_lock(1_f32) }));
+    strategies.push(LockingStrategy::RWLockCoupling(
+        LevelVariant::new_height_lock(1 as _),
+        2));
 
-    strategies.push(CCLockingStrategy::OLC(LevelConstraints::None));
+    strategies.push(LockingStrategy::RWLockCoupling(
+        LevelVariant::new_height_lock(1 as _),
+        10));
+
+    strategies.push(LockingStrategy::RWLockCoupling(
+        LevelVariant::new_height_lock(1 as _),
+        1_00));
 
     bszs.clone().enumerate().for_each(|(b_i, bsz)| {
         insertions.iter().enumerate().for_each(|(i, insertion)| {
             log_debug_ln(format!("# {}.{}\n\t- Records: \t{}\n\t- Threads: \t{}\n\t- Block Size: \t{} kb",
-                                 i + 1, b_i + 1,
+                                 b_i + 1,
+                                 i + 1,
                                  format_insertsions(*insertion),
                                  threads_cpu.iter().join(","),
                                  bsz / 1024)
@@ -141,7 +155,7 @@ fn experiment() {
 
             log_debug(format!("\t- Strategy:"));
             if threads_cpu.contains(&1) {
-                println!("\t{}", CCLockingStrategy::MonoWriter);
+                println!("\t{}", LockingStrategy::MonoWriter);
                 strategies
                     .iter()
                     .for_each(|st| log_debug_ln(format!("\t\t\t{}", st)))
@@ -194,7 +208,7 @@ fn experiment() {
                         bsz,
                         index_anker.block_manager.is_multi_version,
                         payload_anker.clone(),
-                    ).into(), CCLockingStrategy::MonoWriter);
+                    ).into(), LockingStrategy::MonoWriter);
 
                     let time = beast_test(
                         1,

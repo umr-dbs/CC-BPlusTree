@@ -2,10 +2,12 @@ use std::collections::linked_list::Iter;
 use std::collections::LinkedList;
 use std::ops::{Deref, DerefMut};
 use chronicle_db::backbone::core::event::Event;
+use chronicle_db::backbone::core::event::EventVariant::Empty;
 use chronicle_db::tools::aliases::Key;
 use mvcc_bplustree::index::record::{Payload, Record};
 use mvcc_bplustree::index::version_info::{Version, VersionInfo};
 use serde::{Serialize, Deserialize};
+use crate::index::record_like::RecordLike;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct PayloadVersioned {
@@ -80,7 +82,7 @@ impl DerefMut for PayloadVersioned {
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RecordList {
-    key: Key,
+    pub(crate) key: Key,
     payload: LinkedList<PayloadVersioned>,
 }
 
@@ -104,10 +106,6 @@ impl RecordList {
         self.payload.len()
     }
 
-    pub const fn key(&self) -> Key {
-        self.key
-    }
-
     pub fn is_deleted(&self) -> bool {
         self.payload_front()
             .map(|front| front.version_info().is_deleted())
@@ -124,7 +122,7 @@ impl RecordList {
         self.payload.push_front(record.into())
     }
 
-    fn payload_front(&self) -> Option<&PayloadVersioned> {
+    pub fn payload_front(&self) -> Option<&PayloadVersioned> {
         self.payload.front()
     }
 

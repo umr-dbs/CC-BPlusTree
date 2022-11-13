@@ -1,12 +1,13 @@
 use std::mem;
 use chronicle_db::tools::aliases::Key;
-use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level, LockingStrategy};
+use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level};
 use crate::block::aligned_page::IndexPage;
-use crate::block::block_lock::{BlockGuard, BlockGuardResult};
 use crate::bplus_tree::{Height, LockLevel};
 use crate::Index;
-use crate::index::cclocking_strategy::{CCLockingStrategy, LevelConstraints};
+use crate::index::record_like::RecordLike;
 use crate::index::node::{Node, NodeUnsafeDegree};
+use crate::locking::block_lock::{BlockGuard, BlockGuardResult};
+use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::utils::hybrid_cell::sched_yield;
 
 const DEBUG: bool = false;
@@ -59,10 +60,10 @@ impl Index {
             = root.block();
 
         let mut root_guard = match self.locking_strategy {
-            CCLockingStrategy::MonoWriter => root_block.borrow_free_static(),
-            CCLockingStrategy::LockCoupling => root_block.borrow_mut_exclusive_static(),
-            CCLockingStrategy::OLC(LevelConstraints::None) => root_block.borrow_free_static(),
-            CCLockingStrategy::OLC(LevelConstraints::OptimisticLimit { .. })
+            LockingStrategy::MonoWriter => root_block.borrow_free_static(),
+            LockingStrategy::LockCoupling => root_block.borrow_mut_exclusive_static(),
+            LockingStrategy::OLC(LevelConstraints::Unlimited) => root_block.borrow_free_static(),
+            LockingStrategy::OLC(LevelConstraints::OptimisticLimit { .. })
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) => {
                 let guard
                     = root_block.borrow_mut_static();
@@ -75,11 +76,11 @@ impl Index {
 
                 guard
             }
-            CCLockingStrategy::OLC(..) => root_block.borrow_free_static(),
-            CCLockingStrategy::RWLockCoupling(..)
+            LockingStrategy::OLC(..) => root_block.borrow_free_static(),
+            LockingStrategy::RWLockCoupling(..)
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root_block.borrow_mut_static(),
-            CCLockingStrategy::RWLockCoupling(..) =>
+            LockingStrategy::RWLockCoupling(..) =>
                 root_block.borrow_read_static(),
         };
 
@@ -107,11 +108,11 @@ impl Index {
             = self.has_overflow(root_ref);
 
         let force_restart = match self.locking_strategy {
-            CCLockingStrategy::MonoWriter | CCLockingStrategy::LockCoupling => false,
+            LockingStrategy::MonoWriter | LockingStrategy::LockCoupling => false,
             _ => !root_guard.is_write_lock()
         };
 
-        if !root_guard.is_valid() || force_restart && has_overflow_root && !root_guard.upgrade_write_lock() {
+        if  force_restart && has_overflow_root && !root_guard.upgrade_write_lock() { // !root_guard.is_valid() ||
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
@@ -198,7 +199,7 @@ impl Index {
 
                 let k3 = records
                     .get_unchecked(records_mid)
-                    .t1();
+                    .key();
 
                 let mut new_node_right
                     = self.block_manager.new_empty_leaf_single_version_block();
@@ -338,7 +339,7 @@ impl Index {
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get_unchecked(records_mid)
-                    .t1();
+                    .key();
 
                 let mut new_node
                     = self.block_manager.new_empty_leaf_single_version_block();

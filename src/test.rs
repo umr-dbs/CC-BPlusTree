@@ -6,9 +6,7 @@ use chronicle_db::backbone::core::event::Event;
 use chronicle_db::backbone::core::event::EventVariant::F64;
 use chronicle_db::tools::aliases::Key;
 use chronicle_db::tools::safe_cell::SafeCell;
-use itertools::Itertools;
 use mvcc_bplustree::index::record::Record;
-use mvcc_bplustree::locking::locking_strategy::LockingStrategy;
 use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use mvcc_bplustree::utils::cc_cell::CCCell;
@@ -16,7 +14,7 @@ use parking_lot::Mutex;
 use rand::RngCore;
 use crate::{bplus_tree, Index};
 use crate::bplus_tree::BPlusTree;
-use crate::index::cclocking_strategy::CCLockingStrategy;
+use crate::locking::locking_strategy::LockingStrategy;
 
 pub const EXE_LOOK_UPS: bool = false;
 
@@ -69,7 +67,7 @@ pub fn simple_test() {
 
     // let mut keys_insert = gen_rand_data(10_000_000);
 
-    let tree = Index::new_multi_version_for(CCLockingStrategy::default());
+    let tree = Index::new_multi_version_for(LockingStrategy::default());
     let mut search_queries = vec![];
 
     for (i, tx) in keys_insert.into_iter().enumerate() {
@@ -351,7 +349,7 @@ pub fn simple_test2() {
 fn experiment2() {
     println!("> Preparing data, hold on..");
 
-    let mut threads_cpu = 24;
+    let threads_cpu = 24;
     let insertions: Key = 1_000_000;
     let data = gen_rand_data(insertions as usize);
 
@@ -360,7 +358,7 @@ fn experiment2() {
     print!(",{}", threads_cpu);
 
     let index
-        = Index::new_single_version_for(CCLockingStrategy::LockCoupling);
+        = Index::new_single_version_for(LockingStrategy::LockCoupling);
 
     let (time, index_o) = beast_test2(
         threads_cpu,

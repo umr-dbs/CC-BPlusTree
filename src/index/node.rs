@@ -9,8 +9,9 @@ use crate::block::block::BlockRef;
 use crate::index::record_list::RecordList;
 use crate::utils::shadow_vec::ShadowVec;
 use serde::{Serialize, Deserialize};
-use crate::index::record_like::RecordLike;
+use crate::utils::record_like::RecordLike;
 
+#[repr(u8)]
 #[derive(Serialize, Deserialize)]
 pub(crate) enum Node {
     Index(IndexPage),
@@ -71,6 +72,7 @@ impl NodeUnsafeDegree {
 }
 
 impl Node {
+    #[inline(always)]
     pub(crate) fn is_overflow(&self, allocation: usize) -> bool {
         debug_assert!(allocation >= self.len());
 
@@ -95,6 +97,7 @@ impl Node {
         }
     }
 
+    #[inline(always)]
     pub const fn is_leaf(&self) -> bool {
         match self {
             Node::Index(..) => false,
@@ -102,6 +105,7 @@ impl Node {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn children_mut(&mut self) -> ShadowVec<BlockRef> {
         match self {
             Node::Index(index_page) => index_page.children_mut(),
@@ -109,6 +113,7 @@ impl Node {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn keys_mut(&mut self) -> ShadowVec<Key> {
         match self {
             Node::Index(index_page) => index_page.keys_mut(),
@@ -116,6 +121,7 @@ impl Node {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn records_mut(&mut self) -> ShadowVec<Event> {
         match self {
             Node::Leaf(records_page) => records_page.as_records(),
@@ -123,6 +129,7 @@ impl Node {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn record_lists_mut(&mut self) -> ShadowVec<RecordList> {
         match self {
             Node::MultiVersionLeaf(record_lists) => record_lists.as_records(),
@@ -130,10 +137,12 @@ impl Node {
         }
     }
 
+    #[inline(always)]
     pub const fn is_directory(&self) -> bool {
         !self.is_leaf()
     }
 
+    #[inline]
     pub(crate) fn delete_key(&mut self, key: Key, del_version: Version) -> bool {
         match self {
             Node::Leaf(events_page) => events_page
@@ -152,6 +161,7 @@ impl Node {
         }
     }
 
+    #[inline]
     pub(crate) fn update_event(&mut self, event: Event) -> bool {
         match self {
             Node::Leaf(events_page) => events_page
@@ -164,6 +174,7 @@ impl Node {
         }
     }
 
+    #[inline]
     pub(crate) fn update_record(&mut self, record: Record) -> bool {
         match self {
             Node::MultiVersionLeaf(records_lists) => records_lists
@@ -182,6 +193,7 @@ impl Node {
         }
     }
 
+    #[inline]
     pub(crate) fn push_event(&mut self, event: Event) -> bool {
         match self {
             Node::Leaf(records_page) => match records_page
@@ -201,6 +213,7 @@ impl Node {
         }
     }
 
+    #[inline]
     pub(crate) fn push_record(&mut self, record: Record) -> bool {
         match self {
             Node::MultiVersionLeaf(records_lists, ..) => match records_lists
@@ -220,6 +233,7 @@ impl Node {
         }
     }
 
+    #[inline(always)]
     pub fn len(&self) -> usize {
         match self {
             Node::Index(index_page) => index_page.keys_len(),

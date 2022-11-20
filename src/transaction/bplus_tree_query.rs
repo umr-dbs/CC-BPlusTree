@@ -4,7 +4,7 @@ use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level};
 use crate::block::aligned_page::IndexPage;
 use crate::bplus_tree::{Height, LockLevel};
 use crate::Index;
-use crate::index::record_like::RecordLike;
+use crate::utils::record_like::RecordLike;
 use crate::index::node::{Node, NodeUnsafeDegree};
 use crate::locking::block_lock::{BlockGuard, BlockGuardResult};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
@@ -13,6 +13,7 @@ use crate::utils::hybrid_cell::sched_yield;
 const DEBUG: bool = false;
 
 impl Index {
+    #[inline]
     fn has_overflow(&self, node: &Node) -> bool {
         match node.is_leaf() {
             true => node.is_overflow(self.block_manager.allocation_leaf()),
@@ -34,6 +35,7 @@ impl Index {
         }
     }
 
+    #[inline]
     fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (BlockGuard, Height, LockLevel, Attempts) {
         let is_olc = self.locking_strategy.is_olc();
         loop {
@@ -84,25 +86,25 @@ impl Index {
                 root_block.borrow_read_static(),
         };
 
-        if !root_guard.is_valid() {
-            mem::drop(root_guard);
-            return Err((lock_level, attempt + 1));
-        }
+        // if !root_guard.is_valid() {
+        //     mem::drop(root_guard);
+        //     return Err((lock_level, attempt + 1));
+        // }
 
         let root_guard_result
             = root_guard.guard_result();
 
-        let root_ref
-            = root_guard_result.as_ref();
+        let root_ref = unsafe {
+            root_guard_result.as_reader()
+        };
 
-        if root_ref.is_none() {
+        if root_guard_result.is_null() {
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
         }
 
-        let root_ref = root_ref
-            .unwrap();
+        let root_ref = root_ref.unwrap();
 
         let has_overflow_root
             = self.has_overflow(root_ref);
@@ -411,6 +413,7 @@ impl Index {
         }
     }
 
+    #[inline]
     fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key) -> Result<BlockGuard, (LockLevel, Attempts)>
     {
         let mut curr_level = Self::INIT_TREE_HEIGHT;
@@ -422,10 +425,7 @@ impl Index {
             let current_guard_result
                 = current_guard.guard_result();
 
-            let current_ref
-                = current_guard_result.as_ref();
-
-            if current_ref.is_none() {
+            if current_guard_result.is_null() {
                 mem::drop(height);
                 mem::drop(current_guard);
 
@@ -436,8 +436,8 @@ impl Index {
                 return Err((curr_level - 1, attempt + 1));
             }
 
-            let current_ref = current_ref
-                .unwrap();
+            let current_ref
+                = unsafe { current_guard_result.as_reader().unwrap() };
 
             match current_ref.as_ref() {
                 Node::Index(

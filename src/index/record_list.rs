@@ -7,7 +7,7 @@ use chronicle_db::tools::aliases::Key;
 use mvcc_bplustree::index::record::{Payload, Record};
 use mvcc_bplustree::index::version_info::{Version, VersionInfo};
 use serde::{Serialize, Deserialize};
-use crate::index::record_like::RecordLike;
+use crate::utils::record_like::RecordLike;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct PayloadVersioned {

@@ -65,6 +65,7 @@ fn experiment() {
         4,
         8,
         16,
+        24,
         32,
         64,
         128,
@@ -96,22 +97,22 @@ fn experiment() {
     ];
 
     let bszs = vec![
-        1,
-        2,
+        // 1,
+        // 2,
         // 3,
         4,
-        8,
+        // 8,
         // 10,
-        12,
+        // 12,
         // 14,
-        16,
-        32,
+        // 16,
+        // 32,
     ].into_iter().map(|bsz| bsz * 1024);
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len() * bszs.clone().len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::LockCoupling);
+    strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -133,15 +134,15 @@ fn experiment() {
 
     strategies.push(LockingStrategy::RWLockCoupling(
         LevelVariant::new_height_lock(1 as _),
-        2));
+        4));
 
-    strategies.push(LockingStrategy::RWLockCoupling(
-        LevelVariant::new_height_lock(1 as _),
-        10));
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(1 as _),
+    //     10));
 
-    strategies.push(LockingStrategy::RWLockCoupling(
-        LevelVariant::new_height_lock(1 as _),
-        1_00));
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(1 as _),
+    //     1_00));
 
     bszs.clone().enumerate().for_each(|(b_i, bsz)| {
         insertions.iter().enumerate().for_each(|(i, insertion)| {
@@ -196,6 +197,11 @@ fn experiment() {
     bszs.for_each(|bsz| {
         cases.iter().for_each(|(t1s, strats)|
             for num_threads in threads_cpu.iter() {
+                if *num_threads > t1s.len() {
+                    log_debug_ln("WARNING: Number of Threads larger than number of Transactions!".to_string());
+                    log_debug_ln(format!("WARNING: Skipping Transactions = {}, Threads = {}!", t1s.len(), num_threads));
+                    continue
+                }
                 if *num_threads == 1 {
                     if EXE_LOOK_UPS {
                         log_debug_ln(format!("Warning: Look-up queries enabled!"))
@@ -226,7 +232,7 @@ fn experiment() {
                         print!("{}", t1s.len());
                         print!(",{}", *num_threads);
 
-                        let mut index = Index::make(BlockSettings::new(
+                        let index = Index::make(BlockSettings::new(
                             bsz,
                             index_anker.block_manager.is_multi_version,
                             payload_anker.clone(),

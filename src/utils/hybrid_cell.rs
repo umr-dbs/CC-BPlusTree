@@ -25,7 +25,7 @@ const READ_FLAG_VERSION: Version = 0x0_000000000000000;
 // const LOCKING_BITS_OFFSET: Version = 2;
 // const VERSIONING_COUNTER_BITS: Version = (8 * mem::size_of::<Version>() as Version) - READERS_NUM_BITS - LOCKING_BITS_OFFSET;
 
-#[inline]
+#[inline(always)]
 #[cfg(target_os = "linux")]
 pub(crate) fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
@@ -35,7 +35,7 @@ pub(crate) fn sched_yield(attempt: Attempts) {
     }
 }
 
-#[inline]
+#[inline(always)]
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
@@ -74,7 +74,6 @@ impl<E: Default + Display> Display for OptCell<E> {
     }
 }
 
-
 impl<E: Default> Default for OptCell<E> {
     fn default() -> Self {
         Self::new(E::default())
@@ -84,6 +83,7 @@ impl<E: Default> Default for OptCell<E> {
 impl<E: Default> OptCell<E> {
     const CELL_START_VERSION: Version = 0;
 
+    #[inline(always)]
     pub const fn new(data: E) -> Self {
         Self {
             cell: SafeCell::new(data),
@@ -96,6 +96,7 @@ impl<E: Default> OptCell<E> {
         self.cell_version.load(Relaxed)
     }
 
+    #[inline]
     fn read_lock(&self) -> (bool, LatchVersion) {
         let version = self.load_version();
         if version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
@@ -111,11 +112,13 @@ impl<E: Default> OptCell<E> {
     //     v == load && load & OBSOLETE_FLAG_VERSION == 0
     // }
 
+    #[inline]
     fn is_read_valid(&self, v: LatchVersion) -> bool {
         let load = self.load_version();
         v == load && load & WRITE_OBSOLETE_FLAG_VERSION == 0
     }
 
+    #[inline]
     fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
         if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
             return None;
@@ -140,7 +143,7 @@ impl<E: Default> OptCell<E> {
         // if write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION {
             // println!("Dropping {} to {}", write_version, write_version ^ WRITE_FLAG_VERSION);
         debug_assert!(write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
-        self.cell_version.store(write_version ^ WRITE_FLAG_VERSION, SeqCst)
+        self.cell_version.store(write_version & !WRITE_FLAG_VERSION, SeqCst)
         // }
     }
 
@@ -175,6 +178,7 @@ pub enum HybridCell<E: Default> {
 }
 
 impl<E: Default> Clone for HybridCell<E> {
+    #[inline]
     fn clone(&self) -> Self {
         match self {
             ConcurrencyControlCell(cell) => ConcurrencyControlCell(cell.clone()),
@@ -265,6 +269,7 @@ pub enum GuardDerefResult<'a, E: Default> {
 }
 
 impl<'a, E: Default> Clone for GuardDerefResult<'a, E> {
+    #[inline]
     fn clone(&self) -> Self {
         match self {
             Null => Null,
@@ -277,6 +282,7 @@ impl<'a, E: Default> Clone for GuardDerefResult<'a, E> {
 }
 
 impl<'a, E: Default> GuardDerefResult<'a, E> {
+    #[inline(always)]
     pub const fn is_mut(&self) -> bool {
         match self {
             RefMut(_) => true,
@@ -285,6 +291,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    #[inline(always)]
     pub const fn is_reader(&self) -> bool {
         match self {
             Ref(_) => true,
@@ -293,6 +300,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    #[inline(always)]
     pub const fn is_mut_optimistic(&self) -> bool {
         match self {
             WriteHolder(..) => true,
@@ -300,6 +308,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    #[inline(always)]
     pub const fn is_null(&self) -> bool {
         match self {
             Null => true,
@@ -307,6 +316,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    #[inline]
     pub fn can_mut(&self) -> bool {
         match self {
             RefMut(_) => true,
@@ -316,6 +326,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    #[inline]
     pub fn as_ref(&self) -> Option<&E> {
         match self {
             Ref(e) => Some(e),
@@ -327,6 +338,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    #[inline(always)]
     fn latch_version(&self) -> Option<LatchVersion> {
         match self {
             ReadHolder((.., latch_version)) => Some(*latch_version),
@@ -335,6 +347,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    #[inline]
     pub unsafe fn as_reader(&self) -> Option<&E> {
         match self {
             Ref(e) => Some(e),
@@ -345,6 +358,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
         }
     }
 
+    #[inline]
     pub fn assume_mut(&self) -> Option<&'a mut E> {
         match self {
             RefMut(e) => unsafe { e.as_mut() },
@@ -361,6 +375,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
     //     }
     // }
 
+    #[inline]
     fn force_mut(&mut self) -> Option<&'a mut E> {
         self.assume_mut().or_else(|| match self {
             ReadHolder((cell, latch_version)) =>
@@ -385,6 +400,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
     //     }
     // }
 
+    #[inline(always)]
     pub fn mark_obsolete(&self) {
         match self {
             WriteHolder((cell, latch_version)) => cell
@@ -415,6 +431,7 @@ impl<'a, E: Default> GuardDerefResult<'a, E> {
 // }
 
 impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
+    #[inline(always)]
     pub(crate) fn guard_latch_version(&self) -> Option<LatchVersion> {
         match self {
             OptimisticGuard {
@@ -425,6 +442,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn cell_version(&self) -> Option<Version> {
         match self {
             OptimisticGuard {
@@ -484,6 +502,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     //     }
     // }
 
+    #[inline]
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
             ConcurrencyControlGuard { guard, .. } => guard
@@ -494,6 +513,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
         }
     }
 
+    #[inline]
     pub fn is_valid(&self) -> bool {
         match self {
             ConcurrencyControlGuard { .. } => true,
@@ -567,7 +587,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
 
     /// Returns true, if the CCCellGuard is locked no lock.
     /// Returns false, otherwise.
-    #[inline]
+    #[inline(always)]
     pub fn is_lock_free_lock(&self) -> bool {
         match self {
             ConcurrencyControlGuard {
@@ -631,6 +651,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
     //     })
     // }
 
+    #[inline]
     pub unsafe fn guard_result_reader(&self) -> GuardDerefResult<'a, E> {
         match self {
             ConcurrencyControlGuard { guard, .. } => match guard {
@@ -656,6 +677,7 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
         }
     }
 
+    #[inline]
     pub fn guard_result(&self) -> GuardDerefResult<'a, E> {
         match self {
             ConcurrencyControlGuard { guard, .. } => match guard {
@@ -708,10 +730,12 @@ impl<'a, E: Default + 'a> ConcurrentGuard<'a, E> {
 }
 
 impl<'a, E: Default + 'a> HybridCell<E> {
+    #[inline(always)]
     pub fn new_optimistic(data: E) -> Self {
         OptimisticCell(Arc::new(OptCell::new(data)))
     }
 
+    #[inline(always)]
     pub fn new_concurrent(data: E) -> Self {
         ConcurrencyControlCell(Arc::new(CCCell::new(data)))
     }
@@ -775,7 +799,7 @@ impl<'a, E: Default + 'a> HybridCell<E> {
         }
     }
 
-
+    #[inline(always)]
     pub fn borrow_free_static(&self) -> ConcurrentGuard<'static, E> {
         unsafe {
             mem::transmute(self.borrow_free())
@@ -792,11 +816,13 @@ impl<'a, E: Default + 'a> HybridCell<E> {
         }
     }
 
+    #[inline(always)]
     pub fn borrow_read_static(&self) -> ConcurrentGuard<'static, E> {
         unsafe { mem::transmute(self.borrow_read()) }
     }
 
     /// Lock-less access.
+    #[inline(always)]
     pub fn unsafe_borrow(&self) -> &E {
         match self {
             ConcurrencyControlCell(cell) => cell.unsafe_borrow(),
@@ -805,11 +831,13 @@ impl<'a, E: Default + 'a> HybridCell<E> {
     }
 
     /// Lock-less read access via static life-time.
+    #[inline(always)]
     pub fn unsafe_borrow_static(&self) -> &'static E {
         unsafe { mem::transmute(self.unsafe_borrow()) }
     }
 
     /// Lock-less write access via static life-time.
+    #[inline(always)]
     pub fn unsafe_borrow_mut(&self) -> &mut E {
         match self {
             ConcurrencyControlCell(cell) => cell.unsafe_borrow_mut(),
@@ -818,11 +846,13 @@ impl<'a, E: Default + 'a> HybridCell<E> {
     }
 
     /// Lock-less write access via static life-time.
+    #[inline(always)]
     pub fn unsafe_borrow_mut_static(&self) -> &'static mut E {
         unsafe { mem::transmute(self.unsafe_borrow_mut()) }
     }
 
     /// Write access.
+    #[inline(always)]
     pub fn borrow_mut(&self) -> ConcurrentGuard<'_, E> {
         match self {
             ConcurrencyControlCell(cell) => ConcurrentGuard::boxed(
@@ -833,12 +863,14 @@ impl<'a, E: Default + 'a> HybridCell<E> {
     }
 
     /// Write access via static life-time.
+    #[inline(always)]
     pub fn borrow_mut_static(&self) -> ConcurrentGuard<'static, E> {
         unsafe { mem::transmute(self.borrow_mut()) }
     }
 
 
     /// Exclusive write access.
+    #[inline(always)]
     pub fn borrow_mut_exclusive(&self) -> ConcurrentGuard<'_, E> {
         match self {
             ConcurrencyControlCell(cell) => ConcurrentGuard::boxed(
@@ -849,6 +881,7 @@ impl<'a, E: Default + 'a> HybridCell<E> {
     }
 
     /// Exclusive write access.
+    #[inline(always)]
     pub fn borrow_mut_exclusive_static(&self) -> ConcurrentGuard<'static, E> {
         unsafe { mem::transmute(self.borrow_mut_exclusive()) }
     }

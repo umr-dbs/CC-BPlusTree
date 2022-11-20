@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use mvcc_bplustree::locking::locking_strategy::{Attempts, Level, LevelVariant};
 use serde::{Deserialize, Serialize};
 
+#[repr(u8)]
 #[derive(Serialize, Deserialize, Clone)]
 pub enum LevelConstraints {
     OptimisticLimit {
@@ -34,6 +35,7 @@ impl LevelConstraints {
     }
 }
 
+#[repr(u8)]
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub enum LockingStrategy {
     #[default]
@@ -49,9 +51,9 @@ impl Display for LockingStrategy {
             Self::MonoWriter => write!(f, "MonoWriter"),
             Self::LockCoupling => write!(f, "LockCoupling"),
             Self::RWLockCoupling(level, attempts) =>
-                write!(f, "RWLockCoupling(Attempts={},Level={})", attempts, level),
+                write!(f, "RWLockCoupling(Attempts={};Level={})", attempts, level),
             Self::OLC(LevelConstraints::OptimisticLimit { attempts, level }) =>
-                write!(f, "OLC(Attempts={},Level={})", attempts, level),
+                write!(f, "OLC(Attempts={};Level={})", attempts, level),
             Self::OLC(LevelConstraints::Unlimited) => write!(f, "OLC(Unlimited)"),
         }
     }

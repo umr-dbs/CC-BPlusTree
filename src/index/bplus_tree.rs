@@ -24,7 +24,7 @@ pub struct BPlusTree {
 
 impl Default for Index {
     fn default() -> Self {
-        Index::new_multi_versioned()
+        Index::new_single_versioned()
     }
 }
 

@@ -171,7 +171,6 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
     let mut handles
         = Vec::with_capacity(num_thread);
 
-
     let query_buff = t1s
         .iter()
         .map(|key| Transaction::Insert(Event::new_single_float_event_t1(*key, *key as _)))
@@ -187,7 +186,7 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
     let start = SystemTime::now();
 
     for _ in 1..=num_thread {
-        let mut current_chunk
+        let current_chunk
             = data_buff.pop().unwrap();
 
         handles.push(thread::spawn(move || current_chunk.into_inner().into_iter().for_each(|next_query| {

@@ -7,7 +7,7 @@ use mvcc_bplustree::transaction::transaction::Transaction;
 use mvcc_bplustree::transaction::transaction_result::TransactionResult;
 use crate::block::aligned_page::IndexPage;
 use crate::bplus_tree::Index;
-use crate::index::record_like::RecordLike;
+use crate::utils::record_like::RecordLike;
 use crate::index::node::Node;
 use crate::log_debug;
 use crate::utils::unsafe_clone::UnsafeClone;
@@ -31,7 +31,7 @@ impl Index {
             }
             Transaction::Insert(event) if self.block_manager.is_multi_version => {
                 let key
-                    = event.t1();
+                    = event.key();
 
                 let guard
                     = self.traversal_write(key);
@@ -119,7 +119,7 @@ impl Index {
                     let maybe_record = match reader.as_ref() {
                         Node::Leaf(events) => events
                             .iter()
-                            .skip_while(|event| event.t1() != key)
+                            .skip_while(|event| event.key() != key)
                             .next()
                             .map(|event| event.unsafe_clone())
                             .map(|event| Record::new(event.key(), event.payload, Version::MIN)),

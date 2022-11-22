@@ -90,10 +90,10 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        // 10_000_000,
+        10_000_000,
         // 20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     let bszs = vec![
@@ -112,7 +112,7 @@ fn experiment() {
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len() * bszs.clone().len()));
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::LockCoupling);
+    // strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -132,9 +132,9 @@ fn experiment() {
 
     strategies.push(LockingStrategy::OLC(LevelConstraints::Unlimited));
 
-    strategies.push(LockingStrategy::RWLockCoupling(
-        LevelVariant::new_height_lock(1 as _),
-        4));
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(1 as _),
+    //     4));
 
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(1 as _),

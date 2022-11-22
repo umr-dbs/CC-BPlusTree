@@ -58,17 +58,17 @@ impl Index {
         let root
             = self.root.clone();
 
-        let root_block
-            = root.block();
+        // let root_block
+        //     = root.block();
 
         let mut root_guard = match self.locking_strategy {
-            LockingStrategy::MonoWriter => root_block.borrow_free_static(),
-            LockingStrategy::LockCoupling => root_block.borrow_mut_exclusive_static(),
-            LockingStrategy::OLC(LevelConstraints::Unlimited) => root_block.borrow_free_static(),
+            LockingStrategy::MonoWriter => root.block.borrow_free_static(),
+            LockingStrategy::LockCoupling => root.block.borrow_mut_exclusive_static(),
+            LockingStrategy::OLC(LevelConstraints::Unlimited) => root.block.borrow_free_static(),
             LockingStrategy::OLC(LevelConstraints::OptimisticLimit { .. })
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) => {
                 let guard
-                    = root_block.borrow_mut_static();
+                    = root.block.borrow_mut_static();
 
                 if !guard.is_write_lock() {
                     mem::drop(guard);
@@ -78,12 +78,12 @@ impl Index {
 
                 guard
             }
-            LockingStrategy::OLC(..) => root_block.borrow_free_static(),
+            LockingStrategy::OLC(..) => root.block.borrow_free_static(),
             LockingStrategy::RWLockCoupling(..)
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-                root_block.borrow_mut_static(),
+                root.block.borrow_mut_static(),
             LockingStrategy::RWLockCoupling(..) =>
-                root_block.borrow_read_static(),
+                root.block.borrow_read_static(),
         };
 
         // if !root_guard.is_valid() {
@@ -114,7 +114,7 @@ impl Index {
             _ => !root_guard.is_write_lock()
         };
 
-        if  force_restart && has_overflow_root && !root_guard.upgrade_write_lock() { // !root_guard.is_valid() ||
+        if force_restart && has_overflow_root && !root_guard.upgrade_write_lock() { // !root_guard.is_valid() ||
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
@@ -451,9 +451,10 @@ impl Index {
                         .enumerate()
                         .find(|(_, k)| key.lt(k))
                         .map(|(pos, _)| (children.get(pos).cloned(), pos))
-                        .unwrap_or_else(|| (children.get(children.len() - 1).cloned(), keys.len()));
+                        .unwrap_or_else(|| (children.get(keys.len()).cloned(), keys.len()));
 
                     if next_node.is_none() || !current_guard.is_valid() {
+                        mem::forget(next_node);
                         mem::drop(current_guard);
 
                         if DEBUG {

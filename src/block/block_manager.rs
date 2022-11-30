@@ -1,77 +1,103 @@
+use std::hash::Hash;
+use std::marker::PhantomData;
 use std::sync::atomic::Ordering;
-use mvcc_bplustree::block::block::{AtomicBlockID, BlockID};
-use crate::block::aligned_page::{IndexPage, RecordListsPage, EventsPage};
-use crate::block::block::Block;
-use crate::index::node::Node;
+use TXDataModel::page_model::{AtomicBlockID, BlockID};
+use TXDataModel::page_model::block::Block;
+use TXDataModel::page_model::internal_page::InternalPage;
+use TXDataModel::page_model::leaf_page::LeafPage;
+use TXDataModel::page_model::node::Node;
+use TXDataModel::record_model::record_like::RecordLike;
 use crate::index::settings::BlockSettings;
 
-pub struct BlockManager {
+/// Default starting numerical value for a valid BlockID.
+pub const START_BLOCK_ID: BlockID = BlockID::MIN;
+
+pub struct BlockManager<
+    const KEY_SIZE: usize,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash,
+    Payload: Default + Clone,
+    Entry: Default + RecordLike<Key, Payload>>
+{
     block_id_counter: AtomicBlockID,
-    leaf_allocation: usize,
-    index_allocation: usize,
-    pub(crate) is_multi_version: bool
+    pub(crate) is_multi_version: bool,
+    _marker: PhantomData<(Key, Payload, Entry)>
 }
 
-impl Clone for BlockManager {
+impl<const KEY_SIZE: usize,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash,
+    Payload: Default + Clone,
+    Entry: Default + RecordLike<Key, Payload>
+> Clone for BlockManager<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
     fn clone(&self) -> Self {
-        Self {
-            block_id_counter: AtomicBlockID::new(BlockManager::START_BLOCK_ID),
-            leaf_allocation: self.leaf_allocation,
-            index_allocation: self.index_allocation,
-            is_multi_version: self.is_multi_version
-        }
+        let manager = Self {
+            block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
+            is_multi_version: self.is_multi_version,
+            _marker: PhantomData,
+        };
+        manager
     }
 }
 
 /// Default implementation for BlockManager with default BlockSettings.
-impl Default for BlockManager {
+impl<
+    const KEY_SIZE: usize,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash,
+    Payload: Default + Clone,
+    Entry: Default + RecordLike<Key, Payload>
+> Default for BlockManager<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
     fn default() -> Self {
         BlockSettings::default().into()
     }
 }
-
-impl Block {
-    fn new(block_id: BlockID, node_data: Node) -> Self {
-        Self {
-            block_id,
-            node_data
-        }
-    }
-}
-
 /// Main functionality implementation for BlockManager.
-impl BlockManager {
-    /// Default starting numerical value for a valid BlockID.
-    pub(crate) const START_BLOCK_ID: BlockID = BlockID::MIN;
-
+impl<
+    const KEY_SIZE: usize,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash,
+    Payload: Default + Clone,
+    Entry: RecordLike<Key, Payload>
+> BlockManager<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+{
     /// Generates and returns a new atomic (unique across callers) BlockID.
+    #[inline(always)]
     pub(crate) fn next_block_id(&self) -> BlockID {
         self.block_id_counter.fetch_add(1, Ordering::Relaxed)
     }
 
+    #[inline(always)]
     pub const fn allocation_leaf(&self) -> usize {
-        self.leaf_allocation
+        NUM_RECORDS
     }
 
+    #[inline(always)]
     pub const fn allocation_directory(&self) -> usize {
-        self.index_allocation
+        FAN_OUT - 1
     }
 
     /// Main Constructor requiring supplied BlockSettings.
-    pub(crate) fn new(leaf_allocation: usize, index_allocation: usize, is_multi_version: bool) -> Self {
+    #[inline(always)]
+    pub(crate) fn new(is_multi_version: bool) -> Self {
         Self {
-            block_id_counter: AtomicBlockID::new(Self::START_BLOCK_ID),
-            leaf_allocation,
-            index_allocation,
-            is_multi_version
+            block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
+            is_multi_version,
+            _marker: PhantomData,
         }
     }
 
-    pub(crate) fn make_empty_root(&self) -> Block {
+    #[inline(always)]
+    pub(crate) fn make_empty_root(&self) -> Block<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
         self.new_empty_leaf()
     }
 
-    pub(crate) fn new_empty_leaf(&self) -> Block {
+    #[inline(always)]
+    pub(crate) fn new_empty_leaf(&self) -> Block<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
         if self.is_multi_version {
             self.new_empty_leaf_multi_version_block()
         }
@@ -81,35 +107,28 @@ impl BlockManager {
     }
 
     /// Crafts a new aligned Index-Block.
-    pub(crate) fn new_empty_index_block(&self) -> Block {
-        let mut keys_vec
-            = Vec::with_capacity(self.allocation_directory());
-
-        let mut children_vec
-            = Vec::with_capacity(self.allocation_directory() + 1);
-
-        keys_vec.shrink_to(self.allocation_directory());
-        children_vec.shrink_to(self.allocation_directory() + 1);
-
-        debug_assert!(keys_vec.capacity() == self.index_allocation);
-        debug_assert!(children_vec.capacity() == self.index_allocation + 1);
-
-        Block::new(
-            self.next_block_id(),
-            Node::Index(IndexPage::from(keys_vec, children_vec)))
+    #[inline(always)]
+    pub(crate) fn new_empty_index_block(&self) -> Block<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+        Block {
+            block_id: self.next_block_id(),
+            node_data: Node::Index(InternalPage::new())
+        }
     }
 
     /// Crafts a new aligned Leaf-Block.
-    pub(crate) fn new_empty_leaf_single_version_block(&self) -> Block {
-        Block::new(
-            self.next_block_id(),
-            Node::Leaf(EventsPage::new(self.leaf_allocation)))
+    #[inline(always)]
+    pub(crate) fn new_empty_leaf_single_version_block(&self) -> Block<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+        Block {
+            block_id: self.next_block_id(),
+            node_data: Node::Leaf(LeafPage::new())
+        }
     }
 
     /// Crafts a new aligned Multi-Version-Leaf-Block.
-    pub(crate) fn new_empty_leaf_multi_version_block(&self) -> Block {
-        Block::new(
-            self.next_block_id(),
-            Node::MultiVersionLeaf(RecordListsPage::new(self.leaf_allocation)))
+    pub(crate) fn new_empty_leaf_multi_version_block(&self) -> Block<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+        Block {
+            block_id: self.next_block_id(),
+            node_data: Node::MultiVersionLeaf(LeafPage::new())
+        }
     }
 }

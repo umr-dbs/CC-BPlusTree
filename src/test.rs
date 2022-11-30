@@ -1,20 +1,37 @@
 use std::borrow::Borrow;
 use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
+use std::fmt::Display;
+use std::hash::Hash;
+use std::ops::Index;
 use std::time::SystemTime;
-use chronicle_db::backbone::core::event::Event;
-use chronicle_db::backbone::core::event::EventVariant::F64;
-use chronicle_db::tools::aliases::Key;
-use chronicle_db::tools::safe_cell::SafeCell;
-use mvcc_bplustree::index::record::Record;
-use mvcc_bplustree::transaction::transaction::Transaction;
-use mvcc_bplustree::transaction::transaction_result::TransactionResult;
-use mvcc_bplustree::utils::cc_cell::CCCell;
 use parking_lot::Mutex;
 use rand::RngCore;
-use crate::{bplus_tree, Index};
+use serde::{Deserialize, Serialize};
+use TXDataModel::record_model::record::Record;
+use TXDataModel::record_model::record_like::RecordLike;
+use TXDataModel::record_model::record_point::RecordPoint;
+use TXDataModel::tx_model::transaction::Transaction;
+use TXDataModel::tx_model::transaction_result::TransactionResult;
+use TXDataModel::utils::cc_cell::CCCell;
+use TXDataModel::utils::safe_cell::SafeCell;
 use crate::bplus_tree::BPlusTree;
 use crate::locking::locking_strategy::LockingStrategy;
+
+const FAN_OUT: usize = 10;
+const NUM_RECORDS: usize = 9;
+
+pub type Key = u64;
+pub type Payload = f64;
+const KEY_SIZE: usize = mem::size_of::<Key>();
+
+pub type INDEX = BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, RecordPoint<Key, Payload>>;
+
+pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
+= INDEX::new_single_version_for;
+
+pub const MAKE_INDEX_MULTI: fn(LockingStrategy) -> INDEX
+= INDEX::new_multi_version_for;
 
 pub const EXE_LOOK_UPS: bool = false;
 
@@ -27,11 +44,11 @@ pub fn log_debug(s: String) {
 }
 
 pub fn simple_test() {
-    const INSERT: fn(Key) -> Transaction = |k: Key|
-        Transaction::Insert(Event::new_single_float_event_t1(k, k as _));
+    const INSERT: fn(u64) -> Transaction<Key, Payload> = |k: Key|
+        Transaction::Insert(k, k as _);
 
-    const UPDATE: fn(Key) -> Transaction = |k: Key|
-        Transaction::Update(Event::new_single_float_event_t1(k, k as _));
+    const UPDATE: fn(u64) -> Transaction<Key, Payload> = |k: Key|
+        Transaction::Update(k, k as _);
 
     let keys_insert = vec![
         1, 5, 6, 7, 3, 4, 10, 30, 11, 12, 14, 17, 18, 13, 16, 15, 36, 20, 21, 22, 23, 37, 2, 0,
@@ -67,7 +84,7 @@ pub fn simple_test() {
 
     // let mut keys_insert = gen_rand_data(10_000_000);
 
-    let tree = Index::new_multi_version_for(LockingStrategy::default());
+    let tree = MAKE_INDEX_MULTI(LockingStrategy::default());
     let mut search_queries = vec![];
 
     for (i, tx) in keys_insert.into_iter().enumerate() {
@@ -77,19 +94,19 @@ pub fn simple_test() {
 
         let (key, version) = match tree.execute(tx) {
             TransactionResult::Inserted(key, version) => {
-                log_debug_ln(format!("Ingest: {}", TransactionResult::Inserted(key, version)));
+                log_debug_ln(format!("Ingest: {}", TransactionResult::<Key, Payload>::Inserted(key, version)));
                 (key, version)
             }
             TransactionResult::Updated(key, version) => {
-                log_debug_ln(format!("Ingest: {}", TransactionResult::Updated(key, version)));
+                log_debug_ln(format!("Ingest: {}", TransactionResult::<Key, Payload>::Updated(key, version)));
                 (key, version)
             }
             joe => panic!("Sleepy Joe -> TransactionResult::{}", joe)
         };
 
         let search = vec![
-            Transaction::ExactSearchLatest(key),
-            Transaction::ExactSearch(key, version),
+            Transaction::Point(key, None),
+            Transaction::Point(key, version),
             // Transaction::RangeSearch((key..=key).into(), version),
         ];
 
@@ -98,17 +115,17 @@ pub fn simple_test() {
             TransactionResult::Error =>
                 panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n{}",
                        query,
-                       TransactionResult::Error,
+                       TransactionResult::<Key, Payload>::Error,
                        level_order(&tree)),
             TransactionResult::MatchedRecords(records) if records.len() != 1 =>
                 panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n{}",
                        query,
-                       TransactionResult::Error,
+                       TransactionResult::<Key, Payload>::Error,
                        level_order(&tree)),
             TransactionResult::MatchedRecord(None) =>
                 panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n{}",
                        query,
-                       TransactionResult::MatchedRecord(None),
+                       TransactionResult::<Key, Payload>::MatchedRecord(None),
                        level_order(&tree)),
             result =>
                 log_debug_ln(format!("\t- Query:  {}\n\t- Result: {}", query, result)),
@@ -122,21 +139,24 @@ pub fn simple_test() {
     log_debug_ln(format!("----------------------------------\
     ----------------------------------------------------------------------"));
     log_debug_ln(format!("\n############ Query All via Searches ############\n"));
-    for chunk in search_queries.into_iter() {
+    for (s, chunk) in search_queries.into_iter().enumerate() {
         log_debug_ln(format!("----------------------------------\
         ----------------------------------------------------------------------"));
-
+        log_debug_ln(format!("\t# [{}]", s));
+        // if s == 42 {
+        //     let x = 31;
+        // }
         for query in chunk {
             // if let Transaction::ExactSearchLatest(..) = transaction {
             //     continue
             // }
             match tree.execute(query.clone()) {
                 TransactionResult::Error =>
-                    panic!("\n\t- Query: {}\n\t- Result: {}", query, TransactionResult::Error),
+                    panic!("\n\t- Query: {}\n\t- Result: {}", query, TransactionResult::<Key, Payload>::Error),
                 TransactionResult::MatchedRecords(records) if records.len() != 1 =>
-                    panic!("\n\t- Query: {}\n\t- Result: {}", query, TransactionResult::Error),
+                    panic!("\n\t#- Query: {}\n\t- Result: {}", query, TransactionResult::<Key, Payload>::Error),
                 TransactionResult::MatchedRecord(None) =>
-                    panic!("\n\t- Query: {}\n\t- Result: {}", query, TransactionResult::MatchedRecord(None)),
+                    panic!("\n\t#- Query: {}\n\t- Result: {}", query, TransactionResult::<Key, Payload>::MatchedRecord(None)),
                 result =>
                     log_debug_ln(format!("\t- Query:  {}\n\t- Result: {}", query, result)),
             }
@@ -164,16 +184,16 @@ pub fn gen_rand_data(n: usize) -> Vec<Key> {
     nums.into_iter().collect::<Vec<_>>()
 }
 
-pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
+pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
     let index_o
-        = CCCell::new(index);
+        = index;
 
     let mut handles
         = Vec::with_capacity(num_thread);
 
     let query_buff = t1s
         .iter()
-        .map(|key| Transaction::Insert(Event::new_single_float_event_t1(*key, *key as _)))
+        .map(|key| Transaction::Insert(*key, Payload::default()))
         .collect::<Vec<_>>();
 
     let mut data_buff = query_buff
@@ -182,7 +202,7 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
         .map(|s| SafeCell::new(s.to_vec()))
         .collect::<Vec<_>>();
 
-    let index: &'static Index = unsafe { mem::transmute(index_o.unsafe_borrow_mut_static()) };
+    let index: &'static INDEX = unsafe { mem::transmute(&index_o) };
     let start = SystemTime::now();
 
     for _ in 1..=num_thread {
@@ -195,12 +215,12 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
                 TransactionResult::Updated(key, version) => if EXE_LOOK_UPS
                 {
                     // loop {
-                    match index.execute(Transaction::ExactSearch(key, version)) {
+                    match index.execute(Transaction::Point(key, version)) {
                         TransactionResult::MatchedRecord(Some(record))
-                        if record.key() == key && record.match_version(version) => {}//,
+                        if record.key() == key => {}//,
                         joe => { //  if !index.locking_strategy().is_dolos()
                             log_debug_ln(format!("\nERROR Search -> Transaction::{}",
-                                                 Transaction::ExactSearch(key, version)));
+                                                 Transaction::<Key, Payload>::Point(key, version)));
                             log_debug_ln(format!("\n****ERROR: {}, TransactionResult::{}", index.locking_strategy, joe));
                             panic!()
                         }
@@ -241,11 +261,14 @@ pub fn beast_test(num_thread: usize, index: Index, t1s: &[Key]) -> u128 {
     time
 }
 
-pub fn display_record(record: Option<Record>) -> String {
-    record.map(|record| record.to_string()).unwrap_or("None".to_string())
-}
-
-pub fn level_order(tree: &BPlusTree) -> String {
+pub fn level_order<const KEY_SIZE: usize,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Sync,
+    Payload: Default + Clone + Sync,
+    Entry: RecordLike<Key, Payload> + Sync
+>
+(tree: &BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> String {
     "".to_string()
     // tree.level_order(None)
     //     .into_iter()
@@ -253,18 +276,26 @@ pub fn level_order(tree: &BPlusTree) -> String {
     //     .join("\n")
 }
 
-pub fn beast_test2(num_thread: usize, index: Index, t1s: &[Key]) -> (u128, CCCell<Index>) {
+pub fn beast_test2<const KEY_SIZE: usize,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Display + Default + Ord + Copy + Hash + Sync,
+    Payload: Display + Default + Clone + Sync,
+    Entry: RecordLike<Key, Payload> + Sync
+>
+(num_thread: usize, index: BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, t1s: &[Key])
+    -> (u128, CCCell<BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>)
+{
     let index_o
         = CCCell::new(index);
 
     let mut handles = vec![];
 
     let query_buff = Mutex::new(VecDeque::from_iter(
-        t1s.iter().map(|key| Transaction::Insert(
-            Event::new_single_float_event_t1(*key, *key as _))))
+        t1s.iter().map(|key| Transaction::Insert(*key, Payload::default())))
     );
 
-    let query_buff_t: &'static Mutex<VecDeque<Transaction>>
+    let query_buff_t: &'static Mutex<VecDeque<Transaction<Key, Payload>>>
         = unsafe { mem::transmute(query_buff.borrow()) };
 
     let index = index_o.unsafe_borrow_mut_static();
@@ -281,13 +312,13 @@ pub fn beast_test2(num_thread: usize, index: Index, t1s: &[Key]) -> (u128, CCCel
                     TransactionResult::Inserted(key, version) |
                     TransactionResult::Updated(key, version) => if EXE_LOOK_UPS
                     {
-                        match index.execute(Transaction::ExactSearch(key, version)) {
+                        match index.execute(Transaction::Point(key, version)) {
                             TransactionResult::MatchedRecord(Some(record))
-                            if record.key() == key && record.match_version(version) =>
+                            if record.key() == key =>
                                 {}
                             joe => {
                                 log_debug_ln(format!("\nERROR Search -> Transaction::{}",
-                                                     Transaction::ExactSearch(key, version)));
+                                                     Transaction::<Key, Payload>::Point(key, version)));
                                 log_debug_ln(format!("\n****ERROR: {}, {}", index.locking_strategy, joe));
                                 panic!()
                             }
@@ -328,16 +359,12 @@ pub fn beast_test2(num_thread: usize, index: Index, t1s: &[Key]) -> (u128, CCCel
 }
 
 pub fn simple_test2() {
-    let singled_versioned_index = bplus_tree::BPlusTree::new_single_versioned();
-    let multi_versioned_index = bplus_tree::BPlusTree::new_multi_versioned();
-
+    let singled_versioned_index = INDEX::new_single_versioned();
+    let multi_versioned_index = INDEX::new_multi_versioned();
 
     for key in 1..=10_000 as Key {
-        singled_versioned_index.execute(
-            Transaction::Insert(Event::new_from_t1(key, F64(key as f64))));
-
-        multi_versioned_index.execute(
-            Transaction::Insert(Event::new_from_t1(key, F64(key as f64))));
+        singled_versioned_index.execute(Transaction::Insert(key, key as f64));
+        multi_versioned_index.execute(Transaction::Insert(key, key as f64));
     }
 
     log_debug_ln(format!(""));
@@ -357,7 +384,7 @@ fn experiment2() {
     print!(",{}", threads_cpu);
 
     let index
-        = Index::new_single_version_for(LockingStrategy::LockCoupling);
+        = MAKE_INDEX(LockingStrategy::LockCoupling);
 
     let (time, index_o) = beast_test2(
         threads_cpu,
@@ -368,7 +395,7 @@ fn experiment2() {
 
     let index = index_o.unsafe_borrow();
     for key in data {
-        match index.execute(Transaction::ExactSearchLatest(key)) {
+        match index.execute(Transaction::Point(key, None)) {
             TransactionResult::MatchedRecord(Some(..)) => {}
             joe => println!("ERROR: {}", joe)
         }

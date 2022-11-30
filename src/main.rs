@@ -1,18 +1,14 @@
 use std::{fs, mem};
-use chronicle_db::tools::aliases::Key;
-use mvcc_bplustree::locking::locking_strategy::LevelVariant;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
-use mvcc_bplustree::index::record::Payload;
+use TXDataModel::page_model::node::Node::Index;
 use crate::index::bplus_tree;
-use crate::index::bplus_tree::Index;
 use crate::index::settings::{BlockSettings, CONFIG_INI_PATH, init_from_config_ini, load_config};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
-use crate::test::{beast_test, EXE_LOOK_UPS, format_insertsions, gen_rand_data, level_order, log_debug, log_debug_ln, simple_test};
+use crate::test::{beast_test, EXE_LOOK_UPS, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, Payload, simple_test, simple_test2};
 
 mod index;
 mod transaction;
-mod utils;
 mod block;
 mod test;
 mod locking;
@@ -20,7 +16,7 @@ mod locking;
 fn main() {
     make_splash();
 
-    // simple_test();
+    simple_test();
     // simple_test2();
     experiment();
     //
@@ -185,15 +181,6 @@ fn experiment() {
 
     println!("Number Insertions,Number Threads,Locking Strategy,Height,Time,Block Size");
 
-    let index_anker
-        = init_from_config_ini(); // anker
-
-    let payload_anker: Payload = serde_json::from_str(
-        load_config(CONFIG_INI_PATH, true)
-            .get("payload")
-            .unwrap()
-    ).unwrap(); // anker layout
-
     bszs.for_each(|bsz| {
         cases.iter().for_each(|(t1s, strats)|
             for num_threads in threads_cpu.iter() {
@@ -210,11 +197,7 @@ fn experiment() {
                     print!("{}", t1s.len());
                     print!(",{}", *num_threads);
 
-                    let index = Index::make(BlockSettings::new(
-                        bsz,
-                        index_anker.block_manager.is_multi_version,
-                        payload_anker.clone(),
-                    ).into(), LockingStrategy::MonoWriter);
+                    let index = MAKE_INDEX(LockingStrategy::MonoWriter);
 
                     let time = beast_test(
                         1,
@@ -232,11 +215,7 @@ fn experiment() {
                         print!("{}", t1s.len());
                         print!(",{}", *num_threads);
 
-                        let index = Index::make(BlockSettings::new(
-                            bsz,
-                            index_anker.block_manager.is_multi_version,
-                            payload_anker.clone(),
-                        ).into(), ls.clone());
+                        let index = MAKE_INDEX(ls.clone());
 
                         let time = beast_test(
                             *num_threads,

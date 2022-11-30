@@ -1,20 +1,25 @@
+use std::hash::Hash;
 use std::ptr;
-use chronicle_db::backbone::core::event::EventVariant::Empty;
-use mvcc_bplustree::index::record::Record;
-use mvcc_bplustree::index::version_info::Version;
-use mvcc_bplustree::locking::locking_strategy::ATTEMPT_START;
-use mvcc_bplustree::transaction::transaction::Transaction;
-use mvcc_bplustree::transaction::transaction_result::TransactionResult;
-use crate::block::aligned_page::IndexPage;
-use crate::bplus_tree::Index;
-use crate::utils::record_like::RecordLike;
-use crate::index::node::Node;
-use crate::log_debug;
-use crate::utils::unsafe_clone::UnsafeClone;
-use crate::utils::hybrid_cell::sched_yield;
+use TXDataModel::page_model::Attempts;
+use TXDataModel::page_model::node::Node;
+use TXDataModel::record_model::record::Record;
+use TXDataModel::record_model::record_like::RecordLike;
+use TXDataModel::record_model::record_point::RecordPoint;
+use TXDataModel::record_model::unsafe_clone::UnsafeClone;
+use TXDataModel::record_model::Version;
+use TXDataModel::tx_model::transaction::Transaction;
+use TXDataModel::tx_model::transaction_result::TransactionResult;
+use TXDataModel::utils::hybrid_cell::sched_yield;
+use crate::index::bplus_tree::BPlusTree;
 
-impl Index {
-    pub fn execute(&self, transaction: Transaction) -> TransactionResult {
+impl<const KEY_SIZE: usize,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Sync,
+    Payload: Default + Clone + Sync,
+    Entry: Default + RecordLike<Key, Payload> + Sync> BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+{
+    pub fn execute(&self, transaction: Transaction<Key, Payload>) -> TransactionResult<Key, Payload> {
         match transaction {
             Transaction::Delete(key, version) => {
                 let guard
@@ -29,10 +34,7 @@ impl Index {
                     .then(|| TransactionResult::Deleted(key, version))
                     .unwrap_or_default()
             }
-            Transaction::Insert(event) if self.block_manager.is_multi_version => {
-                let key
-                    = event.key();
-
+            Transaction::Insert(key, payload) if self.block_manager.is_multi_version => {
                 let guard
                     = self.traversal_write(key);
 
@@ -44,14 +46,11 @@ impl Index {
                 guard.guard_result()
                     .assume_mut()
                     .unwrap()
-                    .push_record((event, version).into())
-                    .then(|| TransactionResult::Inserted(key, version))
+                    .push_record(Record::new(key, payload, version))
+                    .then(|| TransactionResult::Inserted(key, Some(version)))
                     .unwrap_or_default()
             }
-            Transaction::Insert(event) => {
-                let key
-                    = event.key();
-
+            Transaction::Insert(key, payload) => {
                 let guard
                     = self.traversal_write(key);
 
@@ -60,14 +59,11 @@ impl Index {
                 guard.guard_result()
                     .assume_mut()
                     .unwrap()
-                    .push_event(event)
-                    .then(|| TransactionResult::Inserted(key, Version::MIN))
+                    .push_record_point(RecordPoint::new(key, payload))
+                    .then(|| TransactionResult::Inserted(key, None))
                     .unwrap_or_default()
             }
-            Transaction::Update(event) if self.block_manager.is_multi_version => {
-                let key
-                    = event.key();
-
+            Transaction::Update(key, payload) if self.block_manager.is_multi_version => {
                 let guard
                     = self.traversal_write(key);
 
@@ -79,14 +75,11 @@ impl Index {
                 guard.guard_result()
                     .assume_mut()
                     .unwrap()
-                    .update_record((event, version).into())
-                    .then(|| TransactionResult::Updated(key, version))
+                    .update_record(Record::new(key, payload, version))
+                    .then(|| TransactionResult::Updated(key, Some(version)))
                     .unwrap_or_default()
             }
-            Transaction::Update(event) => {
-                let key
-                    = event.key();
-
+            Transaction::Update(key, payload) => {
                 let guard
                     = self.traversal_write(key);
 
@@ -95,11 +88,11 @@ impl Index {
                 guard.guard_result()
                     .assume_mut()
                     .unwrap()
-                    .update_event(event)
-                    .then(|| TransactionResult::Updated(key, Version::MIN))
+                    .update_record_point(RecordPoint::new(key, payload))
+                    .then(|| TransactionResult::Updated(key, None))
                     .unwrap_or_default()
             }
-            Transaction::ExactSearch(key, version) if self.locking_strategy.is_olc() => unsafe {
+            Transaction::Point(key, version) if self.locking_strategy.is_olc() => unsafe {
                 let guard
                     = self.traversal_read(key);
 
@@ -109,24 +102,30 @@ impl Index {
                 let reader
                     = guard_result.as_reader().unwrap();
 
-                let mut attempts
-                    = ATTEMPT_START;
+                let mut attempts: Attempts = 0;
 
                 loop {
                     let reader_cell_version
                         = guard.read_cell_version_as_reader();
 
                     let maybe_record = match reader.as_ref() {
-                        Node::Leaf(events) => events
+                        Node::Leaf(event_page) => event_page
+                            .as_records()
                             .iter()
                             .skip_while(|event| event.key() != key)
                             .next()
                             .map(|event| event.unsafe_clone())
                             .map(|event| Record::new(event.key(), event.payload, Version::MIN)),
-                        Node::MultiVersionLeaf(record_list) => record_list
+                        Node::MultiVersionLeaf(leaf_page) => leaf_page
+                            .as_records()
                             .iter()
                             .find(|record_list| record_list.key() == key)
-                            .map(|version_list| version_list.record_for_version(version))
+                            .map(|version_list| version_list
+                                .payload(version)
+                                .map(|found| Record::new(
+                                    version_list.key,
+                                    found.payload,
+                                    found.version_info.insertion_version())))
                             .unwrap_or_default(),
                         _ => None
                     };
@@ -135,39 +134,14 @@ impl Index {
                         break maybe_record.into();
                     } else {
                         maybe_record.map(|mut inner|
-                            ptr::write(&mut inner.event.payload, Empty));
+                            ptr::write(&mut inner.payload, Payload::default()));
 
                         attempts += 1;
                         sched_yield(attempts)
                     }
                 }
             }
-            Transaction::ExactSearch(key, version) => {
-                let guard
-                    = self.traversal_read(key);
-
-                let guard_result
-                    = guard.guard_result();
-
-                let reader
-                    = guard_result.as_ref().unwrap();
-
-                match reader.as_ref() {
-                    Node::Leaf(records) => records
-                        .iter()
-                        .skip_while(|event| event.key() != key)
-                        .next()
-                        .map(|event| Record::new(event.key(), event.payload.clone(), Version::MIN))
-                        .into(),
-                    Node::MultiVersionLeaf(record_list) => record_list
-                        .iter()
-                        .find(|record_list| record_list.key() == key)
-                        .map(|version_list| version_list.record_for_version(version).into())
-                        .unwrap_or(None.into()),
-                    _ => TransactionResult::Error
-                }
-            }
-            Transaction::ExactSearchLatest(key) if self.locking_strategy.is_olc() => unsafe {
+            Transaction::Point(key, None) if self.locking_strategy.is_olc() => unsafe {
                 let guard
                     = self.traversal_read(key);
 
@@ -177,8 +151,7 @@ impl Index {
                 let reader
                     = guard_result.as_reader().unwrap();
 
-                let mut attempts
-                    = ATTEMPT_START;
+                let mut attempts: Attempts = 0;
 
                 loop {
                     let reader_cell_version
@@ -186,16 +159,22 @@ impl Index {
 
                     let maybe_record = match reader.as_ref() {
                         Node::Leaf(records) => records
+                            .as_records()
                             .iter()
                             .rev()
                             .skip_while(|event| event.key() != key)
                             .next()
                             .map(|event| event.unsafe_clone())
                             .map(|event| Record::new(event.key(), event.payload, Version::MIN)),
-                        Node::MultiVersionLeaf(record_list) => record_list
+                        Node::MultiVersionLeaf(leaf_page) => leaf_page
+                            .as_records()
                             .iter()
                             .find(|record_list| record_list.key() == key)
-                            .map(|version_list| version_list.youngest_record())
+                            .map(|version_list| version_list.payload(None)
+                                .map(|found| Record::new(
+                                    version_list.key,
+                                    found.payload,
+                                    found.version_info.insertion_version())))
                             .unwrap_or_default(),
                         _ => None
                     };
@@ -204,14 +183,14 @@ impl Index {
                         break maybe_record.into();
                     } else {
                         maybe_record.map(|mut inner|
-                            ptr::write(&mut inner.event.payload, Empty));
+                            ptr::write(&mut inner.payload, Payload::default()));
 
                         attempts += 1;
                         sched_yield(attempts)
                     }
                 }
             }
-            Transaction::ExactSearchLatest(key) => {
+            Transaction::Point(key, version) => {
                 let guard
                     = self.traversal_read(key);
 
@@ -222,98 +201,97 @@ impl Index {
                     = guard_result.as_ref().unwrap();
 
                 match reader.as_ref() {
-                    Node::Leaf(records) => records
+                    Node::Leaf(leaf_page) => leaf_page
+                        .as_records()
                         .iter()
-                        .rev()
                         .skip_while(|event| event.key() != key)
                         .next()
-                        .map(|event| Record::new(event.key(), event.payload.clone(), Version::MIN))
+                        .map(|record_point| RecordPoint::new(
+                            record_point.key(),
+                            record_point.payload.clone()))
                         .into(),
-                    Node::MultiVersionLeaf(record_list) => record_list
+                    Node::MultiVersionLeaf(leaf_page) => leaf_page
+                        .as_records()
                         .iter()
-                        .skip_while(|record_list| record_list.key() != key)
-                        .filter(|version_list| !version_list.is_deleted())
-                        .next()
-                        .map(|version_list| version_list.youngest_record().into())
-                        .unwrap_or(None.into()),
+                        .find(|record_list| record_list.key() == key)
+                        .map(|version_list| version_list
+                            .payload(version)
+                            .map(|found| Record::from(
+                                version_list.key,
+                                found.payload,
+                                found.version_info.clone())))
+                        .unwrap_or_default()
+                        .into(),
                     _ => TransactionResult::Error
                 }
             }
-            Transaction::RangeSearch(key_interval, version) if self.locking_strategy.is_olc() => {
+            Transaction::Range(interval, version) if self.locking_strategy.is_olc() => {
                 unimplemented!("RangeSearch in olc not implemented yet!")
             }
-            Transaction::RangeSearch(key_interval, version) => {
-                let (lower, upper)
-                    = (key_interval.lower(), key_interval.upper());
-
-                let root
-                    = self.root.clone();
-
-                let current_root
-                    = root.block();
-
-                let current_guard
-                    = self.lock_reader(&current_root);
-
-                let mut lock_level
-                    = vec![(current_root, current_guard)];
-
-                loop {
-                    match lock_level.first().map(|(_n, guard)| guard.guard_result().as_ref().unwrap().is_directory()).unwrap_or(false) {
-                        true => lock_level = lock_level
-                            .drain(..)
-                            .flat_map(|(_, guard)| match guard.guard_result().as_ref().unwrap().as_ref() {
-                                Node::Index(
-                                    IndexPage {
-                                        keys,
-                                        children,
-                                        ..
-                                    }) => keys
-                                    .iter()
-                                    .enumerate()
-                                    .skip_while(|(_, k)| !lower.lt(k))
-                                    .take_while(|(pos, k)| upper.ge(k) || *pos == 0)
-                                    .map(|(pos, _)| {
-                                        let child
-                                            = children.get(pos).unwrap().clone();
-
-                                        let child_guard
-                                            = self.lock_reader(&child);
-
-                                        (child, child_guard)
-                                    }).collect::<Vec<_>>(),
-                                _ => unreachable!("Sleepy joe hit me -> dude hang on, wtf just happened?!"),
-                            }).collect(),
-                        false => break TransactionResult::MatchedRecords(lock_level
-                            .drain(..)
-                            .flat_map(|(_n, guard)| match guard.guard_result().as_ref().unwrap().as_ref() {
-                                Node::Leaf(records) => records
-                                    .iter()
-                                    .filter(|event| key_interval.contains(event.key()))
-                                    .map(|event| Record::new(event.key(), event.payload.clone(), Version::MIN))
-                                    .collect(),
-                                Node::MultiVersionLeaf(record_list) => record_list
-                                    .iter()
-                                    .filter(|record_list| key_interval.contains(record_list.key()))
-                                    .map(|record_list| record_list.record_for_version(version))
-                                    .filter(|record| record.is_some())
-                                    .map(|record| record.unwrap())
-                                    .collect(),
-                                _ => vec![]
-                            }).collect())
-                    }
-                }
-            }
-            Transaction::DEBUGExactSearch(key, version) => {
-                log_debug(format!("Transaction::DEBUGExactSearch(key: {}, version: {})",
-                                  key, version));
-                self.execute(Transaction::ExactSearch(key, version))
-            }
-            Transaction::DEBUGExactSearchLatest(key) => {
-                log_debug(format!("Transaction::DEBUGExactSearchLatest(key: {})", key));
-                self.execute(Transaction::ExactSearchLatest(key))
-            }
-            Transaction::Empty => TransactionResult::Error
+            // Transaction::RangeSearch(key_interval, version) => {
+            //     let (lower, upper)
+            //         = (key_interval.lower(), key_interval.upper());
+            //
+            //     let root
+            //         = self.root.clone();
+            //
+            //     let current_root
+            //         = root.block();
+            //
+            //     let current_guard
+            //         = self.lock_reader(&current_root);
+            //
+            //     let mut lock_level
+            //         = vec![(current_root, current_guard)];
+            //
+            //     loop {
+            //         match lock_level.first().map(|(_n, guard)| guard.guard_result().as_ref().unwrap().is_directory()).unwrap_or(false) {
+            //             true => lock_level = lock_level
+            //                 .drain(..)
+            //                 .flat_map(|(_, guard)| match guard.guard_result().as_ref().unwrap().as_ref() {
+            //                     Node::Index(
+            //                         IndexPage {
+            //                             keys,
+            //                             children,
+            //                             ..
+            //                         }) => keys
+            //                         .iter()
+            //                         .enumerate()
+            //                         .skip_while(|(_, k)| !lower.lt(k))
+            //                         .take_while(|(pos, k)| upper.ge(k) || *pos == 0)
+            //                         .map(|(pos, _)| {
+            //                             let child
+            //                                 = children.get(pos).unwrap().clone();
+            //
+            //                             let child_guard
+            //                                 = self.lock_reader(&child);
+            //
+            //                             (child, child_guard)
+            //                         }).collect::<Vec<_>>(),
+            //                     _ => unreachable!("Sleepy joe hit me -> dude hang on, wtf just happened?!"),
+            //                 }).collect(),
+            //             false => break TransactionResult::MatchedRecords(lock_level
+            //                 .drain(..)
+            //                 .flat_map(|(_n, guard)| match guard.guard_result().as_ref().unwrap().as_ref() {
+            //                     Node::Leaf(records) => records
+            //                         .iter()
+            //                         .filter(|event| key_interval.contains(event.key()))
+            //                         .map(|event| Record::new(event.key(), event.payload.clone(), Version::MIN))
+            //                         .collect(),
+            //                     Node::MultiVersionLeaf(record_list) => record_list
+            //                         .iter()
+            //                         .filter(|record_list| key_interval.contains(record_list.key()))
+            //                         .map(|record_list| record_list.record_for_version(version))
+            //                         .filter(|record| record.is_some())
+            //                         .map(|record| record.unwrap())
+            //                         .collect(),
+            //                     _ => vec![]
+            //                 }).collect())
+            //         }
+            //     }
+            // }
+            Transaction::Empty => TransactionResult::Error,
+            _ => unimplemented!("Not impl yet!"),
         }
     }
 }

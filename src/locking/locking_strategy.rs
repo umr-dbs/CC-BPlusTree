@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use mvcc_bplustree::locking::locking_strategy::{Attempts, Level, LevelVariant};
 use serde::{Deserialize, Serialize};
+use TXDataModel::page_model::{Attempts, Level, LevelVariant};
+use crate::index::root::LEVEL_ROOT;
 
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Clone)]
@@ -98,7 +99,7 @@ impl LockingStrategy {
     #[inline(always)]
     pub fn is_lock_root(&self, lock_level: Level, attempt: Attempts, height: Level) -> bool {
         self.is_lock(
-            mvcc_bplustree::locking::locking_strategy::LockingStrategy::LEVEL_ROOT,
+            LEVEL_ROOT,
             lock_level,
             attempt,
             height)

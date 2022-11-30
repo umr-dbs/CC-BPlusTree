@@ -1,34 +1,40 @@
+use std::hash::Hash;
 use std::mem;
-use chronicle_db::tools::aliases::Key;
-use mvcc_bplustree::locking::locking_strategy::{ATTEMPT_START, Attempts, Level};
-use crate::block::aligned_page::IndexPage;
-use crate::bplus_tree::{Height, LockLevel};
-use crate::Index;
-use crate::utils::record_like::RecordLike;
-use crate::index::node::{Node, NodeUnsafeDegree};
-use crate::locking::block_lock::{BlockGuard, BlockGuardResult};
+use TXDataModel::page_model::{Attempts, Height, Level};
+use TXDataModel::page_model::block::{BlockGuard, BlockGuardResult};
+use TXDataModel::page_model::node::{Node, NodeUnsafeDegree};
+use TXDataModel::record_model::record_like::RecordLike;
+use TXDataModel::utils::hybrid_cell::sched_yield;
+use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
-use crate::utils::hybrid_cell::sched_yield;
+
 
 const DEBUG: bool = false;
 
-impl Index {
-    #[inline]
-    fn has_overflow(&self, node: &Node) -> bool {
+impl<const KEY_SIZE: usize,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Sync,
+    Payload: Default + Clone + Sync,
+    Entry: RecordLike<Key, Payload> + Sync
+> BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+{
+    #[inline(always)]
+    fn has_overflow(&self, node: &Node<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> bool {
         match node.is_leaf() {
             true => node.is_overflow(self.block_manager.allocation_leaf()),
             false => node.is_overflow(self.block_manager.allocation_directory())
         }
     }
 
-    fn has_underflow(&self, node: &Node) -> bool {
+    fn has_underflow(&self, node: &Node<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> bool {
         match node.is_leaf() {
             true => node.is_underflow(self.block_manager.allocation_leaf()),
             false => node.is_underflow(self.block_manager.allocation_directory())
         }
     }
 
-    fn unsafe_degree_of(&self, node: &Node) -> NodeUnsafeDegree {
+    fn unsafe_degree_of(&self, node: &Node<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> NodeUnsafeDegree {
         match node.is_leaf() {
             true => node.unsafe_degree(self.block_manager.allocation_leaf()),
             false => node.unsafe_degree(self.block_manager.allocation_directory()),
@@ -36,7 +42,9 @@ impl Index {
     }
 
     #[inline]
-    fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts) -> (BlockGuard, Height, LockLevel, Attempts) {
+    fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
+        -> (BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, Height, LockLevel, Attempts)
+    {
         let is_olc = self.locking_strategy.is_olc();
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
@@ -54,7 +62,9 @@ impl Index {
     }
 
     #[inline]
-    fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts) -> Result<(BlockGuard, Height), (LockLevel, Attempts)> {
+    fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts)
+        -> Result<(BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, Height), (LockLevel, Attempts)>
+    {
         let root
             = self.root.clone();
 
@@ -169,24 +179,28 @@ impl Index {
                     = self.block_manager.new_empty_index_block();
 
                 new_node_right
-                    .keys_mut()
-                    .extend_from_slice(keys.get_unchecked(keys_mid + 1..));
-                new_node_right
                     .children_mut()
                     .extend_from_slice(children.get_unchecked(keys_mid + 1..));
 
-                new_root_left
+                new_node_right
                     .keys_mut()
-                    .extend_from_slice(keys.get_unchecked(..keys_mid));
+                    .extend_from_slice(keys.get_unchecked(keys_mid + 1..));
+
                 new_root_left
                     .children_mut()
                     .extend_from_slice(children.get_unchecked(..=keys_mid));
 
-                index_block.keys_mut().push(k3);
+                new_root_left
+                    .keys_mut()
+                    .extend_from_slice(keys.get_unchecked(..keys_mid));
+
                 index_block.children_mut().extend([
                     new_root_left.into_cell(is_optimistic),
                     new_node_right.into_cell(is_optimistic)
                 ]);
+
+                index_block.keys_mut()
+                    .push(k3);
 
                 self.set_new_root(
                     index_block,
@@ -194,7 +208,7 @@ impl Index {
             }
             Node::Leaf(records) => unsafe {
                 let records
-                    = records.as_slice();
+                    = records.as_records();
 
                 let records_mid
                     = records.len() / 2;
@@ -203,27 +217,30 @@ impl Index {
                     .get_unchecked(records_mid)
                     .key();
 
-                let mut new_node_right
+                let new_node_right
                     = self.block_manager.new_empty_leaf_single_version_block();
 
-                let mut new_node_left
+                let new_node_left
                     = self.block_manager.new_empty_leaf_single_version_block();
 
-                let mut new_root
+                let new_root
                     = self.block_manager.new_empty_index_block();
 
                 new_node_right
                     .records_mut()
                     .extend_from_slice(records.get_unchecked(records_mid..));
+
                 new_node_left
                     .records_mut()
                     .extend_from_slice(records.get_unchecked(..records_mid));
 
-                new_root.keys_mut().push(k3);
                 new_root.children_mut().extend([
                     new_node_left.into_cell(is_optimistic),
                     new_node_right.into_cell(is_optimistic)
                 ]);
+
+                new_root.keys_mut()
+                    .push(k3);
 
                 self.set_new_root(
                     new_root,
@@ -231,34 +248,37 @@ impl Index {
             }
             Node::MultiVersionLeaf(records) => unsafe {
                 let records
-                    = records.as_slice();
+                    = records.as_records();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get_unchecked(records_mid)
                     .key();
 
-                let mut new_node_right
+                let new_node_right
                     = self.block_manager.new_empty_leaf_multi_version_block();
 
-                let mut new_node_left
+                let new_node_left
                     = self.block_manager.new_empty_leaf_multi_version_block();
 
-                let mut new_root
+                let new_root
                     = self.block_manager.new_empty_index_block();
 
                 new_node_right
                     .record_lists_mut()
                     .extend_from_slice(records.get_unchecked(records_mid..));
+
                 new_node_left
                     .record_lists_mut()
                     .extend_from_slice(records.get_unchecked(..records_mid));
 
-                new_root.keys_mut().push(k3);
                 new_root.children_mut().extend([
                     new_node_left.into_cell(is_optimistic),
                     new_node_right.into_cell(is_optimistic)
                 ]);
+
+                new_root.keys_mut()
+                    .push(k3);
 
                 self.set_new_root(
                     new_root,
@@ -271,11 +291,11 @@ impl Index {
 
     fn do_overflow_correction(
         &self,
-        parent_guard: BlockGuardResult,
+        parent_guard: BlockGuardResult<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
         child_pos: usize,
-        from_guard: BlockGuardResult)
+        from_guard: BlockGuardResult<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>)
     {
-        let is_optimistic = match from_guard.is_mut_optimistic() {
+        let olc = match from_guard.is_mut_optimistic() {
             true => {
                 from_guard.mark_obsolete();
                 true
@@ -298,55 +318,57 @@ impl Index {
                 let k3 = *keys
                     .get_unchecked(keys_mid);
 
-                let mut new_node_right
+                let new_node_right
                     = self.block_manager.new_empty_index_block();
 
-                let mut new_node_from
+                let new_node_from
                     = self.block_manager.new_empty_index_block();
 
-                new_node_right
-                    .keys_mut()
-                    .extend_from_slice(keys.get_unchecked(keys_mid + 1..));
                 new_node_right
                     .children_mut()
                     .extend_from_slice(children.get_unchecked(keys_mid + 1..));
 
-                new_node_from
+                new_node_right
                     .keys_mut()
-                    .extend_from_slice(keys.get_unchecked(..keys_mid));
+                    .extend_from_slice(keys.get_unchecked(keys_mid + 1..));
+
                 new_node_from
                     .children_mut()
                     .extend_from_slice(children.get_unchecked(..=keys_mid));
+
+                new_node_from
+                    .keys_mut()
+                    .extend_from_slice(keys.get_unchecked(..keys_mid));
 
                 let parent_mut = parent_guard
                     .assume_mut()
                     .unwrap();
 
                 parent_mut
-                    .keys_mut()
-                    .insert(child_pos, k3);
-
-                parent_mut
                     .children_mut()
-                    .insert(child_pos + 1, new_node_right.into_cell(is_optimistic));
+                    .insert(child_pos + 1, new_node_right.into_cell(olc));
 
                 *parent_mut
                     .children_mut()
-                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(is_optimistic);
+                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc);
+
+                parent_mut
+                    .keys_mut()
+                    .insert(child_pos, k3);
             }
             Node::Leaf(records) => unsafe {
                 let records
-                    = records.as_slice();
+                    = records.as_records();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get_unchecked(records_mid)
                     .key();
 
-                let mut new_node
+                let new_node
                     = self.block_manager.new_empty_leaf_single_version_block();
 
-                let mut new_node_from
+                let new_node_from
                     = self.block_manager.new_empty_leaf_single_version_block();
 
                 new_node
@@ -359,32 +381,32 @@ impl Index {
 
                 let parent_mut
                     = parent_guard.assume_mut().unwrap();
-
-                parent_mut
-                    .keys_mut()
-                    .insert(child_pos, k3);
 
                  parent_mut
                     .children_mut()
-                    .insert(child_pos + 1, new_node.into_cell(is_optimistic));
+                    .insert(child_pos + 1, new_node.into_cell(olc));
 
                 *parent_mut
                     .children_mut()
-                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(is_optimistic);
+                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc);
+
+                parent_mut
+                    .keys_mut()
+                    .insert(child_pos, k3);
             }
             Node::MultiVersionLeaf(records) => unsafe {
                 let records
-                    = records.as_slice();
+                    = records.as_records();
 
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get_unchecked(records_mid)
                     .key();
 
-                let mut new_node
+                let new_node
                     = self.block_manager.new_empty_leaf_multi_version_block();
 
-                let mut new_node_from
+                let new_node_from
                     = self.block_manager.new_empty_leaf_multi_version_block();
 
                 new_node
@@ -399,24 +421,25 @@ impl Index {
                     = parent_guard.assume_mut().unwrap();
 
                 parent_mut
-                    .keys_mut()
-                    .insert(child_pos, k3);
-
-                parent_mut
                     .children_mut()
-                    .insert(child_pos + 1, new_node.into_cell(is_optimistic));
+                    .insert(child_pos + 1, new_node.into_cell(olc));
 
                 *parent_mut
                     .children_mut()
-                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(is_optimistic);
+                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc);
+
+                parent_mut
+                    .keys_mut()
+                    .insert(child_pos, k3);
             }
         }
     }
 
     #[inline]
-    fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key) -> Result<BlockGuard, (LockLevel, Attempts)>
+    fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
+        -> Result<BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, (LockLevel, Attempts)>
     {
-        let mut curr_level = Self::INIT_TREE_HEIGHT;
+        let mut curr_level = INIT_TREE_HEIGHT;
 
         let (mut current_guard, height, lock_level, attempt)
             = self.retrieve_root(lock_level, attempt);
@@ -440,12 +463,10 @@ impl Index {
                 = unsafe { current_guard_result.as_reader().unwrap() };
 
             match current_ref.as_ref() {
-                Node::Index(
-                    IndexPage {
-                        keys,
-                        children,
-                        ..
-                    }) => {
+                Node::Index(index_page) => {
+                    let keys = index_page.keys();
+                    let children = index_page.children();
+
                     let (next_node, child_pos) = keys
                         .iter()
                         .enumerate()
@@ -543,9 +564,9 @@ impl Index {
         }
     }
 
-    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard {
-        let mut attempt = ATTEMPT_START;
-        let mut lock_level = Self::MAX_TREE_HEIGHT;
+    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+        let mut attempt = 0;
+        let mut lock_level = MAX_TREE_HEIGHT;
         let olc = self.locking_strategy.is_olc();
 
         loop {
@@ -563,7 +584,7 @@ impl Index {
         }
     }
 
-    fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard> {
+    fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>> {
         let root
             = self.root.clone();
 
@@ -586,12 +607,10 @@ impl Index {
             }
 
             match current.unwrap().as_ref() {
-                Node::Index(
-                    IndexPage {
-                        keys,
-                        children,
-                        ..
-                    }) => {
+                Node::Index(index_page) => {
+                    let keys = index_page.keys();
+                    let children = index_page.children();
+
                     let next_node = keys
                         .iter()
                         .enumerate()
@@ -613,8 +632,8 @@ impl Index {
         }
     }
 
-    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard {
-        let mut attempt = ATTEMPT_START;
+    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+        let mut attempt = 0;
         let olc = self.locking_strategy.is_olc();
         // let olc_limited = self.locking_strategy.is_olc_limited();
 

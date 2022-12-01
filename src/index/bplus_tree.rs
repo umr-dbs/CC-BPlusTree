@@ -17,57 +17,54 @@ pub const MAX_TREE_HEIGHT: Height = Height::MAX;
 pub const START_VERSION: Version = 0;
 
 // #[derive(Serialize, Deserialize)]
-pub struct BPlusTree<const KEY_SIZE: usize,
+pub struct BPlusTree<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync + 'static,
     Payload: Default + Clone + Sync + 'static,
     Entry: RecordLike<Key, Payload> + Sync + 'static
 > {
-    pub(crate) root: UnCell<Root<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>,
+    pub(crate) root: UnCell<Root<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>,
     pub(crate) locking_strategy: LockingStrategy,
-    pub(crate) block_manager: BlockManager<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
+    pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
     pub(crate) version_counter: AtomicVersion,
 }
 
-unsafe impl<const KEY_SIZE: usize,
-    const FAN_OUT: usize,
+unsafe impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
     Entry: RecordLike<Key, Payload> + Sync
-> Sync for BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {}
+> Sync for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {}
 
-unsafe impl<const KEY_SIZE: usize,
+unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
     Entry: RecordLike<Key, Payload> + Sync
-> Send for BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {}
+> Send for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {}
 
-impl<const KEY_SIZE: usize,
-    const FAN_OUT: usize,
+impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
     Entry: RecordLike<Key, Payload> + Sync
-> Default for BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+> Default for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
     fn default() -> Self {
         BPlusTree::new_single_versioned()
     }
 }
 
-impl<const KEY_SIZE: usize,
-    const FAN_OUT: usize,
+impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
     Entry: RecordLike<Key, Payload> + Sync
-> BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
 {
     #[inline(always)]
-    pub(crate) fn set_new_root(&self, new_root: Block<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, new_height: Height) {
+    pub(crate) fn set_new_root(&self, new_root: Block<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, new_height: Height) {
         let _ = mem::replace(
             self.root.block.unsafe_borrow_mut_static(),
             new_root,
@@ -76,7 +73,7 @@ impl<const KEY_SIZE: usize,
         self.root.get_mut().height = new_height;
     }
 
-    pub fn make(block_manager: BlockManager<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, locking_strategy: LockingStrategy) -> Self {
+    pub fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, locking_strategy: LockingStrategy) -> Self {
         let empty_node
             = block_manager.make_empty_root();
 
@@ -135,8 +132,8 @@ impl<const KEY_SIZE: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn lock_reader(&self, node: &BlockRef<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>)
-        -> BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    pub(crate) fn lock_reader(&self, node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>)
+        -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
     {
         match self.locking_strategy {
             LockingStrategy::MonoWriter => node.borrow_free_static(),
@@ -151,8 +148,8 @@ impl<const KEY_SIZE: usize,
                             max_level: Level,
                             attempt: Attempts,
                             height: Level,
-                            block_cc: BlockRef<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
-    ) -> BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+                            block_cc: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
     {
         match self.locking_strategy() {
             LockingStrategy::MonoWriter =>

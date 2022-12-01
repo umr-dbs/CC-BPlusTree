@@ -18,14 +18,13 @@ use TXDataModel::utils::safe_cell::SafeCell;
 use crate::bplus_tree::BPlusTree;
 use crate::locking::locking_strategy::LockingStrategy;
 
-const FAN_OUT: usize = 10;
-const NUM_RECORDS: usize = 9;
+const FAN_OUT: usize = 3*256;
+const NUM_RECORDS: usize = 256;
 
 pub type Key = u64;
 pub type Payload = f64;
-const KEY_SIZE: usize = mem::size_of::<Key>();
 
-pub type INDEX = BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, RecordPoint<Key, Payload>>;
+pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, RecordPoint<Key, Payload>>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = INDEX::new_single_version_for;
@@ -261,14 +260,14 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
     time
 }
 
-pub fn level_order<const KEY_SIZE: usize,
+pub fn level_order<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
     Entry: RecordLike<Key, Payload> + Sync
 >
-(tree: &BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> String {
+(tree: &BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> String {
     "".to_string()
     // tree.level_order(None)
     //     .into_iter()
@@ -276,15 +275,15 @@ pub fn level_order<const KEY_SIZE: usize,
     //     .join("\n")
 }
 
-pub fn beast_test2<const KEY_SIZE: usize,
+pub fn beast_test2<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Display + Default + Ord + Copy + Hash + Sync,
     Payload: Display + Default + Clone + Sync,
     Entry: RecordLike<Key, Payload> + Sync
 >
-(num_thread: usize, index: BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, t1s: &[Key])
-    -> (u128, CCCell<BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>)
+(num_thread: usize, index: BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, t1s: &[Key])
+    -> (u128, CCCell<BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>)
 {
     let index_o
         = CCCell::new(index);

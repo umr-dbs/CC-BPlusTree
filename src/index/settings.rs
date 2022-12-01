@@ -33,24 +33,22 @@ pub fn configuration_of(path: &str, is_file: bool) -> Vec<(String, String)> {
 }
 
 pub fn init_from_config_ini<
-    const KEY_SIZE: usize,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
-    Entry: Default + RecordLike<Key, Payload> + Sync>() -> BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    Entry: Default + RecordLike<Key, Payload> + Sync>() -> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
 {
     init_from(load_config(CONFIG_INI_PATH, true))
 }
 
 pub fn init_from_file<
-    const KEY_SIZE: usize,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
     Entry: Default + RecordLike<Key, Payload> + Sync>(path: & str, is_file: bool)
-    -> BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    -> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
 {
     init_from(load_config(path, is_file))
 }
@@ -62,18 +60,17 @@ pub fn load_config(path: &str, is_file: bool) -> HashMap<String, String> {
 }
 
 fn init_from<
-    const KEY_SIZE: usize,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
     Entry: Default + RecordLike<Key, Payload> + Sync>(config: HashMap<String, String>)
-    -> BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    -> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
 {
     let locking_strategy
         = LockingStrategy::load(&config);
 
-    let block_manager: BlockManager<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    let block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
         = BlockSettings::load(&config).into();
 
     let root = UnCell::new(Root::new(
@@ -127,13 +124,12 @@ impl BlockSettings {
     }
 }
 
-impl<const KEY_SIZE: usize,
-    const FAN_OUT: usize,
+impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash,
     Payload: Default + Clone,
-    Entry: Default + RecordLike<Key, Payload>> Into<BlockManager<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>> for BlockSettings {
-    fn into(self) -> BlockManager<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    Entry: Default + RecordLike<Key, Payload>> Into<BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>> for BlockSettings {
+    fn into(self) -> BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
         BlockManager::new(self.is_multi_version)
     }
 }

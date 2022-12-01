@@ -12,12 +12,11 @@ use TXDataModel::tx_model::transaction_result::TransactionResult;
 use TXDataModel::utils::hybrid_cell::sched_yield;
 use crate::index::bplus_tree::BPlusTree;
 
-impl<const KEY_SIZE: usize,
-    const FAN_OUT: usize,
+impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
-    Entry: Default + RecordLike<Key, Payload> + Sync> BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    Entry: Default + RecordLike<Key, Payload> + Sync> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
 {
     pub fn execute(&self, transaction: Transaction<Key, Payload>) -> TransactionResult<Key, Payload> {
         match transaction {

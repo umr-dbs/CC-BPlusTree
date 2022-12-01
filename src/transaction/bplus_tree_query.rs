@@ -11,30 +11,29 @@ use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 
 const DEBUG: bool = false;
 
-impl<const KEY_SIZE: usize,
-    const FAN_OUT: usize,
+impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
     Entry: RecordLike<Key, Payload> + Sync
-> BPlusTree<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
 {
     #[inline(always)]
-    fn has_overflow(&self, node: &Node<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> bool {
+    fn has_overflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> bool {
         match node.is_leaf() {
             true => node.is_overflow(self.block_manager.allocation_leaf()),
             false => node.is_overflow(self.block_manager.allocation_directory())
         }
     }
 
-    fn has_underflow(&self, node: &Node<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> bool {
+    fn has_underflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> bool {
         match node.is_leaf() {
             true => node.is_underflow(self.block_manager.allocation_leaf()),
             false => node.is_underflow(self.block_manager.allocation_directory())
         }
     }
 
-    fn unsafe_degree_of(&self, node: &Node<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> NodeUnsafeDegree {
+    fn unsafe_degree_of(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> NodeUnsafeDegree {
         match node.is_leaf() {
             true => node.unsafe_degree(self.block_manager.allocation_leaf()),
             false => node.unsafe_degree(self.block_manager.allocation_directory()),
@@ -43,7 +42,7 @@ impl<const KEY_SIZE: usize,
 
     #[inline]
     fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
-        -> (BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, Height, LockLevel, Attempts)
+        -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, Height, LockLevel, Attempts)
     {
         let is_olc = self.locking_strategy.is_olc();
         loop {
@@ -63,7 +62,7 @@ impl<const KEY_SIZE: usize,
 
     #[inline]
     fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts)
-        -> Result<(BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, Height), (LockLevel, Attempts)>
+        -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, Height), (LockLevel, Attempts)>
     {
         let root
             = self.root.clone();
@@ -291,9 +290,9 @@ impl<const KEY_SIZE: usize,
 
     fn do_overflow_correction(
         &self,
-        parent_guard: BlockGuardResult<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
+        parent_guard: BlockGuardResult<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
         child_pos: usize,
-        from_guard: BlockGuardResult<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>)
+        from_guard: BlockGuardResult<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>)
     {
         let olc = match from_guard.is_mut_optimistic() {
             true => {
@@ -437,7 +436,7 @@ impl<const KEY_SIZE: usize,
 
     #[inline]
     fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
-        -> Result<BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, (LockLevel, Attempts)>
+        -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, (LockLevel, Attempts)>
     {
         let mut curr_level = INIT_TREE_HEIGHT;
 
@@ -564,7 +563,7 @@ impl<const KEY_SIZE: usize,
         }
     }
 
-    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
         let olc = self.locking_strategy.is_olc();
@@ -584,7 +583,7 @@ impl<const KEY_SIZE: usize,
         }
     }
 
-    fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>> {
+    fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>> {
         let root
             = self.root.clone();
 
@@ -632,7 +631,7 @@ impl<const KEY_SIZE: usize,
         }
     }
 
-    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
         let mut attempt = 0;
         let olc = self.locking_strategy.is_olc();
         // let olc_limited = self.locking_strategy.is_olc_limited();

@@ -55,19 +55,19 @@ fn experiment() {
     let cpu_threads = true;
 
     let threads_cpu = vec![
-        1,
+        // 1,
         2,
-        3,
+        // 3,
         4,
         8,
         16,
         24,
-        32,
-        64,
-        128,
-        256,
-        512,
-        1024,
+        // 32,
+        // 64,
+        // 128,
+        // 256,
+        // 512,
+        // 1024,
     ];
 
     // let mut threads_cpu = (1..=usize::max(num_cpus::get(), *threads_cpu.last().unwrap()))

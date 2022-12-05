@@ -1,5 +1,6 @@
+use std::borrow::BorrowMut;
 use std::hash::Hash;
-use std::ptr;
+use std::{mem, ptr};
 use TXDataModel::page_model::Attempts;
 use TXDataModel::page_model::node::Node;
 use TXDataModel::record_model::record::Record;
@@ -15,8 +16,8 @@ use crate::index::bplus_tree::BPlusTree;
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
-    Payload: Default + Clone + Sync,
-    Entry: Default + RecordLike<Key, Payload> + Sync> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    Payload: Default + Clone + Sync
+> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     pub fn execute(&self, transaction: Transaction<Key, Payload>) -> TransactionResult<Key, Payload> {
         match transaction {
@@ -24,10 +25,7 @@ impl<const FAN_OUT: usize,
                 let guard
                     = self.traversal_write(key);
 
-                debug_assert!(guard.guard_result().is_mut());
-
-                guard.guard_result()
-                    .assume_mut()
+                guard.deref_mut()
                     .unwrap()
                     .delete_key(key, version)
                     .then(|| TransactionResult::Deleted(key, version))
@@ -40,12 +38,9 @@ impl<const FAN_OUT: usize,
                 let version
                     = self.next_version();
 
-                debug_assert!(guard.guard_result().is_mut(), "{}", self.locking_strategy);
-
-                guard.guard_result()
-                    .assume_mut()
+                guard.deref_mut()
                     .unwrap()
-                    .push_record(Record::new(key, payload, version))
+                    .push_record(key, payload, version)
                     .then(|| TransactionResult::Inserted(key, Some(version)))
                     .unwrap_or_default()
             }
@@ -53,12 +48,9 @@ impl<const FAN_OUT: usize,
                 let guard
                     = self.traversal_write(key);
 
-                debug_assert!(guard.guard_result().is_mut(), "{}", self.locking_strategy);
-
-                guard.guard_result()
-                    .assume_mut()
+                guard.deref_mut()
                     .unwrap()
-                    .push_record_point(RecordPoint::new(key, payload))
+                    .push_record_point(key, payload)
                     .then(|| TransactionResult::Inserted(key, None))
                     .unwrap_or_default()
             }
@@ -69,12 +61,9 @@ impl<const FAN_OUT: usize,
                 let version
                     = self.next_version();
 
-                debug_assert!(guard.guard_result().is_mut());
-
-                guard.guard_result()
-                    .assume_mut()
+                guard.deref_mut()
                     .unwrap()
-                    .update_record(Record::new(key, payload, version))
+                    .update_record(key, payload, version)
                     .then(|| TransactionResult::Updated(key, Some(version)))
                     .unwrap_or_default()
             }
@@ -82,12 +71,9 @@ impl<const FAN_OUT: usize,
                 let guard
                     = self.traversal_write(key);
 
-                debug_assert!(guard.guard_result().is_mut());
-
-                guard.guard_result()
-                    .assume_mut()
+                guard.deref_mut()
                     .unwrap()
-                    .update_record_point(RecordPoint::new(key, payload))
+                    .update_record_point(key, payload)
                     .then(|| TransactionResult::Updated(key, None))
                     .unwrap_or_default()
             }
@@ -95,11 +81,9 @@ impl<const FAN_OUT: usize,
                 let guard
                     = self.traversal_read(key);
 
-                let guard_result
-                    = guard.guard_result_reader();
-
-                let reader
-                    = guard_result.as_reader().unwrap();
+                let reader = guard
+                    .deref_unsafe()
+                    .unwrap();
 
                 let mut attempts: Attempts = 0;
 
@@ -144,11 +128,9 @@ impl<const FAN_OUT: usize,
                 let guard
                     = self.traversal_read(key);
 
-                let guard_result
-                    = guard.guard_result_reader();
-
-                let reader
-                    = guard_result.as_reader().unwrap();
+                let reader = guard
+                    .deref_unsafe()
+                    .unwrap();
 
                 let mut attempts: Attempts = 0;
 
@@ -193,11 +175,9 @@ impl<const FAN_OUT: usize,
                 let guard
                     = self.traversal_read(key);
 
-                let guard_result
-                    = guard.guard_result();
-
-                let reader
-                    = guard_result.as_ref().unwrap();
+                let reader = guard
+                    .deref()
+                    .unwrap();
 
                 match reader.as_ref() {
                     Node::Leaf(leaf_page) => leaf_page

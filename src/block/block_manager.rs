@@ -17,26 +17,23 @@ pub struct BlockManager<
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash,
     Payload: Default + Clone,
-    Entry: Default + RecordLike<Key, Payload>>
-{
+> {
     block_id_counter: AtomicBlockID,
     pub(crate) is_multi_version: bool,
-    _marker: PhantomData<(Key, Payload, Entry)>
+    _marker: PhantomData<(Key, Payload)>
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash,
-    Payload: Default + Clone,
-    Entry: Default + RecordLike<Key, Payload>
-> Clone for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    Payload: Default + Clone
+> Clone for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn clone(&self) -> Self {
-        let manager = Self {
+        Self {
             block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             is_multi_version: self.is_multi_version,
             _marker: PhantomData,
-        };
-        manager
+        }
     }
 }
 
@@ -45,8 +42,7 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash,
     Payload: Default + Clone,
-    Entry: Default + RecordLike<Key, Payload>
-> Default for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+> Default for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
         BlockSettings::default().into()
     }
@@ -55,9 +51,8 @@ impl<const FAN_OUT: usize,
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash,
-    Payload: Default + Clone,
-    Entry: RecordLike<Key, Payload>
-> BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    Payload: Default + Clone
+> BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     /// Generates and returns a new atomic (unique across callers) BlockID.
     #[inline(always)]
@@ -86,12 +81,12 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn make_empty_root(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    pub(crate) fn make_empty_root(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
         self.new_empty_leaf()
     }
 
     #[inline(always)]
-    pub(crate) fn new_empty_leaf(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    pub(crate) fn new_empty_leaf(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
         if self.is_multi_version {
             self.new_empty_leaf_multi_version_block()
         }
@@ -102,7 +97,7 @@ impl<const FAN_OUT: usize,
 
     /// Crafts a new aligned Index-Block.
     #[inline(always)]
-    pub(crate) fn new_empty_index_block(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    pub(crate) fn new_empty_index_block(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
         Block {
             block_id: self.next_block_id(),
             node_data: Node::Index(InternalPage::new())
@@ -111,7 +106,7 @@ impl<const FAN_OUT: usize,
 
     /// Crafts a new aligned Leaf-Block.
     #[inline(always)]
-    pub(crate) fn new_empty_leaf_single_version_block(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    pub(crate) fn new_empty_leaf_single_version_block(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
         Block {
             block_id: self.next_block_id(),
             node_data: Node::Leaf(LeafPage::new())
@@ -119,7 +114,7 @@ impl<const FAN_OUT: usize,
     }
 
     /// Crafts a new aligned Multi-Version-Leaf-Block.
-    pub(crate) fn new_empty_leaf_multi_version_block(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    pub(crate) fn new_empty_leaf_multi_version_block(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
         Block {
             block_id: self.next_block_id(),
             node_data: Node::MultiVersionLeaf(LeafPage::new())

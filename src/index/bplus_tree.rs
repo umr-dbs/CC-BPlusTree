@@ -1,10 +1,13 @@
 use std::hash::Hash;
 use std::mem;
+use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use TXDataModel::page_model::block::{Block, BlockGuard};
 use TXDataModel::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use TXDataModel::record_model::{AtomicVersion, Version};
 use TXDataModel::record_model::record_like::RecordLike;
+use TXDataModel::utils::cc_cell::CCCell;
+use TXDataModel::utils::hybrid_cell::OptCell;
 use TXDataModel::utils::un_cell::UnCell;
 use crate::block::block_manager::BlockManager;
 use crate::index::root::Root;
@@ -21,36 +24,42 @@ pub struct BPlusTree<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync + 'static,
-    Payload: Default + Clone + Sync + 'static,
-    Entry: RecordLike<Key, Payload> + Sync + 'static
+    Payload: Default + Clone + Sync + 'static
 > {
-    pub(crate) root: UnCell<Root<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>,
+    pub(crate) root: UnCell<Root<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     pub(crate) locking_strategy: LockingStrategy,
-    pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
+    pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) version_counter: AtomicVersion,
 }
+
+// impl<const FAN_OUT: usize,
+//     const NUM_RECORDS: usize,
+//     Key: Default + Ord + Copy + Hash + Sync + 'static,
+//     Payload: Default + Clone + Sync + 'static
+// > Drop for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
+//     fn drop(&mut self) {
+//
+//     }
+// }
 
 unsafe impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
-    Payload: Default + Clone + Sync,
-    Entry: RecordLike<Key, Payload> + Sync
-> Sync for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {}
+    Payload: Default + Clone + Sync
+> Sync for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {}
 
 unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
-    Payload: Default + Clone + Sync,
-    Entry: RecordLike<Key, Payload> + Sync
-> Send for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {}
+    Payload: Default + Clone + Sync
+> Send for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {}
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
-    Entry: RecordLike<Key, Payload> + Sync
-> Default for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+> Default for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
         BPlusTree::new_single_versioned()
     }
@@ -59,21 +68,20 @@ impl<const FAN_OUT: usize,
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
-    Payload: Default + Clone + Sync,
-    Entry: RecordLike<Key, Payload> + Sync
-> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    Payload: Default + Clone + Sync
+> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    pub(crate) fn set_new_root(&self, new_root: Block<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, new_height: Height) {
+    pub(crate) fn set_new_root(&self, new_root: Block<FAN_OUT, NUM_RECORDS, Key, Payload>, new_height: Height) {
         let _ = mem::replace(
-            self.root.block.unsafe_borrow_mut_static(),
+            self.root.block.unsafe_borrow_mut(),
             new_root,
         );
 
         self.root.get_mut().height = new_height;
     }
 
-    pub fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, locking_strategy: LockingStrategy) -> Self {
+    pub fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>, locking_strategy: LockingStrategy) -> Self {
         let empty_node
             = block_manager.make_empty_root();
 
@@ -132,13 +140,13 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn lock_reader(&self, node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>)
-        -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    pub(crate) fn lock_reader(&self, node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
+        -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy {
-            LockingStrategy::MonoWriter => node.borrow_free_static(),
-            LockingStrategy::LockCoupling => node.borrow_mut_exclusive_static(),
-            _ => node.borrow_read_static(),
+            LockingStrategy::MonoWriter => node.borrow_free(),
+            LockingStrategy::LockCoupling => node.borrow_mut_exclusive(),
+            _ => node.borrow_read(),
         }
     }
 
@@ -148,26 +156,26 @@ impl<const FAN_OUT: usize,
                             max_level: Level,
                             attempt: Attempts,
                             height: Level,
-                            block_cc: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
-    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+                            block_cc: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
+    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy() {
             LockingStrategy::MonoWriter =>
-                block_cc.borrow_free_static(),
+                block_cc.borrow_free(),
             LockingStrategy::LockCoupling =>
-                block_cc.borrow_mut_exclusive_static(),
+                block_cc.borrow_mut_exclusive(),
             LockingStrategy::RWLockCoupling(lock_level, attempts)
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut_static(),
+                block_cc.borrow_mut(),
             LockingStrategy::RWLockCoupling(..) =>
-                block_cc.borrow_read_static(),
+                block_cc.borrow_read(),
             LockingStrategy::OLC(LevelConstraints::Unlimited) =>
-                block_cc.borrow_free_static(),
+                block_cc.borrow_free(),
             LockingStrategy::OLC(LevelConstraints::OptimisticLimit { attempts, level })
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut_static(),
+                block_cc.borrow_mut(),
             LockingStrategy::OLC(..) =>
-                block_cc.borrow_free_static(),
+                block_cc.borrow_free(),
         }
     }
 }

@@ -3,14 +3,10 @@ use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
 use std::fmt::Display;
 use std::hash::Hash;
-use std::ops::Index;
 use std::time::SystemTime;
 use parking_lot::Mutex;
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
-use TXDataModel::record_model::record::Record;
 use TXDataModel::record_model::record_like::RecordLike;
-use TXDataModel::record_model::record_point::RecordPoint;
 use TXDataModel::tx_model::transaction::Transaction;
 use TXDataModel::tx_model::transaction_result::TransactionResult;
 use TXDataModel::utils::cc_cell::CCCell;
@@ -18,13 +14,22 @@ use TXDataModel::utils::safe_cell::SafeCell;
 use crate::bplus_tree::BPlusTree;
 use crate::locking::locking_strategy::LockingStrategy;
 
-const FAN_OUT: usize = 3*256;
-const NUM_RECORDS: usize = 256;
+const _1KB: usize = 1024;
+const _2KB: usize = 2 * _1KB;
+const _4KB: usize = 4 * _1KB;
+const _8KB: usize = 8 * _1KB;
 
-pub type Key = u64;
-pub type Payload = f64;
 
-pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, RecordPoint<Key, Payload>>;
+const BSZ: usize            = _4KB;
+const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
+const NUM_RECORDS: usize    = BSZ / 16;
+// const FAN_OUT: usize        = 3*256;
+// const NUM_RECORDS: usize    = 256;
+
+pub type Key                = u64;
+pub type Payload            = f64;
+
+pub type INDEX              = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = INDEX::new_single_version_for;
@@ -264,10 +269,9 @@ pub fn level_order<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
-    Payload: Default + Clone + Sync,
-    Entry: RecordLike<Key, Payload> + Sync
+    Payload: Default + Clone + Sync
 >
-(tree: &BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> String {
+(tree: &BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> String {
     "".to_string()
     // tree.level_order(None)
     //     .into_iter()
@@ -279,11 +283,9 @@ pub fn beast_test2<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Display + Default + Ord + Copy + Hash + Sync,
-    Payload: Display + Default + Clone + Sync,
-    Entry: RecordLike<Key, Payload> + Sync
->
-(num_thread: usize, index: BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, t1s: &[Key])
-    -> (u128, CCCell<BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>)
+    Payload: Display + Default + Clone + Sync
+>(num_thread: usize, index: BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, t1s: &[Key])
+    -> (u128, CCCell<BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>>)
 {
     let index_o
         = CCCell::new(index);

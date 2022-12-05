@@ -1,6 +1,8 @@
-use std::{fs, mem};
+use std::{fs, mem, thread};
+use std::time::Duration;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
+use TXDataModel::page_model::LevelVariant;
 use TXDataModel::page_model::node::Node::Index;
 use crate::index::bplus_tree;
 use crate::index::settings::{BlockSettings, CONFIG_INI_PATH, init_from_config_ini, load_config};
@@ -62,9 +64,9 @@ fn experiment() {
         8,
         16,
         24,
-        // 32,
-        // 64,
-        // 128,
+        32,
+        64,
+        128,
         // 256,
         // 512,
         // 1024,
@@ -86,9 +88,9 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
+        // 10_000_000,
         // 20_000_000,
-        // 50_000_000,
+        50_000_000,
         // 100_000_000,
     ];
 
@@ -128,9 +130,9 @@ fn experiment() {
 
     strategies.push(LockingStrategy::OLC(LevelConstraints::Unlimited));
 
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     4));
+    strategies.push(LockingStrategy::RWLockCoupling(
+        LevelVariant::new_height_lock(1 as _),
+        4));
 
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(1 as _),
@@ -179,6 +181,7 @@ fn experiment() {
 
     mem::drop(strategies);
 
+    // thread::sleep(Duration::from_secs(4));
     println!("Number Insertions,Number Threads,Locking Strategy,Height,Time,Block Size");
 
     bszs.for_each(|bsz| {

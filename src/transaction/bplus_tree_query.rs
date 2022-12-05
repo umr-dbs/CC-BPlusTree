@@ -1,10 +1,12 @@
 use std::hash::Hash;
 use std::mem;
-use TXDataModel::page_model::{Attempts, Height, Level};
-use TXDataModel::page_model::block::{BlockGuard, BlockGuardResult};
+use std::sync::Arc;
+use TXDataModel::page_model::{Attempts, BlockRef, Height, Level};
+use TXDataModel::page_model::block::{Block, BlockGuard, BlockGuardResult};
 use TXDataModel::page_model::node::{Node, NodeUnsafeDegree};
 use TXDataModel::record_model::record_like::RecordLike;
-use TXDataModel::utils::hybrid_cell::sched_yield;
+use TXDataModel::utils::cc_cell::CCCell;
+use TXDataModel::utils::hybrid_cell::{OptCell, sched_yield};
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 
@@ -14,26 +16,25 @@ const DEBUG: bool = false;
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
-    Payload: Default + Clone + Sync,
-    Entry: RecordLike<Key, Payload> + Sync
-> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>
+    Payload: Default + Clone + Sync
+> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    fn has_overflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> bool {
+    fn has_overflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
         match node.is_leaf() {
             true => node.is_overflow(self.block_manager.allocation_leaf()),
             false => node.is_overflow(self.block_manager.allocation_directory())
         }
     }
 
-    fn has_underflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> bool {
+    fn has_underflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
         match node.is_leaf() {
             true => node.is_underflow(self.block_manager.allocation_leaf()),
             false => node.is_underflow(self.block_manager.allocation_directory())
         }
     }
 
-    fn unsafe_degree_of(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>) -> NodeUnsafeDegree {
+    fn unsafe_degree_of(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload>) -> NodeUnsafeDegree {
         match node.is_leaf() {
             true => node.unsafe_degree(self.block_manager.allocation_leaf()),
             false => node.unsafe_degree(self.block_manager.allocation_directory()),
@@ -42,7 +43,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
-        -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, Height, LockLevel, Attempts)
+        -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
     {
         let is_olc = self.locking_strategy.is_olc();
         loop {
@@ -62,22 +63,22 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts)
-        -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, Height), (LockLevel, Attempts)>
+        -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
     {
-        let root
-            = self.root.clone();
+        // let root
+        //     = self.root.clone();
 
-        // let root_block
-        //     = root.block();
+        let root
+            = self.root.get();
 
         let mut root_guard = match self.locking_strategy {
-            LockingStrategy::MonoWriter => root.block.borrow_free_static(),
-            LockingStrategy::LockCoupling => root.block.borrow_mut_exclusive_static(),
-            LockingStrategy::OLC(LevelConstraints::Unlimited) => root.block.borrow_free_static(),
+            LockingStrategy::MonoWriter => root.block.borrow_free(),
+            LockingStrategy::LockCoupling => root.block.borrow_mut_exclusive(),
+            LockingStrategy::OLC(LevelConstraints::Unlimited) => root.block.borrow_free(),
             LockingStrategy::OLC(LevelConstraints::OptimisticLimit { .. })
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) => {
                 let guard
-                    = root.block.borrow_mut_static();
+                    = root.block.borrow_mut();
 
                 if !guard.is_write_lock() {
                     mem::drop(guard);
@@ -87,33 +88,25 @@ impl<const FAN_OUT: usize,
 
                 guard
             }
-            LockingStrategy::OLC(..) => root.block.borrow_free_static(),
+            LockingStrategy::OLC(..) => root.block.borrow_free(),
             LockingStrategy::RWLockCoupling(..)
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-                root.block.borrow_mut_static(),
+                root.block.borrow_mut(),
             LockingStrategy::RWLockCoupling(..) =>
-                root.block.borrow_read_static(),
+                root.block.borrow_read(),
         };
 
-        // if !root_guard.is_valid() {
-        //     mem::drop(root_guard);
-        //     return Err((lock_level, attempt + 1));
-        // }
+        let root_ref
+            = root_guard.deref();
 
-        let root_guard_result
-            = root_guard.guard_result();
-
-        let root_ref = unsafe {
-            root_guard_result.as_reader()
-        };
-
-        if root_guard_result.is_null() {
+        if root_ref.is_none() {
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
         }
 
-        let root_ref = root_ref.unwrap();
+        let root_ref
+            = root_ref.unwrap();
 
         let has_overflow_root
             = self.has_overflow(root_ref);
@@ -133,34 +126,24 @@ impl<const FAN_OUT: usize,
             return Ok((root_guard, root.height()));
         }
 
-        debug_assert!(root_guard.is_valid());
+        // debug_assert!(root_guard.is_valid());
 
-        if !root_guard.upgrade_write_lock() && self.locking_strategy.additional_lock_required() {
-            mem::drop(root_guard);
+        // if !root_guard.upgrade_write_lock() && self.locking_strategy.additional_lock_required() {
+        //     mem::drop(root_guard);
+        //
+        //     return Err((lock_level, attempt + 1));
+        // }
 
-            return Err((lock_level, attempt + 1));
-        }
+        let root_ref
+            = root_guard.deref_mut().unwrap();
 
-        let guard_result
-            = root_guard.guard_result();
-
-        debug_assert!(guard_result.is_mut());
-
-        let is_optimistic = match guard_result.is_mut_optimistic() {
-            true => {
-                guard_result.mark_obsolete();
-                true
-            }
-            false => false
-        };
-
-        let root_block_mut
-            = guard_result.assume_mut().unwrap();
+        let is_optimistic
+            = root_guard.mark_obsolete();
 
         let n_height
             = root.height() + 1;
 
-        match &mut root_block_mut.node_data {
+        match &mut root_ref.node_data {
             Node::Index(index_page) => unsafe {
                 let keys = index_page.keys();
                 let children = index_page.children();
@@ -168,13 +151,13 @@ impl<const FAN_OUT: usize,
                 let keys_mid = keys.len() / 2;
                 let k3 = *keys.get_unchecked(keys_mid);
 
-                let mut index_block
+                let index_block
                     = self.block_manager.new_empty_index_block();
 
-                let mut new_node_right =
+                let new_node_right =
                     self.block_manager.new_empty_index_block();
 
-                let mut new_root_left
+                let new_root_left
                     = self.block_manager.new_empty_index_block();
 
                 new_node_right
@@ -290,22 +273,14 @@ impl<const FAN_OUT: usize,
 
     fn do_overflow_correction(
         &self,
-        parent_guard: BlockGuardResult<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
+        parent_guard: &mut BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         child_pos: usize,
-        from_guard: BlockGuardResult<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>)
+        from_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
     {
-        let olc = match from_guard.is_mut_optimistic() {
-            true => {
-                from_guard.mark_obsolete();
-                true
-            }
-            false => false
-        };
+        let olc
+            = from_guard.mark_obsolete();
 
-        let from_node_deref
-            = from_guard.assume_mut().unwrap();
-
-        match from_node_deref.as_mut() {
+        match from_guard.deref_mut().unwrap().as_mut() {
             Node::Index(index_page) => unsafe {
                 let keys
                     = index_page.keys();
@@ -340,7 +315,7 @@ impl<const FAN_OUT: usize,
                     .extend_from_slice(keys.get_unchecked(..keys_mid));
 
                 let parent_mut = parent_guard
-                    .assume_mut()
+                    .deref_mut()
                     .unwrap();
 
                 parent_mut
@@ -378,8 +353,9 @@ impl<const FAN_OUT: usize,
                     .records_mut()
                     .extend_from_slice(records.get_unchecked(..records_mid));
 
-                let parent_mut
-                    = parent_guard.assume_mut().unwrap();
+                let parent_mut = parent_guard
+                    .deref_mut()
+                    .unwrap();
 
                  parent_mut
                     .children_mut()
@@ -416,8 +392,9 @@ impl<const FAN_OUT: usize,
                     .record_lists_mut()
                     .extend_from_slice(records.get_unchecked(..records_mid));
 
-                let parent_mut
-                    = parent_guard.assume_mut().unwrap();
+                let parent_mut = parent_guard
+                    .deref_mut()
+                    .unwrap();
 
                 parent_mut
                     .children_mut()
@@ -436,7 +413,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
-        -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>, (LockLevel, Attempts)>
+        -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
     {
         let mut curr_level = INIT_TREE_HEIGHT;
 
@@ -445,9 +422,9 @@ impl<const FAN_OUT: usize,
 
         loop {
             let current_guard_result
-                = current_guard.guard_result();
+                = current_guard.deref();
 
-            if current_guard_result.is_null() {
+            if current_guard_result.is_none() {
                 mem::drop(height);
                 mem::drop(current_guard);
 
@@ -459,7 +436,7 @@ impl<const FAN_OUT: usize,
             }
 
             let current_ref
-                = unsafe { current_guard_result.as_reader().unwrap() };
+                = current_guard_result.unwrap();
 
             match current_ref.as_ref() {
                 Node::Index(index_page) => {
@@ -495,14 +472,10 @@ impl<const FAN_OUT: usize,
                         next_node);
 
                     let next_guard_result
-                        = next_guard.guard_result();
+                        = next_guard.deref();
 
-                    let next_guard_result_ref
-                        = next_guard_result.as_ref();
-
-                    if next_guard_result_ref.is_none() || !current_guard.is_valid() {
+                    if next_guard_result.is_none() || !current_guard.is_valid() {
                         mem::drop(height);
-                        mem::drop(next_guard_result_ref);
                         mem::drop(next_guard);
                         mem::drop(current_guard);
 
@@ -514,7 +487,7 @@ impl<const FAN_OUT: usize,
                     }
 
                     let next_guard_result_ref
-                        = next_guard_result_ref.unwrap();
+                        = next_guard_result.unwrap();
 
                     let has_overflow_next
                         = self.has_overflow(next_guard_result_ref);
@@ -539,9 +512,9 @@ impl<const FAN_OUT: usize,
                             !self.locking_strategy.additional_lock_required());
 
                         self.do_overflow_correction(
-                            current_guard.guard_result(),
+                            &mut current_guard,
                             child_pos,
-                            next_guard.guard_result())
+                            next_guard)
                     } else if !current_guard.is_valid() || !next_guard.is_valid() {
                         mem::drop(height);
                         mem::drop(next_guard);
@@ -556,14 +529,21 @@ impl<const FAN_OUT: usize,
                         current_guard = next_guard;
                     }
                 }
-                _ if current_guard_result.is_mut() || current_guard.upgrade_write_lock() =>
-                    return Ok(current_guard),
+                _ => {
+                    mem::drop(current_guard_result);
+
+                    if current_guard.upgrade_write_lock(){
+                        return Ok(current_guard)
+                    }
+                }
+                // _ if current_guard.upgrade_write_lock() => return Ok(current_guard),
                 _ => return Err((curr_level - 1, attempt + 1))
             }
         }
     }
 
-    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    #[inline]
+    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
         let olc = self.locking_strategy.is_olc();
@@ -583,25 +563,21 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>> {
+    #[inline]
+    fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         let root
-            = self.root.clone();
+            = self.root.get();
 
         let mut current_guard
             = self.lock_reader(&root.block);
 
         loop {
-            if !current_guard.is_valid() {
-                return None;
-            }
-
-            let current_deref_result
-                = current_guard.guard_result();
-
             let current
-                = current_deref_result.as_ref();
+                = current_guard.deref();
 
             if current.is_none() {
+                mem::drop(current_guard);
+
                 return None;
             }
 
@@ -631,7 +607,8 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload, Entry> {
+    #[inline]
+    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
         let mut attempt = 0;
         let olc = self.locking_strategy.is_olc();
         // let olc_limited = self.locking_strategy.is_olc_limited();

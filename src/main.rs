@@ -55,7 +55,7 @@ fn experiment() {
     let cpu_threads = true;
     test::show_bsz_alignment();
     let threads_cpu = vec![
-        // 1,
+        1,
         2,
         // 3,
         4,
@@ -108,7 +108,7 @@ fn experiment() {
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len() * bszs.clone().len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::LockCoupling);
+    strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -188,7 +188,7 @@ fn experiment() {
                 if *num_threads > t1s.len() {
                     log_debug_ln("WARNING: Number of Threads larger than number of Transactions!".to_string());
                     log_debug_ln(format!("WARNING: Skipping Transactions = {}, Threads = {}!", t1s.len(), num_threads));
-                    continue
+                    continue;
                 }
                 if *num_threads == 1 {
                     if EXE_LOOK_UPS {
@@ -207,27 +207,27 @@ fn experiment() {
 
                     print!(",{}", time);
                     println!(",{}", bsz);
-                } else {
-                    for ls in strats.iter() {
-                        if EXE_LOOK_UPS {
-                            log_debug_ln(format!("Warning: Look-up queries enabled!"))
-                        }
+                }
 
-                        print!("{}", t1s.len());
-                        print!(",{}", *num_threads);
-
-                        let index = MAKE_INDEX(ls.clone());
-
-                        let time = beast_test(
-                            *num_threads,
-                            index,
-                            t1s.as_slice());
-
-                        print!(",{}", time);
-                        println!(",{}", bsz);
-
-                        // thread::sleep(Duration::from_millis(200));
+                for ls in strats.iter() {
+                    if EXE_LOOK_UPS {
+                        log_debug_ln(format!("Warning: Look-up queries enabled!"))
                     }
+
+                    print!("{}", t1s.len());
+                    print!(",{}", *num_threads);
+
+                    let index = MAKE_INDEX(ls.clone());
+
+                    let time = beast_test(
+                        *num_threads,
+                        index,
+                        t1s.as_slice());
+
+                    print!(",{}", time);
+                    println!(",{}", bsz);
+
+                    // thread::sleep(Duration::from_millis(200));
                 }
             });
     });

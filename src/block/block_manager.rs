@@ -87,12 +87,12 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub(crate) fn new_empty_leaf(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        if self.is_multi_version {
-            self.new_empty_leaf_multi_version_block()
-        }
-        else {
+        // if self.is_multi_version {
+        //     self.new_empty_leaf_multi_version_block()
+        // }
+        // else {
             self.new_empty_leaf_single_version_block()
-        }
+        // }
     }
 
     /// Crafts a new aligned Index-Block.
@@ -113,11 +113,11 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    /// Crafts a new aligned Multi-Version-Leaf-Block.
-    pub(crate) fn new_empty_leaf_multi_version_block(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        Block {
-            block_id: self.next_block_id(),
-            node_data: Node::MultiVersionLeaf(LeafPage::new())
-        }
-    }
+    // /// Crafts a new aligned Multi-Version-Leaf-Block.
+    // pub(crate) fn new_empty_leaf_multi_version_block(&self) -> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    //     Block {
+    //         block_id: self.next_block_id(),
+    //         node_data: Node::MultiVersionLeaf(LeafPage::new())
+    //     }
+    // }
 }

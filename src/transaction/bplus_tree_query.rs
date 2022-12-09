@@ -143,7 +143,7 @@ impl<const FAN_OUT: usize,
         let n_height
             = root.height() + 1;
 
-        match &mut root_ref.node_data {
+        match root_ref.as_mut() {
             Node::Index(index_page) => unsafe {
                 let keys = index_page.keys();
                 let children = index_page.children();
@@ -228,44 +228,44 @@ impl<const FAN_OUT: usize,
                     new_root,
                     n_height);
             }
-            Node::MultiVersionLeaf(records) => unsafe {
-                let records
-                    = records.as_records();
-
-                let records_mid = records.len() / 2;
-                let k3 = records
-                    .get_unchecked(records_mid)
-                    .key();
-
-                let new_node_right
-                    = self.block_manager.new_empty_leaf_multi_version_block();
-
-                let new_node_left
-                    = self.block_manager.new_empty_leaf_multi_version_block();
-
-                let new_root
-                    = self.block_manager.new_empty_index_block();
-
-                new_node_right
-                    .record_lists_mut()
-                    .extend_from_slice(records.get_unchecked(records_mid..));
-
-                new_node_left
-                    .record_lists_mut()
-                    .extend_from_slice(records.get_unchecked(..records_mid));
-
-                new_root.children_mut().extend([
-                    new_node_left.into_cell(is_optimistic),
-                    new_node_right.into_cell(is_optimistic)
-                ]);
-
-                new_root.keys_mut()
-                    .push(k3);
-
-                self.set_new_root(
-                    new_root,
-                    n_height);
-            }
+            // Node::MultiVersionLeaf(records) => unsafe {
+            //     let records
+            //         = records.as_records();
+            //
+            //     let records_mid = records.len() / 2;
+            //     let k3 = records
+            //         .get_unchecked(records_mid)
+            //         .key();
+            //
+            //     let new_node_right
+            //         = self.block_manager.new_empty_leaf_multi_version_block();
+            //
+            //     let new_node_left
+            //         = self.block_manager.new_empty_leaf_multi_version_block();
+            //
+            //     let new_root
+            //         = self.block_manager.new_empty_index_block();
+            //
+            //     new_node_right
+            //         .record_lists_mut()
+            //         .extend_from_slice(records.get_unchecked(records_mid..));
+            //
+            //     new_node_left
+            //         .record_lists_mut()
+            //         .extend_from_slice(records.get_unchecked(..records_mid));
+            //
+            //     new_root.children_mut().extend([
+            //         new_node_left.into_cell(is_optimistic),
+            //         new_node_right.into_cell(is_optimistic)
+            //     ]);
+            //
+            //     new_root.keys_mut()
+            //         .push(k3);
+            //
+            //     self.set_new_root(
+            //         new_root,
+            //         n_height);
+            // }
         }
 
         Ok((root_guard, n_height))
@@ -369,45 +369,45 @@ impl<const FAN_OUT: usize,
                     .keys_mut()
                     .insert(child_pos, k3);
             }
-            Node::MultiVersionLeaf(records) => unsafe {
-                let records
-                    = records.as_records();
-
-                let records_mid = records.len() / 2;
-                let k3 = records
-                    .get_unchecked(records_mid)
-                    .key();
-
-                let new_node
-                    = self.block_manager.new_empty_leaf_multi_version_block();
-
-                let new_node_from
-                    = self.block_manager.new_empty_leaf_multi_version_block();
-
-                new_node
-                    .record_lists_mut()
-                    .extend_from_slice(records.get_unchecked(records_mid..));
-
-                new_node_from
-                    .record_lists_mut()
-                    .extend_from_slice(records.get_unchecked(..records_mid));
-
-                let parent_mut = parent_guard
-                    .deref_mut()
-                    .unwrap();
-
-                parent_mut
-                    .children_mut()
-                    .insert(child_pos + 1, new_node.into_cell(olc));
-
-                *parent_mut
-                    .children_mut()
-                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc);
-
-                parent_mut
-                    .keys_mut()
-                    .insert(child_pos, k3);
-            }
+            // Node::MultiVersionLeaf(records) => unsafe {
+            //     let records
+            //         = records.as_records();
+            //
+            //     let records_mid = records.len() / 2;
+            //     let k3 = records
+            //         .get_unchecked(records_mid)
+            //         .key();
+            //
+            //     let new_node
+            //         = self.block_manager.new_empty_leaf_multi_version_block();
+            //
+            //     let new_node_from
+            //         = self.block_manager.new_empty_leaf_multi_version_block();
+            //
+            //     new_node
+            //         .record_lists_mut()
+            //         .extend_from_slice(records.get_unchecked(records_mid..));
+            //
+            //     new_node_from
+            //         .record_lists_mut()
+            //         .extend_from_slice(records.get_unchecked(..records_mid));
+            //
+            //     let parent_mut = parent_guard
+            //         .deref_mut()
+            //         .unwrap();
+            //
+            //     parent_mut
+            //         .children_mut()
+            //         .insert(child_pos + 1, new_node.into_cell(olc));
+            //
+            //     *parent_mut
+            //         .children_mut()
+            //         .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc);
+            //
+            //     parent_mut
+            //         .keys_mut()
+            //         .insert(child_pos, k3);
+            // }
         }
     }
 

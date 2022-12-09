@@ -1,11 +1,9 @@
-use std::{fs, mem, thread};
-use std::time::Duration;
+use std::{fs, mem};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use TXDataModel::page_model::LevelVariant;
-use TXDataModel::page_model::node::Node::Index;
 use crate::index::bplus_tree;
-use crate::index::settings::{BlockSettings, CONFIG_INI_PATH, init_from_config_ini, load_config};
+use crate::index::settings::{CONFIG_INI_PATH, init_from_config_ini, load_config};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::test::{beast_test, EXE_LOOK_UPS, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, Payload, simple_test, simple_test2};
 
@@ -55,7 +53,7 @@ fn make_splash() {
 
 fn experiment() {
     let cpu_threads = true;
-
+    test::show_bsz_alignment();
     let threads_cpu = vec![
         // 1,
         2,
@@ -90,8 +88,8 @@ fn experiment() {
         // 5_000_000,
         // 10_000_000,
         // 20_000_000,
-        50_000_000,
-        // 100_000_000,
+        // 50_000_000,
+        100_000_000,
     ];
 
     let bszs = vec![

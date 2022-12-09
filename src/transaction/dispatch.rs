@@ -31,19 +31,19 @@ impl<const FAN_OUT: usize,
                     .then(|| TransactionResult::Deleted(key, version))
                     .unwrap_or_default()
             }
-            Transaction::Insert(key, payload) if self.block_manager.is_multi_version => {
-                let guard
-                    = self.traversal_write(key);
-
-                let version
-                    = self.next_version();
-
-                guard.deref_mut()
-                    .unwrap()
-                    .push_record(key, payload, version)
-                    .then(|| TransactionResult::Inserted(key, Some(version)))
-                    .unwrap_or_default()
-            }
+            // Transaction::Insert(key, payload) if self.block_manager.is_multi_version => {
+            //     let guard
+            //         = self.traversal_write(key);
+            //
+            //     let version
+            //         = self.next_version();
+            //
+            //     guard.deref_mut()
+            //         .unwrap()
+            //         .push_record(key, payload, version)
+            //         .then(|| TransactionResult::Inserted(key, Some(version)))
+            //         .unwrap_or_default()
+            // }
             Transaction::Insert(key, payload) => {
                 let guard
                     = self.traversal_write(key);
@@ -54,19 +54,19 @@ impl<const FAN_OUT: usize,
                     .then(|| TransactionResult::Inserted(key, None))
                     .unwrap_or_default()
             }
-            Transaction::Update(key, payload) if self.block_manager.is_multi_version => {
-                let guard
-                    = self.traversal_write(key);
-
-                let version
-                    = self.next_version();
-
-                guard.deref_mut()
-                    .unwrap()
-                    .update_record(key, payload, version)
-                    .then(|| TransactionResult::Updated(key, Some(version)))
-                    .unwrap_or_default()
-            }
+            // Transaction::Update(key, payload) if self.block_manager.is_multi_version => {
+            //     let guard
+            //         = self.traversal_write(key);
+            //
+            //     let version
+            //         = self.next_version();
+            //
+            //     guard.deref_mut()
+            //         .unwrap()
+            //         .update_record(key, payload, version)
+            //         .then(|| TransactionResult::Updated(key, Some(version)))
+            //         .unwrap_or_default()
+            // }
             Transaction::Update(key, payload) => {
                 let guard
                     = self.traversal_write(key);
@@ -99,17 +99,17 @@ impl<const FAN_OUT: usize,
                             .next()
                             .map(|event| event.unsafe_clone())
                             .map(|event| Record::new(event.key(), event.payload, Version::MIN)),
-                        Node::MultiVersionLeaf(leaf_page) => leaf_page
-                            .as_records()
-                            .iter()
-                            .find(|record_list| record_list.key() == key)
-                            .map(|version_list| version_list
-                                .payload(version)
-                                .map(|found| Record::new(
-                                    version_list.key,
-                                    found.payload,
-                                    found.version_info.insertion_version())))
-                            .unwrap_or_default(),
+                        // Node::MultiVersionLeaf(leaf_page) => leaf_page
+                        //     .as_records()
+                        //     .iter()
+                        //     .find(|record_list| record_list.key() == key)
+                        //     .map(|version_list| version_list
+                        //         .payload(version)
+                        //         .map(|found| Record::new(
+                        //             version_list.key,
+                        //             found.payload,
+                        //             found.version_info.insertion_version())))
+                        //     .unwrap_or_default(),
                         _ => None
                     };
 
@@ -147,16 +147,16 @@ impl<const FAN_OUT: usize,
                             .next()
                             .map(|event| event.unsafe_clone())
                             .map(|event| Record::new(event.key(), event.payload, Version::MIN)),
-                        Node::MultiVersionLeaf(leaf_page) => leaf_page
-                            .as_records()
-                            .iter()
-                            .find(|record_list| record_list.key() == key)
-                            .map(|version_list| version_list.payload(None)
-                                .map(|found| Record::new(
-                                    version_list.key,
-                                    found.payload,
-                                    found.version_info.insertion_version())))
-                            .unwrap_or_default(),
+                        // Node::MultiVersionLeaf(leaf_page) => leaf_page
+                        //     .as_records()
+                        //     .iter()
+                        //     .find(|record_list| record_list.key() == key)
+                        //     .map(|version_list| version_list.payload(None)
+                        //         .map(|found| Record::new(
+                        //             version_list.key,
+                        //             found.payload,
+                        //             found.version_info.insertion_version())))
+                        //     .unwrap_or_default(),
                         _ => None
                     };
 
@@ -189,18 +189,18 @@ impl<const FAN_OUT: usize,
                             record_point.key(),
                             record_point.payload.clone()))
                         .into(),
-                    Node::MultiVersionLeaf(leaf_page) => leaf_page
-                        .as_records()
-                        .iter()
-                        .find(|record_list| record_list.key() == key)
-                        .map(|version_list| version_list
-                            .payload(version)
-                            .map(|found| Record::from(
-                                version_list.key,
-                                found.payload,
-                                found.version_info.clone())))
-                        .unwrap_or_default()
-                        .into(),
+                    // Node::MultiVersionLeaf(leaf_page) => leaf_page
+                    //     .as_records()
+                    //     .iter()
+                    //     .find(|record_list| record_list.key() == key)
+                    //     .map(|version_list| version_list
+                    //         .payload(version)
+                    //         .map(|found| Record::from(
+                    //             version_list.key,
+                    //             found.payload,
+                    //             found.version_info.clone())))
+                    //     .unwrap_or_default()
+                    //     .into(),
                     _ => TransactionResult::Error
                 }
             }

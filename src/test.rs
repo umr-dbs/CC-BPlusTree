@@ -6,6 +6,7 @@ use std::hash::Hash;
 use std::time::SystemTime;
 use parking_lot::Mutex;
 use rand::RngCore;
+use TXDataModel::page_model::block::Block;
 use TXDataModel::record_model::record_like::RecordLike;
 use TXDataModel::tx_model::transaction::Transaction;
 use TXDataModel::tx_model::transaction_result::TransactionResult;
@@ -21,8 +22,14 @@ const _8KB: usize = 8 * _1KB;
 
 
 const BSZ: usize            = _4KB;
-const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
-const NUM_RECORDS: usize    = BSZ / 16;
+const FAN_OUT: usize = (BSZ / 8 - 1) / 2;
+const NUM_RECORDS: usize = BSZ / (8 + 8) - 2;
+
+pub fn show_bsz_alignment() {
+    log_debug_ln(format!("Const BSZ Alignment = {} bytes", mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>()));
+}
+// const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
+// const NUM_RECORDS: usize    = BSZ / 16;
 // const FAN_OUT: usize        = 3*256;
 // const NUM_RECORDS: usize    = 256;
 

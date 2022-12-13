@@ -451,7 +451,7 @@ impl<const FAN_OUT: usize,
                         .unwrap_or_else(|| (children.get(keys.len()).cloned(), keys.len()));
 
                     if next_node.is_none() || !current_guard.is_valid() {
-                        mem::forget(next_node);
+                        mem::drop(next_node);
                         mem::drop(current_guard);
 
                         if DEBUG {

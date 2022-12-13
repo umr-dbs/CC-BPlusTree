@@ -1,11 +1,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::{fs, mem};
-use TXDataModel::page_model::block::Block;
-use TXDataModel::page_model::ObjectCount;
-use TXDataModel::record_model::AtomicVersion;
+use std::fs;
 use TXDataModel::record_model::record_like::RecordLike;
-use TXDataModel::record_model::record_list::RecordList;
 use TXDataModel::utils::un_cell::UnCell;
 use crate::block::block_manager::BlockManager;
 use crate::bplus_tree::BPlusTree;
@@ -47,7 +43,7 @@ pub fn init_from_file<
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
-    Entry: Default + RecordLike<Key, Payload> + Sync>(path: & str, is_file: bool)
+    Entry: RecordLike<Key, Payload> + Sync>(path: & str, is_file: bool)
     -> BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     init_from(load_config(path, is_file))
@@ -81,7 +77,7 @@ fn init_from<
         root,
         locking_strategy,
         block_manager,
-        version_counter: AtomicVersion::new(START_VERSION),
+        // version_counter: AtomicVersion::new(START_VERSION),
     }
 }
 

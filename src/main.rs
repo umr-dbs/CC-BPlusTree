@@ -1,11 +1,13 @@
 use std::{fs, mem};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
-use TXDataModel::page_model::LevelVariant;
+use TXDataModel::page_model::block::Block;
+use TXDataModel::page_model::{BlockID, LevelVariant};
+use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
 use crate::index::bplus_tree;
-use crate::index::settings::{CONFIG_INI_PATH, init_from_config_ini, load_config};
+// use crate::index::settings::{CONFIG_INI_PATH, init_from_config_ini, load_config};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
-use crate::test::{beast_test, EXE_LOOK_UPS, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, Payload, simple_test, simple_test2};
+use crate::test::{beast_test, BSZ, bsz_alignment, BSZ_BASE, EXE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test, simple_test2};
 
 mod index;
 mod transaction;
@@ -14,6 +16,12 @@ mod test;
 mod locking;
 
 fn main() {
+    println!("{}", mem::size_of::<SmartFlavor<()>>() +
+        mem::size_of::<BlockID>() +
+        mem::align_of::<Block<0, 0, Key, Payload>>() +
+        16
+    );
+
     make_splash();
 
     simple_test();
@@ -53,11 +61,11 @@ fn make_splash() {
 
 fn experiment() {
     let cpu_threads = true;
-    test::show_bsz_alignment();
+    // test::show_bsz_alignment();
     let threads_cpu = vec![
         1,
         2,
-        // 3,
+        3,
         4,
         8,
         16,
@@ -86,29 +94,16 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        // 10_000_000,
+        10_000_000,
         // 20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
-    let bszs = vec![
-        // 1,
-        // 2,
-        // 3,
-        4,
-        // 8,
-        // 10,
-        // 12,
-        // 14,
-        // 16,
-        // 32,
-    ].into_iter().map(|bsz| bsz * 1024);
-
-    log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len() * bszs.clone().len()));
+    log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::LockCoupling);
+    // strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -128,9 +123,9 @@ fn experiment() {
 
     strategies.push(LockingStrategy::OLC(LevelConstraints::Unlimited));
 
-    strategies.push(LockingStrategy::RWLockCoupling(
-        LevelVariant::new_height_lock(1 as _),
-        4));
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(1 as _),
+    //     4));
 
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(1 as _),
@@ -140,30 +135,45 @@ fn experiment() {
     //     LevelVariant::new_height_lock(1 as _),
     //     1_00));
 
-    bszs.clone().enumerate().for_each(|(b_i, bsz)| {
-        insertions.iter().enumerate().for_each(|(i, insertion)| {
-            log_debug_ln(format!("# {}.{}\n\t- Records: \t{}\n\t- Threads: \t{}\n\t- Block Size: \t{} kb",
-                                 b_i + 1,
-                                 i + 1,
-                                 format_insertsions(*insertion),
-                                 threads_cpu.iter().join(","),
-                                 bsz / 1024)
-            );
+    insertions.iter().enumerate().for_each(|(i, insertion)| {
+        log_debug_ln(format!("# {}\n\t\
+        - Records: \t\t{}\n\t\
+        - Threads: \t\t{}\n\t\
+        - Block Size: \t\t{} bytes\n\t\
+        - Block Align-Size: \t{} bytes\n\t\
+        - Bsz Internal/Delta: \t{}/{} bytes\n\t\
+        - Bsz Leaf/Delta: \t{}/{} bytes\n\t\
+        - Num Keys: \t\t{}\n\t\
+        - Fan Out: \t\t{}\n\t\
+        - Num Records: \t\t{}",
+                             i + 1,
+                             format_insertsions(*insertion),
+                             threads_cpu.iter().join(","),
+                             BSZ_BASE,
+                             bsz_alignment(),
+                             (FAN_OUT * 8 * 2 + 8 + bsz_alignment()),
+                             BSZ_BASE - (FAN_OUT * 8 * 2 + 8 + bsz_alignment()),
+                             (NUM_RECORDS * 16 + 2 + bsz_alignment()),
+                             BSZ_BASE - (NUM_RECORDS * 16 + 2 + bsz_alignment()),
+                             FAN_OUT - 1,
+                             FAN_OUT,
+                             NUM_RECORDS)
+        );
 
-            log_debug(format!("\t- Strategy:"));
-            if threads_cpu.contains(&1) {
-                println!("\t{}", LockingStrategy::MonoWriter);
-                strategies
-                    .iter()
-                    .for_each(|st| log_debug_ln(format!("\t\t\t{}", st)))
-            } else {
-                log_debug_ln(format!("\t{}", strategies[0]));
-                (&strategies[1..])
-                    .iter()
-                    .for_each(|st| log_debug_ln(format!("\t\t\t{}", st)))
-            }
-        });
+        log_debug(format!("\t- Strategy:"));
+        if threads_cpu.contains(&1) {
+            println!("\t\t{}", LockingStrategy::MonoWriter);
+            strategies
+                .iter()
+                .for_each(|st| log_debug_ln(format!("\t\t\t\t{}", st)))
+        } else {
+            log_debug_ln(format!("\t\t{}", strategies[0]));
+            (&strategies[1..])
+                .iter()
+                .for_each(|st| log_debug_ln(format!("\t\t\t\t{}", st)))
+        }
     });
+
 
     log_debug_ln(format!("Preparing data, hold on.."));
     let cases = insertions
@@ -180,55 +190,57 @@ fn experiment() {
     mem::drop(strategies);
 
     // thread::sleep(Duration::from_secs(4));
-    println!("Number Insertions,Number Threads,Locking Strategy,Height,Time,Block Size");
+    println!("Number Insertions,Number Threads,Locking Strategy,Height,Time,Fan Out,Leaf Records,Block Size");
 
-    bszs.for_each(|bsz| {
-        cases.iter().for_each(|(t1s, strats)|
-            for num_threads in threads_cpu.iter() {
-                if *num_threads > t1s.len() {
-                    log_debug_ln("WARNING: Number of Threads larger than number of Transactions!".to_string());
-                    log_debug_ln(format!("WARNING: Skipping Transactions = {}, Threads = {}!", t1s.len(), num_threads));
-                    continue;
-                }
-                if *num_threads == 1 {
-                    if EXE_LOOK_UPS {
-                        log_debug_ln(format!("Warning: Look-up queries enabled!"))
-                    }
-
-                    print!("{}", t1s.len());
-                    print!(",{}", *num_threads);
-
-                    let index = MAKE_INDEX(LockingStrategy::MonoWriter);
-
-                    let time = beast_test(
-                        1,
-                        index,
-                        t1s.as_slice());
-
-                    print!(",{}", time);
-                    println!(",{}", bsz);
+    cases.iter().for_each(|(t1s, strats)|
+        for num_threads in threads_cpu.iter() {
+            if *num_threads > t1s.len() {
+                log_debug_ln("WARNING: Number of Threads larger than number of Transactions!".to_string());
+                log_debug_ln(format!("WARNING: Skipping Transactions = {}, Threads = {}!", t1s.len(), num_threads));
+                continue;
+            }
+            if *num_threads == 1 {
+                if EXE_LOOK_UPS {
+                    log_debug_ln(format!("Warning: Look-up queries enabled!"))
                 }
 
-                for ls in strats.iter() {
-                    if EXE_LOOK_UPS {
-                        log_debug_ln(format!("Warning: Look-up queries enabled!"))
-                    }
+                print!("{}", t1s.len());
+                print!(",{}", *num_threads);
 
-                    print!("{}", t1s.len());
-                    print!(",{}", *num_threads);
+                let index = MAKE_INDEX(LockingStrategy::MonoWriter);
 
-                    let index = MAKE_INDEX(ls.clone());
+                let time = beast_test(
+                    1,
+                    index,
+                    t1s.as_slice());
 
-                    let time = beast_test(
-                        *num_threads,
-                        index,
-                        t1s.as_slice());
+                print!(",{}", time);
+                print!(",{}", FAN_OUT);
+                print!(",{}", NUM_RECORDS);
+                println!(",{}", BSZ_BASE);
+            }
 
-                    print!(",{}", time);
-                    println!(",{}", bsz);
-
-                    // thread::sleep(Duration::from_millis(200));
+            for ls in strats.iter() {
+                if EXE_LOOK_UPS {
+                    log_debug_ln(format!("Warning: Look-up queries enabled!"))
                 }
-            });
-    });
+
+                print!("{}", t1s.len());
+                print!(",{}", *num_threads);
+
+                let index = MAKE_INDEX(ls.clone());
+
+                let time = beast_test(
+                    *num_threads,
+                    index,
+                    t1s.as_slice());
+
+                print!(",{}", time);
+                print!(",{}", FAN_OUT);
+                print!(",{}", NUM_RECORDS);
+                println!(",{}", BSZ_BASE);
+
+                // thread::sleep(Duration::from_millis(200));
+            }
+        });
 }

@@ -6,8 +6,7 @@ use TXDataModel::page_model::block::Block;
 use TXDataModel::page_model::internal_page::InternalPage;
 use TXDataModel::page_model::leaf_page::LeafPage;
 use TXDataModel::page_model::node::Node;
-use TXDataModel::record_model::record_like::RecordLike;
-use crate::index::settings::BlockSettings;
+// use crate::index::settings::BlockSettings;
 
 /// Default starting numerical value for a valid BlockID.
 pub const START_BLOCK_ID: BlockID = BlockID::MIN;
@@ -44,9 +43,10 @@ impl<const FAN_OUT: usize,
     Payload: Default + Clone,
 > Default for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
-        BlockSettings::default().into()
+        BlockManager::new(false)
     }
 }
+
 /// Main functionality implementation for BlockManager.
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,

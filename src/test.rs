@@ -1,32 +1,83 @@
 use std::borrow::Borrow;
 use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::time::SystemTime;
 use parking_lot::Mutex;
 use rand::RngCore;
 use TXDataModel::page_model::block::Block;
+use TXDataModel::page_model::{BlockID, BlockRef};
 use TXDataModel::record_model::record_like::RecordLike;
 use TXDataModel::tx_model::transaction::Transaction;
 use TXDataModel::tx_model::transaction_result::TransactionResult;
 use TXDataModel::utils::cc_cell::CCCell;
 use TXDataModel::utils::safe_cell::SafeCell;
+use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
 use crate::bplus_tree::BPlusTree;
 use crate::locking::locking_strategy::LockingStrategy;
 
-const _1KB: usize = 1024;
-const _2KB: usize = 2 * _1KB;
-const _4KB: usize = 4 * _1KB;
-const _8KB: usize = 8 * _1KB;
+const _1KB: usize   = 1024;
+const _2KB: usize   = 2 * _1KB;
+const _4KB: usize   = 4 * _1KB;
+const _8KB: usize   = 8 * _1KB;
+const _16KB: usize  = 16 * _1KB;
+const _32KB: usize  = 32 * _1KB;
+
+pub const BSZ_BASE: usize       = _4KB;
+pub const BSZ: usize            = BSZ_BASE - bsz_alignment();
+pub const FAN_OUT: usize        = BSZ / 8 / 2;
+pub const NUM_RECORDS: usize    = (BSZ - 2) / (8 + 8);
+
+pub enum BlockSize {
+    _1KB,
+    _2KB,
+    _4KB,
+    _8KB,
+    _16KB,
+    _32KB
+}
+
+impl Display for BlockSize {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} kb", match self {
+            BlockSize::_1KB => "1",
+            BlockSize::_2KB => "2",
+            BlockSize::_4KB => "4",
+            BlockSize::_8KB => "8",
+            BlockSize::_16KB => "16",
+            BlockSize::_32KB => "32",
+        })
+    }
+}
 
 
-const BSZ: usize            = _4KB;
-const FAN_OUT: usize = (BSZ / 8 - 1) / 2;
-const NUM_RECORDS: usize = BSZ / (8 + 8) - 2;
+pub const fn fan_out(bsz: BlockSize) -> usize {
+    ((match bsz {
+        BlockSize::_1KB => _1KB,
+        BlockSize::_2KB => _2KB,
+        BlockSize::_4KB => _4KB,
+        BlockSize::_8KB => _8KB,
+        BlockSize::_16KB => _16KB,
+        BlockSize::_32KB => _32KB,
+    }) - 2) / (8 + 8)
+}
 
-pub fn show_bsz_alignment() {
-    log_debug_ln(format!("Const BSZ Alignment = {} bytes", mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>()));
+pub const fn num_records(bsz: BlockSize) -> usize {
+    (match bsz {
+        BlockSize::_1KB => _1KB,
+        BlockSize::_2KB => _2KB,
+        BlockSize::_4KB => _4KB,
+        BlockSize::_8KB => _8KB,
+        BlockSize::_16KB => _16KB,
+        BlockSize::_32KB => _32KB,
+    }) / 8 / 2
+}
+
+pub const fn bsz_alignment() -> usize {
+    mem::size_of::<BlockID>() +
+        mem::size_of::<BlockRef<0, 0, Key, Payload>>() +
+        mem::align_of::<Block<0,0,Key, Payload>>() + 16 // wc + sc
 }
 // const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
 // const NUM_RECORDS: usize    = BSZ / 16;

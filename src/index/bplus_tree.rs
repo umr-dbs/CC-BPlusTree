@@ -1,13 +1,9 @@
 use std::hash::Hash;
 use std::mem;
-use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use TXDataModel::page_model::block::{Block, BlockGuard};
 use TXDataModel::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use TXDataModel::record_model::{AtomicVersion, Version};
-use TXDataModel::record_model::record_like::RecordLike;
-use TXDataModel::utils::cc_cell::CCCell;
-use TXDataModel::utils::hybrid_cell::OptCell;
 use TXDataModel::utils::un_cell::UnCell;
 use crate::block::block_manager::BlockManager;
 use crate::index::root::Root;
@@ -29,7 +25,7 @@ pub struct BPlusTree<
     pub(crate) root: UnCell<Root<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     pub(crate) locking_strategy: LockingStrategy,
     pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
-    pub(crate) version_counter: AtomicVersion,
+    // pub(crate) version_counter: AtomicVersion,
 }
 
 // impl<const FAN_OUT: usize,
@@ -90,7 +86,7 @@ impl<const FAN_OUT: usize,
                 empty_node.into_cell(locking_strategy.is_olc()),
                 INIT_TREE_HEIGHT,
             )),
-            version_counter: AtomicVersion::new(START_VERSION),
+            // version_counter: AtomicVersion::new(START_VERSION),
             locking_strategy,
             block_manager,
         }
@@ -106,12 +102,7 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn new_multi_version_for(locking_strategy: LockingStrategy) -> Self {
-        let mut block_manager
-            = BlockManager::default();
-
-        block_manager.is_multi_version = true;
-
-        Self::make(block_manager, locking_strategy)
+        Self::make(BlockManager::new(true), locking_strategy)
     }
 
     #[inline(always)]
@@ -134,10 +125,10 @@ impl<const FAN_OUT: usize,
         self.root.height()
     }
 
-    #[inline(always)]
-    pub(crate) fn next_version(&self) -> Version {
-        self.version_counter.fetch_add(1, Relaxed)
-    }
+    // #[inline(always)]
+    // pub(crate) fn next_version(&self) -> Version {
+    //     self.version_counter.fetch_add(1, Relaxed)
+    // }
 
     #[inline(always)]
     pub(crate) fn lock_reader(&self, node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)

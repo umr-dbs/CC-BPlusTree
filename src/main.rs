@@ -1,8 +1,11 @@
 use std::{fs, mem};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
-use TXDataModel::page_model::block::Block;
+use TXDataModel::page_model::block::{Block, BlockGuard};
 use TXDataModel::page_model::{BlockID, LevelVariant};
+use TXDataModel::page_model::internal_page::InternalPage;
+use TXDataModel::page_model::leaf_page::LeafPage;
+use TXDataModel::page_model::node::Node;
 use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
 use crate::index::bplus_tree;
 // use crate::index::settings::{CONFIG_INI_PATH, init_from_config_ini, load_config};
@@ -16,12 +19,8 @@ mod test;
 mod locking;
 
 fn main() {
-    println!("{}", mem::size_of::<SmartFlavor<()>>() +
-        mem::size_of::<BlockID>() +
-        mem::align_of::<Block<0, 0, Key, Payload>>() +
-        16
-    );
-
+    // println!("{}", mem::size_of::<BlockGuard<0,0, Key, Payload>>()
+    // );
     make_splash();
 
     simple_test();
@@ -68,12 +67,14 @@ fn experiment() {
         3,
         4,
         8,
+        10,
+        12,
         16,
         24,
         32,
         64,
         128,
-        // 256,
+        256,
         // 512,
         // 1024,
     ];
@@ -94,16 +95,16 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
+        // 10_000_000,
         // 20_000_000,
         // 50_000_000,
-        // 100_000_000,
+        100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::LockCoupling);
+    strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -118,18 +119,20 @@ fn experiment() {
     // strategies.push(LockingStrategy::OLC(
     //     LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
     //
-    // strategies.push(LockingStrategy::OLC(
-    //     LevelConstraints::OptimisticLimit { attempts: 10, level: LevelVariant::new_height_lock(1_f32) }));
+    strategies.push(LockingStrategy::RWLockCoupling(
+        LevelVariant::new_height_lock(1 as _),
+        3));
+    //
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(0.8 as _),
+    //     2));
+
+    // strategies.push(LockingStrategy::OLC(LevelConstraints::OptimisticLimit {
+    //     attempts: 4,
+    //     level: LevelVariant::new_height_lock(1_f32),
+    // }));
 
     strategies.push(LockingStrategy::OLC(LevelConstraints::Unlimited));
-
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     4));
-
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     10));
 
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(1 as _),
@@ -141,8 +144,7 @@ fn experiment() {
         - Threads: \t\t{}\n\t\
         - Block Size: \t\t{} bytes\n\t\
         - Block Align-Size: \t{} bytes\n\t\
-        - Bsz Internal/Delta: \t{}/{} bytes\n\t\
-        - Bsz Leaf/Delta: \t{}/{} bytes\n\t\
+        - Block/Delta: \t\t{}/{} bytes\n\t\
         - Num Keys: \t\t{}\n\t\
         - Fan Out: \t\t{}\n\t\
         - Num Records: \t\t{}",
@@ -151,10 +153,8 @@ fn experiment() {
                              threads_cpu.iter().join(","),
                              BSZ_BASE,
                              bsz_alignment(),
-                             (FAN_OUT * 8 * 2 + 8 + bsz_alignment()),
-                             BSZ_BASE - (FAN_OUT * 8 * 2 + 8 + bsz_alignment()),
-                             (NUM_RECORDS * 16 + 2 + bsz_alignment()),
-                             BSZ_BASE - (NUM_RECORDS * 16 + 2 + bsz_alignment()),
+                             mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
+                             BSZ_BASE - mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
                              FAN_OUT - 1,
                              FAN_OUT,
                              NUM_RECORDS)

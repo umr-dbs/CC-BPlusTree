@@ -6,7 +6,7 @@ use std::hash::Hash;
 use std::time::SystemTime;
 use parking_lot::Mutex;
 use rand::RngCore;
-use TXDataModel::page_model::block::Block;
+use TXDataModel::page_model::block::{Block, BlockGuard};
 use TXDataModel::page_model::{BlockID, BlockRef};
 use TXDataModel::record_model::record_like::RecordLike;
 use TXDataModel::tx_model::transaction::Transaction;
@@ -77,7 +77,9 @@ pub const fn num_records(bsz: BlockSize) -> usize {
 pub const fn bsz_alignment() -> usize {
     mem::size_of::<BlockID>() +
         mem::size_of::<BlockRef<0, 0, Key, Payload>>() +
-        mem::align_of::<Block<0,0,Key, Payload>>() + 16 // wc + sc
+        mem::align_of::<Block<0,0,Key, Payload>>() +
+        16 + // wc + sc
+        mem::size_of::<BlockGuard<0,0, Key, Payload>>()
 }
 // const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
 // const NUM_RECORDS: usize    = BSZ / 16;

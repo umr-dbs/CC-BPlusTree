@@ -1,15 +1,13 @@
 use std::hash::Hash;
-use std::mem;
-use std::sync::Arc;
-use TXDataModel::page_model::{Attempts, BlockRef, Height, Level};
-use TXDataModel::page_model::block::{Block, BlockGuard, BlockGuardResult};
+use std::{mem, ptr};
+use std::mem::forget;
+use TXDataModel::page_model::{Attempts, Height, Level};
+use TXDataModel::page_model::block::BlockGuard;
 use TXDataModel::page_model::node::{Node, NodeUnsafeDegree};
 use TXDataModel::record_model::record_like::RecordLike;
-use TXDataModel::utils::cc_cell::CCCell;
-use TXDataModel::utils::hybrid_cell::{OptCell, sched_yield};
+use TXDataModel::utils::hybrid_cell::sched_yield;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
-
 
 const DEBUG: bool = false;
 
@@ -43,7 +41,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
-        -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
+                     -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
     {
         let is_olc = self.locking_strategy.is_olc();
         loop {
@@ -63,7 +61,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts)
-        -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
+                              -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
     {
         // let root
         //     = self.root.clone();
@@ -318,13 +316,14 @@ impl<const FAN_OUT: usize,
                     .deref_mut()
                     .unwrap();
 
-                parent_mut
-                    .children_mut()
-                    .insert(child_pos + 1, new_node_right.into_cell(olc));
+                let mut parent_children
+                    = parent_mut.children_mut();
 
-                *parent_mut
-                    .children_mut()
-                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc);
+                ptr::write(parent_children.get_unchecked_mut(child_pos),
+                           new_node_from.into_cell(olc));
+
+                parent_children
+                    .insert(child_pos + 1, new_node_right.into_cell(olc));
 
                 parent_mut
                     .keys_mut()
@@ -357,13 +356,14 @@ impl<const FAN_OUT: usize,
                     .deref_mut()
                     .unwrap();
 
-                 parent_mut
-                    .children_mut()
-                    .insert(child_pos + 1, new_node.into_cell(olc));
+                let mut parent_children
+                    = parent_mut.children_mut();
 
-                *parent_mut
-                    .children_mut()
-                    .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc);
+                ptr::write(parent_children.get_unchecked_mut(child_pos),
+                           new_node_from.into_cell(olc));
+
+                parent_children
+                    .insert(child_pos + 1, new_node.into_cell(olc));
 
                 parent_mut
                     .keys_mut()
@@ -400,9 +400,9 @@ impl<const FAN_OUT: usize,
             //         .children_mut()
             //         .insert(child_pos + 1, new_node.into_cell(olc));
             //
-            //     *parent_mut
+            //     mem::forget(*parent_mut
             //         .children_mut()
-            //         .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc);
+            //         .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc));
             //
             //     parent_mut
             //         .keys_mut()
@@ -413,7 +413,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
-        -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
+                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
     {
         let mut curr_level = INIT_TREE_HEIGHT;
 
@@ -435,10 +435,7 @@ impl<const FAN_OUT: usize,
                 return Err((curr_level - 1, attempt + 1));
             }
 
-            let current_ref
-                = current_guard_result.unwrap();
-
-            match current_ref.as_ref() {
+            match current_guard_result.unwrap().as_ref() {
                 Node::Index(index_page) => {
                     let keys = index_page.keys();
                     let children = index_page.children();
@@ -486,11 +483,8 @@ impl<const FAN_OUT: usize,
                         return Err((curr_level - 1, attempt + 1));
                     }
 
-                    let next_guard_result_ref
-                        = next_guard_result.unwrap();
-
                     let has_overflow_next
-                        = self.has_overflow(next_guard_result_ref);
+                        = self.has_overflow(next_guard_result.unwrap());
 
                     if has_overflow_next {
                         if self.locking_strategy.additional_lock_required() &&
@@ -529,13 +523,11 @@ impl<const FAN_OUT: usize,
                         current_guard = next_guard;
                     }
                 }
-                _ => {
-                    mem::drop(current_guard_result);
-
-                    if current_guard.upgrade_write_lock(){
-                        return Ok(current_guard)
-                    }
-                }
+                _ => return if current_guard.upgrade_write_lock() {
+                    Ok(current_guard)
+                } else {
+                    Err((curr_level - 1, attempt + 1))
+                },
                 // _ if current_guard.upgrade_write_lock() => return Ok(current_guard),
                 _ => return Err((curr_level - 1, attempt + 1))
             }
@@ -567,6 +559,9 @@ impl<const FAN_OUT: usize,
     fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         let root
             = self.root.get();
+
+        // let root
+        //     = self.root.clone();
 
         let mut current_guard
             = self.lock_reader(&root.block);

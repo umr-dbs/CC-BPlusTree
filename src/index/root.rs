@@ -4,7 +4,7 @@ use TXDataModel::page_model::{BlockID, BlockRef, Height};
 
 pub const LEVEL_ROOT: Height = 1;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Root<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,

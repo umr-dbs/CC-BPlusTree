@@ -1,6 +1,5 @@
 use std::hash::Hash;
-use std::mem;
-use std::sync::atomic::Ordering::Relaxed;
+use std::{mem, ptr};
 use TXDataModel::page_model::block::{Block, BlockGuard};
 use TXDataModel::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use TXDataModel::record_model::{AtomicVersion, Version};
@@ -69,10 +68,13 @@ impl<const FAN_OUT: usize,
 {
     #[inline(always)]
     pub(crate) fn set_new_root(&self, new_root: Block<FAN_OUT, NUM_RECORDS, Key, Payload>, new_height: Height) {
-        let _ = mem::replace(
-            self.root.block.unsafe_borrow_mut(),
-            new_root,
-        );
+        unsafe {
+            ptr::write(self.root.block.unsafe_borrow_mut(), new_root);
+        }
+        // let _ = mem::replace(
+        //     self.root.block.unsafe_borrow_mut(),
+        //     new_root,
+        // );
 
         self.root.get_mut().height = new_height;
     }

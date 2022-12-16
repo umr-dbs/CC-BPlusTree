@@ -10,6 +10,7 @@ use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
 use crate::index::bplus_tree;
 // use crate::index::settings::{CONFIG_INI_PATH, init_from_config_ini, load_config};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::locking::locking_strategy::LockingStrategy::MonoWriter;
 use crate::test::{beast_test, BSZ, bsz_alignment, BSZ_BASE, EXE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test, simple_test2};
 
 mod index;
@@ -19,7 +20,8 @@ mod test;
 mod locking;
 
 fn main() {
-    // println!("{}", mem::size_of::<BlockGuard<0,0, Key, Payload>>()
+    // println!("{}", mem::align_of::<Block<0,0,Key, Payload>>() +
+    //           16
     // );
     make_splash();
 
@@ -62,7 +64,7 @@ fn experiment() {
     let cpu_threads = true;
     // test::show_bsz_alignment();
     let threads_cpu = vec![
-        1,
+        // 1,
         2,
         3,
         4,
@@ -92,13 +94,13 @@ fn experiment() {
         // 1_000,
         // 10_000,
         // 100_000,
-        // 1_000_000,
+        1_000_000,
         // 2_000_000,
         // 5_000_000,
         // 10_000_000,
         // 20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
@@ -119,18 +121,18 @@ fn experiment() {
     // strategies.push(LockingStrategy::OLC(
     //     LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
     //
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     3));
+    strategies.push(LockingStrategy::RWLockCoupling(
+        LevelVariant::new_height_lock(1 as _),
+        4));
     //
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(0.8 as _),
     //     2));
 
-    strategies.push(LockingStrategy::OLC(LevelConstraints::OptimisticLimit {
-        attempts: 4,
-        level: LevelVariant::new_height_lock(1_f32),
-    }));
+    // strategies.push(LockingStrategy::OLC(LevelConstraints::OptimisticLimit {
+    //     attempts: 4,
+    //     level: LevelVariant::new_height_lock(1_f32),
+    // }));
 
     strategies.push(LockingStrategy::OLC(LevelConstraints::Unlimited));
 

@@ -78,8 +78,8 @@ pub const fn bsz_alignment() -> usize {
     mem::size_of::<BlockID>() +
         mem::size_of::<BlockRef<0, 0, Key, Payload>>() +
         mem::align_of::<Block<0,0,Key, Payload>>() +
-        16 + // wc + sc
-        mem::size_of::<BlockGuard<0,0, Key, Payload>>()
+        16 // + // wc + sc
+        // mem::size_of::<BlockGuard<0,0, Key, Payload>>()
 }
 // const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
 // const NUM_RECORDS: usize    = BSZ / 16;

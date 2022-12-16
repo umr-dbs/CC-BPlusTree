@@ -318,7 +318,7 @@ impl<const FAN_OUT: usize,
                 let mut parent_children
                     = parent_mut.children_mut();
 
-                if olc {
+                if !self.locking_strategy.is_mono_writer() {
                     mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
                               new_node_from.into_olc()))
                 } else {
@@ -363,7 +363,7 @@ impl<const FAN_OUT: usize,
                 let mut parent_children
                     = parent_mut.children_mut();
 
-                if olc {
+                if !self.locking_strategy.is_mono_writer() {
                     mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
                                            new_node_from.into_olc()))
                 } else {

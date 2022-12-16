@@ -72,9 +72,26 @@ impl LockingStrategy {
         }
     }
 
+    #[inline(always)]
     pub(crate) const fn is_olc(&self) -> bool {
         match self {
             Self::OLC(_) => true,
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_mono_writer(&self) -> bool {
+        match self {
+            Self::MonoWriter => true,
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_read_write_lock(&self) -> bool {
+        match self {
+            Self::RWLockCoupling(..) => true,
             _ => false
         }
     }
@@ -105,6 +122,7 @@ impl LockingStrategy {
             height)
     }
 
+    #[inline(always)]
     pub fn is_lock(
         &self,
         curr_level: Level,

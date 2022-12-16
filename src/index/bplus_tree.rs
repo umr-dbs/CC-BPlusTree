@@ -68,15 +68,16 @@ impl<const FAN_OUT: usize,
 {
     #[inline(always)]
     pub(crate) fn set_new_root(&self, new_root: Block<FAN_OUT, NUM_RECORDS, Key, Payload>, new_height: Height) {
-        unsafe {
-            ptr::write(self.root.block.unsafe_borrow_mut(), new_root);
-        }
-        // let _ = mem::replace(
-        //     self.root.block.unsafe_borrow_mut(),
-        //     new_root,
-        // );
+        // unsafe {
+        //     ptr::write(self.root.block.unsafe_borrow_mut(), new_root);
+        // }
 
         self.root.get_mut().height = new_height;
+
+        mem::drop(mem::replace(
+            self.root.block.unsafe_borrow_mut(),
+            new_root,
+        ));
     }
 
     pub fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>, locking_strategy: LockingStrategy) -> Self {

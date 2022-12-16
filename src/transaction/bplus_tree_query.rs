@@ -1,6 +1,5 @@
 use std::hash::Hash;
 use std::{mem, ptr};
-use std::mem::forget;
 use TXDataModel::page_model::{Attempts, Height, Level};
 use TXDataModel::page_model::block::BlockGuard;
 use TXDataModel::page_model::node::{Node, NodeUnsafeDegree};
@@ -319,8 +318,13 @@ impl<const FAN_OUT: usize,
                 let mut parent_children
                     = parent_mut.children_mut();
 
-                ptr::write(parent_children.get_unchecked_mut(child_pos),
-                           new_node_from.into_cell(olc));
+                if olc {
+                    mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
+                              new_node_from.into_olc()))
+                } else {
+                    ptr::write(parent_children.get_unchecked_mut(child_pos),
+                               new_node_from.into_cc())
+                }
 
                 parent_children
                     .insert(child_pos + 1, new_node_right.into_cell(olc));
@@ -359,8 +363,13 @@ impl<const FAN_OUT: usize,
                 let mut parent_children
                     = parent_mut.children_mut();
 
-                ptr::write(parent_children.get_unchecked_mut(child_pos),
-                           new_node_from.into_cell(olc));
+                if olc {
+                    mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
+                                           new_node_from.into_olc()))
+                } else {
+                    ptr::write(parent_children.get_unchecked_mut(child_pos),
+                               new_node_from.into_cc());
+                }
 
                 parent_children
                     .insert(child_pos + 1, new_node.into_cell(olc));

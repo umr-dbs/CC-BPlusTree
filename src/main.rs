@@ -119,18 +119,18 @@ fn experiment() {
     // strategies.push(LockingStrategy::OLC(
     //     LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
     //
-    strategies.push(LockingStrategy::RWLockCoupling(
-        LevelVariant::new_height_lock(1 as _),
-        3));
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(1 as _),
+    //     3));
     //
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(0.8 as _),
     //     2));
 
-    // strategies.push(LockingStrategy::OLC(LevelConstraints::OptimisticLimit {
-    //     attempts: 4,
-    //     level: LevelVariant::new_height_lock(1_f32),
-    // }));
+    strategies.push(LockingStrategy::OLC(LevelConstraints::OptimisticLimit {
+        attempts: 4,
+        level: LevelVariant::new_height_lock(1_f32),
+    }));
 
     strategies.push(LockingStrategy::OLC(LevelConstraints::Unlimited));
 

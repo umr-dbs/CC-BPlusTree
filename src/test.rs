@@ -97,7 +97,7 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 pub const MAKE_INDEX_MULTI: fn(LockingStrategy) -> INDEX
 = INDEX::new_multi_version_for;
 
-pub const EXE_LOOK_UPS: bool = false;
+pub const EXE_LOOK_UPS: bool = true;
 
 pub fn log_debug_ln(s: String) {
     println!("> {}", s.replace("\n", "\n>"))
@@ -275,16 +275,18 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
 
         handles.push(thread::spawn(move || current_chunk.into_inner().into_iter().for_each(|next_query| {
             match index.execute(next_query) { // index.execute(transaction),
-                TransactionResult::Inserted(key, version) |
-                TransactionResult::Updated(key, version) => if EXE_LOOK_UPS
+                TransactionResult::Inserted(key, ..) |
+                TransactionResult::Updated(key, ..) => if EXE_LOOK_UPS
                 {
                     // loop {
-                    match index.execute(Transaction::Point(key, version)) {
+                    match index.execute(Transaction::Point(key, None)) {
                         TransactionResult::MatchedRecord(Some(record))
                         if record.key() == key => {}//,
+                        // TransactionResult::MatchedRecordVersioned(Some(record))
+                        // if record.key() == key => {}//,
                         joe => { //  if !index.locking_strategy().is_dolos()
                             log_debug_ln(format!("\nERROR Search -> Transaction::{}",
-                                                 Transaction::<Key, Payload>::Point(key, version)));
+                                                 Transaction::<_, Payload>::Point(key, None)));
                             log_debug_ln(format!("\n****ERROR: {}, TransactionResult::{}", index.locking_strategy, joe));
                             panic!()
                         }

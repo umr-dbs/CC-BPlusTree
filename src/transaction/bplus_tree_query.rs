@@ -320,10 +320,10 @@ impl<const FAN_OUT: usize,
 
                 if !self.locking_strategy.is_mono_writer() {
                     mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
-                              new_node_from.into_olc()))
+                              new_node_from.into_cell(olc)))
                 } else {
                     ptr::write(parent_children.get_unchecked_mut(child_pos),
-                               new_node_from.into_cc())
+                               new_node_from.into_cell(olc))
                 }
 
                 parent_children
@@ -365,10 +365,10 @@ impl<const FAN_OUT: usize,
 
                 if !self.locking_strategy.is_mono_writer() {
                     mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
-                                           new_node_from.into_olc()))
+                                           new_node_from.into_cell(olc)))
                 } else {
                     ptr::write(parent_children.get_unchecked_mut(child_pos),
-                               new_node_from.into_cc());
+                               new_node_from.into_cell(olc));
                 }
 
                 parent_children
@@ -454,7 +454,7 @@ impl<const FAN_OUT: usize,
                         .enumerate()
                         .find(|(_, k)| key.lt(k))
                         .map(|(pos, _)| (children.get(pos).cloned(), pos))
-                        .unwrap_or_else(|| (children.get(keys.len()).cloned(), keys.len()));
+                        .unwrap_or_else(|| (children.last().cloned(), keys.len()));
 
                     if next_node.is_none() || !current_guard.is_valid() {
                         mem::drop(next_node);
@@ -595,7 +595,7 @@ impl<const FAN_OUT: usize,
                         .enumerate()
                         .find(|(_, k)| key.lt(k))
                         .map(|(pos, _)| children.get(pos).cloned())
-                        .unwrap_or_else(|| children.get(children.len() - 1).cloned());
+                        .unwrap_or_else(|| children.last().cloned());
 
                     if next_node.is_none() || !current_guard.is_valid() {
                         return None;

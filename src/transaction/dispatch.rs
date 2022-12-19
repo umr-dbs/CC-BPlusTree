@@ -1,7 +1,9 @@
 use std::borrow::BorrowMut;
 use std::hash::Hash;
 use std::{mem, ptr};
+use std::ptr::null;
 use TXDataModel::page_model::Attempts;
+use TXDataModel::page_model::block::Block;
 use TXDataModel::page_model::node::Node;
 use TXDataModel::record_model::record::Record;
 use TXDataModel::record_model::record_like::RecordLike;
@@ -10,7 +12,8 @@ use TXDataModel::record_model::unsafe_clone::UnsafeClone;
 use TXDataModel::record_model::Version;
 use TXDataModel::tx_model::transaction::Transaction;
 use TXDataModel::tx_model::transaction_result::TransactionResult;
-use TXDataModel::utils::hybrid_cell::sched_yield;
+use TXDataModel::utils::hybrid_cell::{OBSOLETE_FLAG_VERSION, sched_yield, WRITE_FLAG_VERSION, WRITE_OBSOLETE_FLAG_VERSION};
+use TXDataModel::utils::smart_cell::SmartGuard;
 use crate::index::bplus_tree::BPlusTree;
 
 impl<const FAN_OUT: usize,
@@ -77,76 +80,86 @@ impl<const FAN_OUT: usize,
                     .then(|| TransactionResult::Updated(key, None))
                     .unwrap_or_default()
             }
-            Transaction::Point(key, version) if self.locking_strategy.is_olc() => unsafe {
-                let guard
-                    = self.traversal_read(key);
-
-                let reader = guard
-                    .deref_unsafe()
-                    .unwrap();
-
-                let mut attempts: Attempts = 0;
-
-                loop {
-                    let reader_cell_version
-                        = guard.read_cell_version_as_reader();
-
-                    let maybe_record = match reader.as_ref() {
-                        Node::Leaf(event_page) => event_page
-                            .as_records()
-                            .iter()
-                            .skip_while(|event| event.key() != key)
-                            .next()
-                            .map(|event| event.unsafe_clone())
-                            .map(|event| Record::new(event.key(), event.payload, Version::MIN)),
-                        // Node::MultiVersionLeaf(leaf_page) => leaf_page
-                        //     .as_records()
-                        //     .iter()
-                        //     .find(|record_list| record_list.key() == key)
-                        //     .map(|version_list| version_list
-                        //         .payload(version)
-                        //         .map(|found| Record::new(
-                        //             version_list.key,
-                        //             found.payload,
-                        //             found.version_info.insertion_version())))
-                        //     .unwrap_or_default(),
-                        _ => None
-                    };
-
-                    if guard.match_cell_version(reader_cell_version) {
-                        break maybe_record.into();
-                    } else {
-                        maybe_record.map(|mut inner|
-                            ptr::write(&mut inner.payload, Payload::default()));
-
-                        attempts += 1;
-                        sched_yield(attempts)
-                    }
-                }
-            }
+            // Transaction::Point(key, version) if self.locking_strategy.is_olc() => unsafe {
+            //     let guard
+            //         = self.traversal_read(key);
+            //
+            //     let reader = guard
+            //         .deref_unsafe()
+            //         .unwrap();
+            //
+            //     let mut attempts: Attempts = 0;
+            //
+            //     loop {
+            //         let reader_cell_version
+            //             = guard.read_cell_version_as_reader();
+            //
+            //         let maybe_record = match reader.as_ref() {
+            //             Node::Leaf(event_page) => event_page
+            //                 .as_records()
+            //                 .iter()
+            //                 .skip_while(|event| event.key() != key)
+            //                 .next()
+            //                 .map(|event| event.unsafe_clone())
+            //                 .map(|event| Record::new(event.key(), event.payload, Version::MIN)),
+            //             // Node::MultiVersionLeaf(leaf_page) => leaf_page
+            //             //     .as_records()
+            //             //     .iter()
+            //             //     .find(|record_list| record_list.key() == key)
+            //             //     .map(|version_list| version_list
+            //             //         .payload(version)
+            //             //         .map(|found| Record::new(
+            //             //             version_list.key,
+            //             //             found.payload,
+            //             //             found.version_info.insertion_version())))
+            //             //     .unwrap_or_default(),
+            //             _ => None
+            //         };
+            //
+            //         if guard.match_cell_version(reader_cell_version) {
+            //             break maybe_record.into();
+            //         } else {
+            //             maybe_record.map(|mut inner|
+            //                 ptr::write(&mut inner.payload, Payload::default()));
+            //
+            //             attempts += 1;
+            //             sched_yield(attempts)
+            //         }
+            //     }
+            // }
             Transaction::Point(key, None) if self.locking_strategy.is_olc() => unsafe {
                 let guard
                     = self.traversal_read(key);
 
                 let reader = guard
-                    .deref_unsafe()
-                    .unwrap();
+                    .deref();
 
-                let mut attempts: Attempts = 0;
+                if reader.is_none() {
+                    return self.execute(Transaction::Point(key, None));
+                }
+
+                let reader
+                    = reader.unwrap();
 
                 loop {
                     let reader_cell_version
-                        = guard.read_cell_version_as_reader();
+                        = guard.cell_version_olc();
+
+                    if reader_cell_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+                        mem::drop(guard);
+
+                        return self.execute(Transaction::Point(key, None));
+                    }
 
                     let maybe_record = match reader.as_ref() {
                         Node::Leaf(records) => records
                             .as_records()
-                            .iter()
-                            .rev()
-                            .skip_while(|event| event.key() != key)
-                            .next()
-                            .map(|event| event.unsafe_clone())
-                            .map(|event| Record::new(event.key(), event.payload, Version::MIN)),
+                            .binary_search_by_key(&key, |record_point| record_point.key)
+                            .ok()
+                            .map(|pos| records
+                                .as_records()
+                                .get_unchecked(pos)
+                                .unsafe_clone()),
                         // Node::MultiVersionLeaf(leaf_page) => leaf_page
                         //     .as_records()
                         //     .iter()
@@ -160,18 +173,18 @@ impl<const FAN_OUT: usize,
                         _ => None
                     };
 
-                    if guard.match_cell_version(reader_cell_version) {
+                    if guard.cell_version_olc() == reader_cell_version {
+                        mem::drop(guard);
                         break maybe_record.into();
                     } else {
-                        maybe_record.map(|mut inner|
-                            ptr::write(&mut inner.payload, Payload::default()));
+                        mem::drop(guard);
+                        mem::forget(maybe_record);
 
-                        attempts += 1;
-                        sched_yield(attempts)
+                        return self.execute(Transaction::Point(key, None));
                     }
                 }
             }
-            Transaction::Point(key, version) => {
+            Transaction::Point(key, None) => unsafe {
                 let guard
                     = self.traversal_read(key);
 
@@ -182,12 +195,9 @@ impl<const FAN_OUT: usize,
                 match reader.as_ref() {
                     Node::Leaf(leaf_page) => leaf_page
                         .as_records()
-                        .iter()
-                        .skip_while(|event| event.key() != key)
-                        .next()
-                        .map(|record_point| RecordPoint::new(
-                            record_point.key(),
-                            record_point.payload.clone()))
+                        .binary_search_by_key(&key, |record| record.key)
+                        .ok()
+                        .map(|pos| leaf_page.as_records().get_unchecked(pos).clone())
                         .into(),
                     // Node::MultiVersionLeaf(leaf_page) => leaf_page
                     //     .as_records()

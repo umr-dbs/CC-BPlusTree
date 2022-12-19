@@ -91,10 +91,10 @@ fn experiment() {
     let insertions: Vec<Key> = vec![
         // 10,
         // 100,
-        // 1_000,
-        // 10_000,
-        // 100_000,
-        1_000_000,
+        1_000,
+        10_000,
+        100_000,
+        // 1_000_000,
         // 2_000_000,
         // 5_000_000,
         // 10_000_000,
@@ -106,7 +106,7 @@ fn experiment() {
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::LockCoupling);
+    // strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));

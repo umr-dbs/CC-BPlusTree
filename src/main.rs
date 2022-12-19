@@ -64,7 +64,7 @@ fn experiment() {
     let cpu_threads = true;
     // test::show_bsz_alignment();
     let threads_cpu = vec![
-        // 1,
+        1,
         2,
         3,
         4,
@@ -91,22 +91,22 @@ fn experiment() {
     let insertions: Vec<Key> = vec![
         // 10,
         // 100,
-        1_000,
-        10_000,
-        100_000,
+        // 1_000,
+        // 10_000,
+        // 100_000,
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
         // 10_000_000,
         // 20_000_000,
         // 50_000_000,
-        // 100_000_000,
+        100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::LockCoupling);
+    strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));

@@ -318,16 +318,16 @@ impl<const FAN_OUT: usize,
                 let mut parent_children
                     = parent_mut.children_mut();
 
-                if !self.locking_strategy.is_mono_writer() && !self.locking_strategy.is_read_write_lock() {
-                    mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
-                              new_node_from.into_cell(olc)))
-                } else {
-                    ptr::write(parent_children.get_unchecked_mut(child_pos),
-                               new_node_from.into_cell(olc))
-                }
-
                 parent_children
                     .insert(child_pos + 1, new_node_right.into_cell(olc));
+
+                // if !self.locking_strategy.is_mono_writer() {
+                mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
+                                       new_node_from.into_cell(olc)));
+                // } else {
+                //     ptr::write(parent_children.get_unchecked_mut(child_pos),
+                //                new_node_from.into_cell(olc))
+                // }
 
                 parent_mut
                     .keys_mut()
@@ -363,16 +363,16 @@ impl<const FAN_OUT: usize,
                 let mut parent_children
                     = parent_mut.children_mut();
 
-                if !self.locking_strategy.is_mono_writer() && !self.locking_strategy.is_read_write_lock() {
-                    mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
-                                           new_node_from.into_cell(olc)))
-                } else {
-                    ptr::write(parent_children.get_unchecked_mut(child_pos),
-                               new_node_from.into_cell(olc));
-                }
-
                 parent_children
                     .insert(child_pos + 1, new_node.into_cell(olc));
+
+                // if !self.locking_strategy.is_mono_writer() {
+                mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
+                                       new_node_from.into_cell(olc)));
+                // } else {
+                //     ptr::write(parent_children.get_unchecked_mut(child_pos),
+                //                new_node_from.into_cell(olc));
+                // }
 
                 parent_mut
                     .keys_mut()

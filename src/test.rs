@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use parking_lot::Mutex;
 use rand::RngCore;
 use TXDataModel::page_model::block::{Block, BlockGuard};
-use TXDataModel::page_model::{BlockID, BlockRef};
+use TXDataModel::page_model::{BlockID, BlockRef, ObjectCount};
 use TXDataModel::record_model::record_like::RecordLike;
 use TXDataModel::tx_model::transaction::Transaction;
 use TXDataModel::tx_model::transaction_result::TransactionResult;
@@ -75,10 +75,11 @@ pub const fn num_records(bsz: BlockSize) -> usize {
 }
 
 pub const fn bsz_alignment() -> usize {
-    mem::size_of::<BlockID>() +
-        mem::size_of::<BlockRef<0, 0, Key, Payload>>() +
-        mem::align_of::<Block<0,0,Key, Payload>>() +
-        16 // + // wc + sc
+        mem::size_of::<BlockID>() +
+        mem::size_of::<BlockRef<0, 0, Key, Payload>>() + // ptr alignment size
+        mem::align_of::<Block<0,0,Key, Payload>>() + // alignment for block
+        mem::size_of::<ObjectCount>() //+ // extra sized counter for num records in leaf blocks
+        // 16 // + // (wc + sc) per block ref
         // mem::size_of::<BlockGuard<0,0, Key, Payload>>()
 }
 // const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
@@ -97,7 +98,7 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 pub const MAKE_INDEX_MULTI: fn(LockingStrategy) -> INDEX
 = INDEX::new_multi_version_for;
 
-pub const EXE_LOOK_UPS: bool = true;
+pub const EXE_LOOK_UPS: bool = false;
 
 pub fn log_debug_ln(s: String) {
     println!("> {}", s.replace("\n", "\n>"))

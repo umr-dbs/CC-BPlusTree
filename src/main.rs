@@ -24,12 +24,29 @@ fn main() {
     //           16
     // );
     make_splash();
-
-    simple_test();
+    show_alignment_bsz();
+    // simple_test();
     // simple_test2();
     experiment();
     //
     // experiment2();
+}
+
+fn show_alignment_bsz() {
+    log_debug_ln(format!("\t- Block Size: \t\t{} bytes\n\t\
+        - Block Align-Size: \t{} bytes\n\t\
+        - Block/Delta: \t\t{}/{} bytes\n\t\
+        - Num Keys: \t\t{}\n\t\
+        - Fan Out: \t\t{}\n\t\
+        - Num Records: \t\t{}\n",
+                         BSZ_BASE,
+                         bsz_alignment(),
+                         mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
+                         BSZ_BASE - mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
+                         FAN_OUT - 1,
+                         FAN_OUT,
+                         NUM_RECORDS)
+    );
 }
 
 /// Essential function.
@@ -143,24 +160,10 @@ fn experiment() {
     insertions.iter().enumerate().for_each(|(i, insertion)| {
         log_debug_ln(format!("# {}\n\t\
         - Records: \t\t{}\n\t\
-        - Threads: \t\t{}\n\t\
-        - Block Size: \t\t{} bytes\n\t\
-        - Block Align-Size: \t{} bytes\n\t\
-        - Block/Delta: \t\t{}/{} bytes\n\t\
-        - Num Keys: \t\t{}\n\t\
-        - Fan Out: \t\t{}\n\t\
-        - Num Records: \t\t{}",
+        - Threads: \t\t{}",
                              i + 1,
                              format_insertsions(*insertion),
-                             threads_cpu.iter().join(","),
-                             BSZ_BASE,
-                             bsz_alignment(),
-                             mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
-                             BSZ_BASE - mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
-                             FAN_OUT - 1,
-                             FAN_OUT,
-                             NUM_RECORDS)
-        );
+                             threads_cpu.iter().join(",")));
 
         log_debug(format!("\t- Strategy:"));
         if threads_cpu.contains(&1) {

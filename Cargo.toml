@@ -1,6 +1,6 @@
 [package]
 name = "CCBPlusTree"
-version = "0.0.48"
+version = "0.0.49"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "Experimental Concurrency Control B+Tree single versioned and versioned via version lists Implementation"
@@ -12,8 +12,8 @@ repository = "https://github.com/umr-dbs/CC-BPlusTree"
 TXDataModel = { path = "../TXDataModel" }
 chrono = "0.4.23"
 rand = "0.8.5"
-num_cpus = "1.14"
+num_cpus = "1.15"
 itertools = "0.10.5"
 parking_lot = "0.12.1"
-serde = { version ="1.0.150", features = ["derive", "rc"] }
-serde_json = { version = "1.0.89" }
+serde = { version ="1.0.152", features = ["derive", "rc"] }
+serde_json = { version = "1.0.91" }

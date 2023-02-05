@@ -8,80 +8,22 @@ use parking_lot::Mutex;
 use rand::RngCore;
 use TXDataModel::page_model::block::{Block, BlockGuard};
 use TXDataModel::page_model::{BlockID, BlockRef, ObjectCount};
-use TXDataModel::record_model::record_like::RecordLike;
+// use TXDataModel::record_model::record_like::RecordLike;
 use TXDataModel::tx_model::transaction::Transaction;
 use TXDataModel::tx_model::transaction_result::TransactionResult;
 use TXDataModel::utils::cc_cell::CCCell;
 use TXDataModel::utils::safe_cell::SafeCell;
 use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
+use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::locking::locking_strategy::LockingStrategy;
 
-const _1KB: usize   = 1024;
-const _2KB: usize   = 2 * _1KB;
-const _4KB: usize   = 4 * _1KB;
-const _8KB: usize   = 8 * _1KB;
-const _16KB: usize  = 16 * _1KB;
-const _32KB: usize  = 32 * _1KB;
 
 pub const BSZ_BASE: usize       = _4KB;
-pub const BSZ: usize            = BSZ_BASE - bsz_alignment();
+pub const BSZ: usize            = BSZ_BASE - bsz_alignment::<Key, Payload>();
 pub const FAN_OUT: usize        = BSZ / 8 / 2;
 pub const NUM_RECORDS: usize    = (BSZ - 2) / (8 + 8);
 
-pub enum BlockSize {
-    _1KB,
-    _2KB,
-    _4KB,
-    _8KB,
-    _16KB,
-    _32KB
-}
-
-impl Display for BlockSize {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} kb", match self {
-            BlockSize::_1KB => "1",
-            BlockSize::_2KB => "2",
-            BlockSize::_4KB => "4",
-            BlockSize::_8KB => "8",
-            BlockSize::_16KB => "16",
-            BlockSize::_32KB => "32",
-        })
-    }
-}
-
-
-pub const fn fan_out(bsz: BlockSize) -> usize {
-    ((match bsz {
-        BlockSize::_1KB => _1KB,
-        BlockSize::_2KB => _2KB,
-        BlockSize::_4KB => _4KB,
-        BlockSize::_8KB => _8KB,
-        BlockSize::_16KB => _16KB,
-        BlockSize::_32KB => _32KB,
-    }) - 2) / (8 + 8)
-}
-
-pub const fn num_records(bsz: BlockSize) -> usize {
-    (match bsz {
-        BlockSize::_1KB => _1KB,
-        BlockSize::_2KB => _2KB,
-        BlockSize::_4KB => _4KB,
-        BlockSize::_8KB => _8KB,
-        BlockSize::_16KB => _16KB,
-        BlockSize::_32KB => _32KB,
-    }) / 8 / 2
-}
-
-pub const fn bsz_alignment() -> usize {
-        mem::size_of::<BlockID>() +
-        mem::size_of::<BlockRef<0, 0, Key, Payload>>() + // ptr alignment size
-        mem::align_of::<Block<0,0,Key, Payload>>() + // alignment for block
-        mem::size_of::<ObjectCount>() //+ // extra sized counter for num records in leaf blocks
-        // 16 // + // (wc + sc) per block ref
-        // mem::size_of::<BlockGuard<0,0, Key, Payload>>()
-}
 // const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
 // const NUM_RECORDS: usize    = BSZ / 16;
 // const FAN_OUT: usize        = 3*256;
@@ -157,21 +99,21 @@ pub fn simple_test() {
         log_debug_ln(format!("############################################\
         ###########################################################"));
 
-        let (key, version) = match tree.execute(tx) {
-            TransactionResult::Inserted(key, version) => {
-                log_debug_ln(format!("Ingest: {}", TransactionResult::<Key, Payload>::Inserted(key, version)));
-                (key, version)
+        let key = match tree.execute(tx) {
+            TransactionResult::Inserted(key) => {
+                log_debug_ln(format!("Ingest: {}", TransactionResult::<Key, Payload>::Inserted(key)));
+                key
             }
-            TransactionResult::Updated(key, version) => {
-                log_debug_ln(format!("Ingest: {}", TransactionResult::<Key, Payload>::Updated(key, version)));
-                (key, version)
+            TransactionResult::Updated(key, payload) => {
+                log_debug_ln(format!("Ingest: {}", TransactionResult::<Key, Payload>::Updated(key, payload)));
+                key
             }
             joe => panic!("Sleepy Joe -> TransactionResult::{}", joe)
         };
 
         let search = vec![
-            Transaction::Point(key, None),
-            Transaction::Point(key, version),
+            Transaction::Point(key),
+            Transaction::Point(key),
             // Transaction::RangeSearch((key..=key).into(), version),
         ];
 
@@ -280,14 +222,14 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
                 TransactionResult::Updated(key, ..) => if EXE_LOOK_UPS
                 {
                     // loop {
-                    match index.execute(Transaction::Point(key, None)) {
+                    match index.execute(Transaction::Point(key)) {
                         TransactionResult::MatchedRecord(Some(record))
-                        if record.key() == key => {}//,
+                        if record.key == key => {}//,
                         // TransactionResult::MatchedRecordVersioned(Some(record))
                         // if record.key() == key => {}//,
                         joe => { //  if !index.locking_strategy().is_dolos()
                             log_debug_ln(format!("\nERROR Search -> Transaction::{}",
-                                                 Transaction::<_, Payload>::Point(key, None)));
+                                                 Transaction::<_, Payload>::Point(key)));
                             log_debug_ln(format!("\n****ERROR: {}, TransactionResult::{}", index.locking_strategy, joe));
                             panic!()
                         }
@@ -373,16 +315,16 @@ pub fn beast_test2<
 
             match next_query {
                 Some(query) => match index.execute(query) { // index.execute(transaction),
-                    TransactionResult::Inserted(key, version) |
-                    TransactionResult::Updated(key, version) => if EXE_LOOK_UPS
+                    TransactionResult::Inserted(key) |
+                    TransactionResult::Updated(key, ..) => if EXE_LOOK_UPS
                     {
-                        match index.execute(Transaction::Point(key, version)) {
+                        match index.execute(Transaction::Point(key)) {
                             TransactionResult::MatchedRecord(Some(record))
-                            if record.key() == key =>
+                            if record.key == key =>
                                 {}
                             joe => {
                                 log_debug_ln(format!("\nERROR Search -> Transaction::{}",
-                                                     Transaction::<Key, Payload>::Point(key, version)));
+                                                     Transaction::<Key, Payload>::Point(key)));
                                 log_debug_ln(format!("\n****ERROR: {}, {}", index.locking_strategy, joe));
                                 panic!()
                             }
@@ -459,7 +401,7 @@ fn experiment2() {
 
     let index = index_o.unsafe_borrow();
     for key in data {
-        match index.execute(Transaction::Point(key, None)) {
+        match index.execute(Transaction::Point(key)) {
             TransactionResult::MatchedRecord(Some(..)) => {}
             joe => println!("ERROR: {}", joe)
         }

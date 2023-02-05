@@ -3,7 +3,7 @@ use std::{mem, ptr};
 use TXDataModel::page_model::{Attempts, Height, Level};
 use TXDataModel::page_model::block::BlockGuard;
 use TXDataModel::page_model::node::{Node, NodeUnsafeDegree};
-use TXDataModel::record_model::record_like::RecordLike;
+// use TXDataModel::record_model::record_like::RecordLike;
 use TXDataModel::utils::hybrid_cell::sched_yield;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
@@ -194,7 +194,7 @@ impl<const FAN_OUT: usize,
 
                 let k3 = records
                     .get_unchecked(records_mid)
-                    .key();
+                    .key;
 
                 let new_node_right
                     = self.block_manager.new_empty_leaf_single_version_block();
@@ -340,7 +340,7 @@ impl<const FAN_OUT: usize,
                 let records_mid = records.len() / 2;
                 let k3 = records
                     .get_unchecked(records_mid)
-                    .key();
+                    .key;
 
                 let new_node
                     = self.block_manager.new_empty_leaf_single_version_block();

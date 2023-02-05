@@ -5,8 +5,8 @@ use std::ptr::null;
 use TXDataModel::page_model::Attempts;
 use TXDataModel::page_model::block::Block;
 use TXDataModel::page_model::node::Node;
-use TXDataModel::record_model::record::Record;
-use TXDataModel::record_model::record_like::RecordLike;
+// use TXDataModel::record_model::record::Record;
+// use TXDataModel::record_model::record_like::RecordLike;
 use TXDataModel::record_model::record_point::RecordPoint;
 use TXDataModel::record_model::unsafe_clone::UnsafeClone;
 use TXDataModel::record_model::Version;
@@ -24,14 +24,14 @@ impl<const FAN_OUT: usize,
 {
     pub fn execute(&self, transaction: Transaction<Key, Payload>) -> TransactionResult<Key, Payload> {
         match transaction {
-            Transaction::Delete(key, version) => {
+            Transaction::Delete(key) => {
                 let guard
                     = self.traversal_write(key);
 
                 guard.deref_mut()
                     .unwrap()
-                    .delete_key(key, version)
-                    .then(|| TransactionResult::Deleted(key, version))
+                    .delete_key(key)
+                    .map(|payload| TransactionResult::Deleted(key, payload))
                     .unwrap_or_default()
             }
             // Transaction::Insert(key, payload) if self.block_manager.is_multi_version => {
@@ -54,7 +54,7 @@ impl<const FAN_OUT: usize,
                 guard.deref_mut()
                     .unwrap()
                     .push_record_point(key, payload)
-                    .then(|| TransactionResult::Inserted(key, None))
+                    .then(|| TransactionResult::Inserted(key))
                     .unwrap_or_default()
             }
             // Transaction::Update(key, payload) if self.block_manager.is_multi_version => {
@@ -77,7 +77,7 @@ impl<const FAN_OUT: usize,
                 guard.deref_mut()
                     .unwrap()
                     .update_record_point(key, payload)
-                    .then(|| TransactionResult::Updated(key, None))
+                    .map(|old| TransactionResult::Updated(key, old))
                     .unwrap_or_default()
             }
             // Transaction::Point(key, version) if self.locking_strategy.is_olc() => unsafe {
@@ -127,7 +127,7 @@ impl<const FAN_OUT: usize,
             //         }
             //     }
             // }
-            Transaction::Point(key, None) if self.locking_strategy.is_olc() => unsafe {
+            Transaction::Point(key) if self.locking_strategy.is_olc() => unsafe {
                 let guard
                     = self.traversal_read(key);
 
@@ -135,7 +135,7 @@ impl<const FAN_OUT: usize,
                     .deref();
 
                 if reader.is_none() {
-                    return self.execute(Transaction::Point(key, None));
+                    return self.execute(Transaction::Point(key));
                 }
 
                 let reader
@@ -148,7 +148,7 @@ impl<const FAN_OUT: usize,
                     if reader_cell_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
                         mem::drop(guard);
 
-                        return self.execute(Transaction::Point(key, None));
+                        return self.execute(Transaction::Point(key));
                     }
 
                     let maybe_record = match reader.as_ref() {
@@ -180,11 +180,11 @@ impl<const FAN_OUT: usize,
                         mem::drop(guard);
                         mem::forget(maybe_record);
 
-                        return self.execute(Transaction::Point(key, None));
+                        return self.execute(Transaction::Point(key));
                     }
                 }
             }
-            Transaction::Point(key, None) => unsafe {
+            Transaction::Point(key) => unsafe {
                 let guard
                     = self.traversal_read(key);
 
@@ -214,7 +214,7 @@ impl<const FAN_OUT: usize,
                     _ => TransactionResult::Error
                 }
             }
-            Transaction::Range(interval, version) if self.locking_strategy.is_olc() => {
+            Transaction::Range(interval) if self.locking_strategy.is_olc() => {
                 unimplemented!("RangeSearch in olc not implemented yet!")
             }
             // Transaction::RangeSearch(key_interval, version) => {

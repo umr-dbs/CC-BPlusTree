@@ -1,7 +1,9 @@
+use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::mem;
 use std::sync::atomic::Ordering;
-use TXDataModel::page_model::{AtomicBlockID, BlockID};
+use TXDataModel::page_model::{AtomicBlockID, BlockID, BlockRef, ObjectCount};
 use TXDataModel::page_model::block::Block;
 use TXDataModel::page_model::internal_page::InternalPage;
 use TXDataModel::page_model::leaf_page::LeafPage;
@@ -10,6 +12,76 @@ use TXDataModel::page_model::node::Node;
 
 /// Default starting numerical value for a valid BlockID.
 pub const START_BLOCK_ID: BlockID = BlockID::MIN;
+
+pub const _1KB: usize   = 1024;
+pub const _2KB: usize   = 2 * _1KB;
+pub const _4KB: usize   = 4 * _1KB;
+pub const _8KB: usize   = 8 * _1KB;
+pub const _16KB: usize  = 16 * _1KB;
+pub const _32KB: usize  = 32 * _1KB;
+
+pub enum BlockSize {
+    _1KB,
+    _2KB,
+    _4KB,
+    _8KB,
+    _16KB,
+    _32KB
+}
+
+impl Display for BlockSize {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} kb", match self {
+            BlockSize::_1KB => "1",
+            BlockSize::_2KB => "2",
+            BlockSize::_4KB => "4",
+            BlockSize::_8KB => "8",
+            BlockSize::_16KB => "16",
+            BlockSize::_32KB => "32",
+        })
+    }
+}
+
+pub const fn fan_out(bsz: BlockSize) -> usize {
+    ((match bsz {
+        BlockSize::_1KB => _1KB,
+        BlockSize::_2KB => _2KB,
+        BlockSize::_4KB => _4KB,
+        BlockSize::_8KB => _8KB,
+        BlockSize::_16KB => _16KB,
+        BlockSize::_32KB => _32KB,
+    }) - 2) / (8 + 8)
+}
+
+pub const fn num_records(bsz: BlockSize) -> usize {
+    (match bsz {
+        BlockSize::_1KB => _1KB,
+        BlockSize::_2KB => _2KB,
+        BlockSize::_4KB => _4KB,
+        BlockSize::_8KB => _8KB,
+        BlockSize::_16KB => _16KB,
+        BlockSize::_32KB => _32KB,
+    }) / 8 / 2
+}
+
+pub const fn bsz_alignment_min<Key, Payload>() -> usize
+where Key: Default + Ord + Copy + Hash,
+      Payload: Default + Clone
+{
+    mem::size_of::<BlockID>() +
+        mem::size_of::<BlockRef<0, 0, Key, Payload>>() + // ptr alignment size
+        mem::align_of::<Block<0,0,Key, Payload>>() + // alignment for block
+        mem::size_of::<ObjectCount>()
+}
+
+pub const fn bsz_alignment<Key, Payload>() -> usize
+where Key: Default + Ord + Copy + Hash,
+      Payload: Default + Clone
+{
+    bsz_alignment_min::<Key, Payload>() //+ // extra sized counter for num records in leaf blocks
+    // 16 // + // (wc + sc) per block ref
+    // mem::size_of::<BlockGuard<0,0, Key, Payload>>()
+}
 
 pub struct BlockManager<
     const FAN_OUT: usize,

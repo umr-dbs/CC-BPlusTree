@@ -7,11 +7,12 @@ use TXDataModel::page_model::internal_page::InternalPage;
 use TXDataModel::page_model::leaf_page::LeafPage;
 use TXDataModel::page_model::node::Node;
 use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
+use crate::block::block_manager::bsz_alignment;
 use crate::index::bplus_tree;
 // use crate::index::settings::{CONFIG_INI_PATH, init_from_config_ini, load_config};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::locking::locking_strategy::LockingStrategy::MonoWriter;
-use crate::test::{beast_test, BSZ, bsz_alignment, BSZ_BASE, EXE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test, simple_test2};
+use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test, simple_test2};
 
 mod index;
 mod transaction;
@@ -40,7 +41,7 @@ fn show_alignment_bsz() {
         - Fan Out: \t\t{}\n\t\
         - Num Records: \t\t{}\n",
                          BSZ_BASE,
-                         bsz_alignment(),
+                         bsz_alignment::<Key, Payload>(),
                          mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
                          BSZ_BASE - mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
                          FAN_OUT - 1,
@@ -114,10 +115,10 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        // 10_000_000,
+        10_000_000,
         // 20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));

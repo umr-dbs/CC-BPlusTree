@@ -630,4 +630,71 @@ impl<const FAN_OUT: usize,
             }
         }
     }
+
+    #[inline]
+    fn traversal_read_range_OLC_internal(&self, key_low: Key) -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        let root
+            = self.root.get();
+
+        let mut path
+            = Vec::with_capacity(self.height() as _);
+
+        let mut current_guard
+            = self.lock_reader(&root.block);
+
+        loop {
+            let current
+                = current_guard.deref();
+
+            if current.is_none() {
+                mem::drop(current_guard);
+
+                path.clear();
+                return path;
+            }
+
+            match current.unwrap().as_ref() {
+                Node::Index(index_page) => {
+                    let keys = index_page.keys();
+                    let children = index_page.children();
+
+                    let next_node = keys
+                        .iter()
+                        .enumerate()
+                        .find(|(_, k)| key_low.lt(k))
+                        .map(|(pos, _)| children.get(pos).cloned())
+                        .unwrap_or_else(|| children.last().cloned());
+
+                    if next_node.is_none() || !current_guard.is_valid() {
+                        path.clear();
+                        return path;
+                    }
+
+                    let next_node
+                        = next_node.unwrap();
+
+                    path.push(current_guard);
+                    current_guard = self.lock_reader(&next_node);
+                }
+                _ => {
+                    path.push(current_guard);
+                    break path
+                },
+            }
+        }
+    }
+
+    pub(crate) fn traversal_read_range_OLC(&self, key: Key) -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        let mut attempt = 0;
+
+        loop {
+            match self.traversal_read_range_OLC_internal(key) {
+                path if path.is_empty() => {
+                    attempt += 1;
+                    sched_yield(attempt)
+                }
+                path => break path,
+            }
+        }
+    }
 }

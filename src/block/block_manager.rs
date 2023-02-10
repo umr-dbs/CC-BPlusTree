@@ -71,7 +71,7 @@ where Key: Default + Ord + Copy + Hash,
     mem::size_of::<BlockID>() +
         mem::size_of::<BlockRef<0, 0, Key, Payload>>() + // ptr alignment size
         mem::align_of::<Block<0,0,Key, Payload>>() + // alignment for block
-        mem::size_of::<ObjectCount>()
+        mem::size_of::<ObjectCount>()+4000
 }
 
 pub const fn bsz_alignment<Key, Payload>() -> usize

@@ -3,6 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
+use std::ops::Add;
 use std::time::SystemTime;
 use parking_lot::Mutex;
 use rand::RngCore;
@@ -12,11 +13,13 @@ use TXDataModel::page_model::{BlockID, BlockRef, ObjectCount};
 use TXDataModel::tx_model::transaction::Transaction;
 use TXDataModel::tx_model::transaction_result::TransactionResult;
 use TXDataModel::utils::cc_cell::CCCell;
+use TXDataModel::utils::interval::Interval;
 use TXDataModel::utils::safe_cell::SafeCell;
 use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
-use crate::locking::locking_strategy::LockingStrategy;
+use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::show_alignment_bsz;
 
 
 pub const BSZ_BASE: usize       = _4KB;
@@ -91,7 +94,7 @@ pub fn simple_test() {
 
     // let mut keys_insert = gen_rand_data(10_000_000);
 
-    let tree = MAKE_INDEX_MULTI(LockingStrategy::default());
+    let tree = MAKE_INDEX_MULTI(LockingStrategy::OLC(LevelConstraints::Unlimited));
     let mut search_queries = vec![];
 
     for (i, tx) in keys_insert.into_iter().enumerate() {
@@ -171,6 +174,14 @@ pub fn simple_test() {
         log_debug_ln(format!("----------------------------------------------------------\
         ----------------------------------------------\n"));
     }
+
+    show_alignment_bsz();
+
+    let results
+        = tree.execute(Transaction::Range(
+        Interval::new(2, 4), |k| k + 1));
+
+    println!("Results of Range Query = {}", results);
 
     // json_index(&tree, "simple_tree.json");
 }

@@ -144,6 +144,12 @@ impl<const FAN_OUT: usize,
                       mut parent_index: usize,
                       next_key: Key)
     {
+        unsafe {
+            let k: u64 = *(&next_key as *const Key as *const u64);
+            if k == 22 {
+                let mahala = 1231231;
+            }
+        }
         loop {
             if parent_index >= path.len() { // when all path is invalid, we run stacking path function again!
                 *path = unsafe {
@@ -205,19 +211,19 @@ impl<const FAN_OUT: usize,
                         (curr_interval, mem::transmute(self.lock_reader(&next_page)))
                     };
                 }
-                Node::Leaf(leaf_page) => {
-                    let records
-                        = leaf_page.as_records();
+                Node::Leaf(..) => {
+                    // let records
+                    //     = leaf_page.as_records();
 
-                    curr_interval = Interval::new(
-                        records.first().unwrap().key,
-                        records.last().unwrap().key);
+                    // curr_interval = Interval::new(
+                    //     records.first().unwrap().key,
+                    //     records.last().unwrap().key);
 
                     path.truncate(parent_index + 1);
-                    let (last_interval, _)
-                        = path.last_mut().unwrap();
-
-                    *last_interval = curr_interval;
+                    // let (last_interval, _)
+                    //     = path.last_mut().unwrap();
+                    //
+                    // *last_interval = curr_interval;
                     return;
                 }
             }
@@ -282,11 +288,8 @@ impl<const FAN_OUT: usize,
             if !local_results.is_empty() {
                 let highest_key = local_results.last().unwrap().key;
                 key_interval.set_lower((self.inc_key)(highest_key));
-                all_results.extend(local_results);
 
-                if key_interval.lower().gt(&key_interval.upper()) {
-                    break;
-                }
+                all_results.extend(local_results);
 
                 if history_path.len() >= 2 {
                     let trace
@@ -313,6 +316,13 @@ impl<const FAN_OUT: usize,
                                     path.len() - 2,
                                     key_interval.lower());
             } else {
+                key_interval.set_lower((self.inc_key)(key_interval.lower()));
+                self.next_leaf_page(path,
+                                    0,
+                                    key_interval.lower());
+            }
+
+            if key_interval.lower().gt(&key_interval.upper()) {
                 break;
             }
         }

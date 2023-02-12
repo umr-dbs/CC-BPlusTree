@@ -12,11 +12,11 @@ overflow-checks = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-TXDataModel = { path = "../TXDataModel", version = "0.1.7" }
+TXDataModel = { path = "../TXDataModel", version = "0.1.8" }
 chrono = "0.4.23"
 rand = "0.8.5"
 num_cpus = "1.15"
 itertools = "0.10.5"
 parking_lot = "0.12.1"
 serde = { version ="1.0.152", features = ["derive", "rc"] }
-serde_json = { version = "1.0.91" }
+serde_json = { version = "1.0.93" }

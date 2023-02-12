@@ -7,6 +7,7 @@ use TXDataModel::utils::un_cell::UnCell;
 use crate::block::block_manager::BlockManager;
 use crate::index::root::Root;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::test::{dec_key, inc_key};
 // use serde::{Serialize, Deserialize};
 
 pub type LockLevel = ObjectCount;
@@ -24,6 +25,10 @@ pub struct BPlusTree<
     pub(crate) root: UnCell<Root<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     pub(crate) locking_strategy: LockingStrategy,
     pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
+    pub(crate) min_key: Key,
+    pub(crate) max_key: Key,
+    pub(crate) inc_key: fn(Key) -> Key,
+    pub(crate) dec_key: fn(Key) -> Key,
     // pub(crate) version_counter: AtomicVersion,
 }
 
@@ -52,11 +57,14 @@ unsafe impl<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Sync,
     Payload: Default + Clone + Sync,
-> Default for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
+> Default for BPlusTree<FAN_OUT, NUM_RECORDS, u64, Payload> {
     fn default() -> Self {
-        BPlusTree::new_single_versioned()
+        BPlusTree::new_single_versioned(
+            u64::MIN,
+            u64::MAX,
+            inc_key,
+            dec_key)
     }
 }
 
@@ -80,7 +88,13 @@ impl<const FAN_OUT: usize,
         ));
     }
 
-    pub fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>, locking_strategy: LockingStrategy) -> Self {
+    pub fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
+                locking_strategy: LockingStrategy,
+                min_key: Key,
+                max_key: Key,
+                inc_key: fn(Key) -> Key,
+                dec_key: fn(Key) -> Key) -> Self
+    {
         let empty_node
             = block_manager.make_empty_root();
 
@@ -92,30 +106,48 @@ impl<const FAN_OUT: usize,
             // version_counter: AtomicVersion::new(START_VERSION),
             locking_strategy,
             block_manager,
+            min_key,
+            max_key,
+            inc_key,
+            dec_key
         }
     }
 
-    pub fn new_single_version_for(locking_strategy: LockingStrategy) -> Self {
+    pub fn new_single_version_for(locking_strategy: LockingStrategy,
+                                  min_key: Key,
+                                  max_key: Key,
+                                  inc_key: fn(Key) -> Key,
+                                  dec_key: fn(Key) -> Key) -> Self {
         let mut block_manager
             = BlockManager::default();
 
         block_manager.is_multi_version = false;
 
-        Self::make(block_manager, locking_strategy)
+        Self::make(block_manager, locking_strategy, min_key, max_key, inc_key, dec_key)
     }
 
-    pub fn new_multi_version_for(locking_strategy: LockingStrategy) -> Self {
-        Self::make(BlockManager::new(true), locking_strategy)
+    pub fn new_multi_version_for(locking_strategy: LockingStrategy,
+                                 min_key: Key,
+                                 max_key: Key,
+                                 inc_key: fn(Key) -> Key,
+                                 dec_key: fn(Key) -> Key) -> Self
+    {
+        Self::make(BlockManager::new(true),
+                   locking_strategy,
+                   min_key,
+                   max_key,
+                   inc_key,
+                   dec_key)
     }
 
     #[inline(always)]
-    pub fn new_single_versioned() -> Self {
-        Self::new_single_version_for(LockingStrategy::default())
+    pub fn new_single_versioned(min_key: Key, max_key: Key, inc_key: fn(Key) -> Key, dec_key: fn(Key) -> Key) -> Self {
+        Self::new_single_version_for(LockingStrategy::default(), min_key, max_key, inc_key, dec_key)
     }
 
     #[inline(always)]
-    pub fn new_multi_versioned() -> Self {
-        Self::new_multi_version_for(LockingStrategy::default())
+    pub fn new_multi_versioned(min_key: Key, max_key: Key, inc_key: fn(Key) -> Key, dec_key: fn(Key) -> Key) -> Self {
+        Self::new_multi_version_for(LockingStrategy::default(), min_key, max_key, inc_key, dec_key)
     }
 
     #[inline(always)]

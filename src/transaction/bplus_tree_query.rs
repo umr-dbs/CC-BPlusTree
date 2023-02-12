@@ -5,6 +5,7 @@ use TXDataModel::page_model::block::BlockGuard;
 use TXDataModel::page_model::node::{Node, NodeUnsafeDegree};
 // use TXDataModel::record_model::record_like::RecordLike;
 use TXDataModel::utils::hybrid_cell::sched_yield;
+use TXDataModel::utils::interval::Interval;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 
@@ -632,15 +633,22 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn traversal_read_range_OLC_internal(&self, key_low: Key) -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+    fn traversal_read_range_OLC_internal(&self, key_low: Key)
+        -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
+    {
         let root
             = self.root.get();
 
         let mut path
             = Vec::with_capacity(self.height() as _);
 
+        let mut key_interval
+            = Interval::new(self.min_key, self.max_key);
+
         let mut current_guard
             = self.lock_reader(&root.block);
+
+        // path.push((key_interval.clone(), self.lock_reader(&root.block)));
 
         loop {
             let current
@@ -658,12 +666,12 @@ impl<const FAN_OUT: usize,
                     let keys = index_page.keys();
                     let children = index_page.children();
 
-                    let next_node = keys
+                    let (index_of_child, next_node) = keys
                         .iter()
                         .enumerate()
                         .find(|(_, k)| key_low.lt(k))
-                        .map(|(pos, _)| children.get(pos).cloned())
-                        .unwrap_or_else(|| children.last().cloned());
+                        .map(|(pos, _)| (pos, children.get(pos).cloned()))
+                        .unwrap_or_else(|| (keys.len(), children.last().cloned()));
 
                     if next_node.is_none() || !current_guard.is_valid() {
                         path.clear();
@@ -673,18 +681,37 @@ impl<const FAN_OUT: usize,
                     let next_node
                         = next_node.unwrap();
 
-                    path.push(current_guard);
+                    let old_interval = key_interval.clone();
+                    key_interval = Interval::new(
+                        keys.get(index_of_child - 1)
+                            .cloned()
+                            .unwrap_or(key_interval.lower()),
+                        keys.get(index_of_child)
+                            .cloned()
+                            .map(|max| (self.dec_key)(max))
+                            .unwrap_or(key_interval.upper()));
+
+                    path.push((old_interval, current_guard));
                     current_guard = self.lock_reader(&next_node);
                 }
-                _ => {
-                    path.push(current_guard);
+                Node::Leaf(leaf_page) => {
+                    let records
+                        = leaf_page.as_records();
+
+                    key_interval = Interval::new(
+                        records.first().unwrap().key,
+                        records.last().unwrap().key);
+
+                    path.push((key_interval, current_guard));
                     break path
                 },
             }
         }
     }
 
-    pub(crate) fn traversal_read_range_OLC(&self, key: Key) -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+    pub(crate) fn traversal_read_range_OLC(&self, key: Key)
+        -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
+    {
         let mut attempt = 0;
 
         loop {

@@ -3,11 +3,11 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
 use std::sync::atomic::Ordering;
-use TXDataModel::page_model::{AtomicBlockID, BlockID, BlockRef, ObjectCount};
-use TXDataModel::page_model::block::Block;
-use TXDataModel::page_model::internal_page::InternalPage;
-use TXDataModel::page_model::leaf_page::LeafPage;
-use TXDataModel::page_model::node::Node;
+use crate::page_model::{AtomicBlockID, BlockID, BlockRef, ObjectCount};
+use crate::page_model::block::Block;
+use crate::page_model::internal_page::InternalPage;
+use crate::page_model::leaf_page::LeafPage;
+use crate::page_model::node::Node;
 // use crate::index::settings::BlockSettings;
 
 /// Default starting numerical value for a valid BlockID.

@@ -6,21 +6,15 @@ use std::hash::Hash;
 use std::ops::Add;
 use std::time::SystemTime;
 use itertools::Itertools;
-use parking_lot::Mutex;
 use rand::RngCore;
-use TXDataModel::page_model::block::{Block, BlockGuard};
-use TXDataModel::page_model::{BlockID, BlockRef, ObjectCount};
-// use TXDataModel::record_model::record_like::RecordLike;
-use TXDataModel::tx_model::transaction::Transaction;
-use TXDataModel::tx_model::transaction_result::TransactionResult;
-use TXDataModel::utils::cc_cell::CCCell;
-use TXDataModel::utils::interval::Interval;
-use TXDataModel::utils::safe_cell::SafeCell;
-use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::show_alignment_bsz;
+use crate::tx_model::transaction::Transaction;
+use crate::tx_model::transaction_result::TransactionResult;
+use crate::utils::interval::Interval;
+use crate::utils::safe_cell::SafeCell;
 
 
 pub const BSZ_BASE: usize       = _4KB;
@@ -186,7 +180,7 @@ pub fn simple_test() {
 
     let range = Interval::new(
         0,
-        100
+        44
     );
 
     let matches = keys_insert_org

@@ -1,17 +1,11 @@
 use std::{fs, mem};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
-use TXDataModel::page_model::block::{Block, BlockGuard};
-use TXDataModel::page_model::{BlockID, LevelVariant};
-use TXDataModel::page_model::internal_page::InternalPage;
-use TXDataModel::page_model::leaf_page::LeafPage;
-use TXDataModel::page_model::node::Node;
-use TXDataModel::utils::smart_cell::{SmartCell, SmartFlavor};
 use crate::block::block_manager::bsz_alignment;
 use crate::index::bplus_tree;
-// use crate::index::settings::{CONFIG_INI_PATH, init_from_config_ini, load_config};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
-use crate::locking::locking_strategy::LockingStrategy::MonoWriter;
+use crate::page_model::block::Block;
+use crate::page_model::LevelVariant;
 use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test, simple_test2};
 
 mod index;
@@ -19,6 +13,10 @@ mod transaction;
 mod block;
 mod test;
 mod locking;
+mod page_model;
+mod record_model;
+mod utils;
+mod tx_model;
 
 fn main() {
     // println!("{}", mem::align_of::<Block<0,0,Key, Payload>>() +

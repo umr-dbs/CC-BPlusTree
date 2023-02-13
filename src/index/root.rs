@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
-use TXDataModel::page_model::{BlockID, BlockRef, Height};
+use crate::page_model::{BlockID, BlockRef, Height};
 
 pub const LEVEL_ROOT: Height = 1;
 

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
-use TXDataModel::page_model::{Attempts, Level, LevelVariant};
 use crate::index::root::LEVEL_ROOT;
+use crate::page_model::{Attempts, Level, LevelVariant};
 
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Clone)]

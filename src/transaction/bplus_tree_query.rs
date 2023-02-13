@@ -1,13 +1,12 @@
 use std::hash::Hash;
-use std::{mem, ptr};
-use TXDataModel::page_model::{Attempts, Height, Level};
-use TXDataModel::page_model::block::BlockGuard;
-use TXDataModel::page_model::node::{Node, NodeUnsafeDegree};
-// use TXDataModel::record_model::record_like::RecordLike;
-use TXDataModel::utils::hybrid_cell::sched_yield;
-use TXDataModel::utils::interval::Interval;
+use std::mem;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::page_model::{Attempts, Height, Level};
+use crate::page_model::block::BlockGuard;
+use crate::page_model::node::{Node, NodeUnsafeDegree};
+use crate::utils::hybrid_cell::sched_yield;
+use crate::utils::interval::Interval;
 
 const DEBUG: bool = false;
 

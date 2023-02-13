@@ -1,0 +1,173 @@
+use std::hash::Hash;
+use std::marker::PhantomData;
+use std::{mem, ptr};
+use std::collections::LinkedList;
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::ptr::null_mut;
+use std::sync::Arc;
+use serde_json::map::Entry;
+use crate::page_model::{BlockRef, ObjectCount};
+use crate::page_model::block::Block;
+// use crate::record_model::record_like::RecordLike;
+use crate::utils::cc_cell::CCCell;
+use crate::utils::hybrid_cell::{HybridCell, OptCell};
+use crate::utils::shadow_vec::ShadowVec;
+
+pub struct InternalPage<
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash,
+    Payload: Default + Clone
+> {
+    pub(crate) key_array: [MaybeUninit<Key>; FAN_OUT],
+    pub(crate) children_array: [MaybeUninit<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>>; FAN_OUT],
+    _marker: PhantomData<(Key, Payload)>,
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash,
+    Payload: Default + Clone,
+> Drop for InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload>
+{
+    fn drop(&mut self) {
+        unsafe {
+            self.children_mut()
+                .clear();
+
+            self.keys_mut()
+                .clear();
+        }
+    }
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash,
+    Payload: Default + Clone
+> InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        assert!(mem::size_of::<Key>() >= mem::size_of::<ObjectCount>(), "KEY_SIZE can't be under ObjectCount bytes!");
+
+        unsafe {
+            let mut page = InternalPage {
+                key_array: mem::MaybeUninit::uninit().assume_init(), // ::<[MaybeUninit<Key>; FAN_OUT]>
+                children_array: mem::MaybeUninit::uninit().assume_init(), // ::<[MaybeUninit<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>; FAN_OUT]>
+                _marker: PhantomData,
+            };
+
+            *(page.key_array.as_mut_ptr() as *mut ObjectCount) = 0;
+            page
+        }
+    }
+
+    #[inline(always)]
+    pub fn keys_mut(&self) -> ShadowVec<Key> {
+        unsafe {
+            ShadowVec {
+                unreal_vec: mem::ManuallyDrop::new(Vec::from_raw_parts(
+                    self.key_array.as_ptr().add(1) as *mut Key,
+                    self.keys_len(),
+                    FAN_OUT - 1)),
+                obj_cnt: self.key_array.as_ptr() as *mut ObjectCount,
+                update_len: true,
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn children_mut(&self) -> ShadowVec<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        unsafe {
+            ShadowVec {
+                unreal_vec: mem::ManuallyDrop::new(Vec::from_raw_parts(
+                    self.children_array.as_ptr() as _,
+                    self.children_len(),
+                    FAN_OUT)),
+                obj_cnt: null_mut(),
+                update_len: false,
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub const fn get_key(&self, index: usize) -> Key {
+        unsafe {
+            *(self.key_array.as_ptr().add(index + 1) as *const Key)
+        }
+    }
+
+    #[inline(always)]
+    pub const fn get_key_raw(&self, index: usize) -> MaybeUninit<Key> {
+        unsafe {
+            *(self.key_array.as_ptr().add(index + 1))
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_child(&self, index: usize) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        unsafe {
+            let child
+                = mem::transmute_copy(self.children_array.get_unchecked(index));
+
+            Arc::increment_strong_count(&child);
+            child
+
+            // let mut child_ref
+            //     = mem::MaybeUninit::<BlockRef<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>::uninit().assume_init();
+            //
+            // ptr::copy_nonoverlapping(
+            //     self.children_array.get_unchecked(index)
+            //         .as_ptr() as *const BlockRef<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
+            //     &mut child_ref, 1);
+            //
+            // // mem::forget(child_ref.clone()); // ensure ref is valid in leaked slice
+            // Arc::increment_strong_count(&child_ref);
+            // child_ref
+        }
+    }
+
+    #[inline(always)]
+    pub const fn keys_len(&self) -> usize {
+        unsafe {
+            *(self.key_array.as_ptr() as *const ObjectCount) as usize
+        }
+    }
+
+    #[inline(always)]
+    pub const fn len(&self) -> usize {
+        self.keys_len()
+    }
+
+    #[inline(always)]
+    pub const fn is_empty(&self) -> bool {
+        self.keys_len() == 0
+    }
+
+    #[inline(always)]
+    pub const fn is_full(&self) -> bool {
+        self.children_len() == FAN_OUT
+    }
+
+    #[inline(always)]
+    pub const fn children_len(&self) -> usize {
+        match self.keys_len() {
+            0 => 0,
+            n => n + 1
+        }
+    }
+
+    #[inline(always)]
+    pub const fn keys(&self) -> &[Key] {
+        unsafe {
+            std::slice::from_raw_parts(self.key_array.as_ptr().add(1) as _, self.keys_len())
+        }
+    }
+
+    #[inline(always)]
+    pub const fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>] {
+        unsafe {
+            std::slice::from_raw_parts(self.children_array.as_ptr() as _, self.children_len())
+        }
+    }
+}

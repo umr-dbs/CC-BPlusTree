@@ -1,12 +1,11 @@
 # Experimental Concurrency Control B+Tree with and without Version Lists Implementation
-    Build:             - 05.02.2023
-    Version:           - 0.0.50 (Experimental)
+    Build:             - 13.02.2023
+    Version:           - 0.0.51 (Experimental)
 ---------------------------------------
 # CC B+Tree Build
     Requirements:
     - OS:            OS independent
     - Rustc:         >= 1.65.0 (2021 Edition)
-    - TXDataModel:   github.com/umr-dbs/TXDataModel
     Build:
         - standalone as `cargo build --release`.
 ---------------------------------------

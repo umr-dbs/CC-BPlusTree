@@ -1,13 +1,13 @@
 use std::hash::Hash;
 use std::{mem, ptr};
-use TXDataModel::page_model::block::{Block, BlockGuard};
-use TXDataModel::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
-use TXDataModel::record_model::{AtomicVersion, Version};
-use TXDataModel::utils::un_cell::UnCell;
 use crate::block::block_manager::BlockManager;
 use crate::index::root::Root;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
+use crate::page_model::block::{Block, BlockGuard};
+use crate::record_model::Version;
 use crate::test::{dec_key, inc_key};
+use crate::utils::un_cell::UnCell;
 // use serde::{Serialize, Deserialize};
 
 pub type LockLevel = ObjectCount;

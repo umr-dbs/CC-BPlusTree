@@ -71,14 +71,14 @@ where Key: Default + Ord + Copy + Hash,
     mem::size_of::<BlockID>() +
         mem::size_of::<BlockRef<0, 0, Key, Payload>>() + // ptr alignment size
         mem::align_of::<Block<0,0,Key, Payload>>() + // alignment for block
-        mem::size_of::<ObjectCount>()+4000
+        mem::size_of::<ObjectCount>()
 }
 
 pub const fn bsz_alignment<Key, Payload>() -> usize
 where Key: Default + Ord + Copy + Hash,
       Payload: Default + Clone
 {
-    bsz_alignment_min::<Key, Payload>() //+ // extra sized counter for num records in leaf blocks
+    bsz_alignment_min::<Key, Payload>()+4000 //+ // extra sized counter for num records in leaf blocks
     // 16 // + // (wc + sc) per block ref
     // mem::size_of::<BlockGuard<0,0, Key, Payload>>()
 }

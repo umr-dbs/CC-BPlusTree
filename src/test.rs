@@ -1,15 +1,16 @@
-use std::borrow::Borrow;
 use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
-use std::ops::Add;
 use std::time::SystemTime;
 use itertools::Itertools;
 use rand::RngCore;
+use CCBPlusTree::page_model::Level;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::page_model::BlockRef;
+use crate::page_model::node::Node;
 use crate::show_alignment_bsz;
 use crate::tx_model::transaction::Transaction;
 use crate::tx_model::transaction_result::TransactionResult;
@@ -17,32 +18,34 @@ use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 
 
-pub const BSZ_BASE: usize       = _4KB;
-pub const BSZ: usize            = BSZ_BASE - bsz_alignment::<Key, Payload>();
-pub const FAN_OUT: usize        = BSZ / 8 / 2;
-pub const NUM_RECORDS: usize    = (BSZ - 2) / (8 + 8);
+pub const BSZ_BASE: usize = _4KB;
+pub const BSZ: usize = BSZ_BASE - bsz_alignment::<Key, Payload>();
+pub const FAN_OUT: usize = BSZ / 8 / 2;
+pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
 
 // const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
 // const NUM_RECORDS: usize    = BSZ / 16;
 // const FAN_OUT: usize        = 3*256;
 // const NUM_RECORDS: usize    = 256;
 
-pub type Key                = u64;
-pub type Payload            = f64;
+pub type Key = u64;
+pub type Payload = f64;
+
 pub fn inc_key(k: Key) -> Key {
     k.checked_add(1).unwrap_or(Key::MAX)
 }
+
 pub fn dec_key(k: Key) -> Key {
     k.checked_sub(1).unwrap_or(Key::MIN)
 }
 
-pub type INDEX              = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
+pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
-= |ls| INDEX::new_single_version_for(ls,  Key::MIN, Key::MAX, inc_key, dec_key);
+= |ls| INDEX::new_single_version_for(ls, Key::MIN, Key::MAX, inc_key, dec_key);
 
 pub const MAKE_INDEX_MULTI: fn(LockingStrategy) -> INDEX
-= |ls| INDEX::new_multi_version_for(ls,  Key::MIN, Key::MAX, inc_key, dec_key);
+= |ls| INDEX::new_multi_version_for(ls, Key::MIN, Key::MAX, inc_key, dec_key);
 
 pub const EXE_LOOK_UPS: bool = false;
 
@@ -66,9 +69,9 @@ pub fn simple_test() {
     ];
 
     let keys_insert_org: Vec<Key> = vec![
-        8, 11, 19, 33, 24, 36, 34, 25, 12, 37, 14, 10, 45, 31, 18,
-        3, 9, 5, 2, 13, 40, 38, 41, 27, 16, 28, 42, 1, 43, 23, 26,
-        44, 17, 29, 39, 20, 6, 4, 7, 30, 21, 35, 8];
+        8, 11, 19, 33, 24, 36, 34, 25, 12, 37, 14, 10, 45, 31, 18,];
+      //  3, 9, 5, 2, 13, 40, 38, 41, 27, 16, 28, 42, 1, 43, 23, 26,
+       // 44, 17, 29, 39, 20, 6, 4, 7, 30, 21, 35, 8];
 
     // let mut rand = rand::thread_rng();
     // let mut keys_insert = gen_rand_data(1_000);
@@ -124,20 +127,17 @@ pub fn simple_test() {
         search_queries.push(search.clone());
         search.into_iter().for_each(|query| match tree.execute(query.clone()) {
             TransactionResult::Error =>
-                panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n{}",
+                panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n",
                        query,
-                       TransactionResult::<Key, Payload>::Error,
-                       level_order(&tree)),
+                       TransactionResult::<Key, Payload>::Error),
             TransactionResult::MatchedRecords(records) if records.len() != 1 =>
-                panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n{}",
+                panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n",
                        query,
-                       TransactionResult::<Key, Payload>::Error,
-                       level_order(&tree)),
+                       TransactionResult::<Key, Payload>::Error),
             TransactionResult::MatchedRecord(None) =>
-                panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n{}",
+                panic!("\n\t- Query: {}\n\t- Result: {}\n\t\n",
                        query,
-                       TransactionResult::<Key, Payload>::MatchedRecord(None),
-                       level_order(&tree)),
+                       TransactionResult::<Key, Payload>::MatchedRecord(None)),
             result =>
                 log_debug_ln(format!("\t- Query:  {}\n\t- Result: {}", query, result)),
         });
@@ -180,7 +180,7 @@ pub fn simple_test() {
 
     let range = Interval::new(
         0,
-        44
+        33,
     );
 
     let matches = keys_insert_org
@@ -196,6 +196,8 @@ pub fn simple_test() {
         _ => 0
     }, range);
 
+    println!("Printing Tree:\n");
+    level_order(tree.root.block.clone());
     // json_index(&tree, "simple_tree.json");
 }
 
@@ -297,15 +299,35 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
 pub fn level_order<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Sync,
-    Payload: Default + Clone + Sync
->
-(tree: &BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> String {
-    "".to_string()
-    // tree.level_order(None)
-    //     .into_iter()
-    //     .map(|node| node.unsafe_borrow_static())
-    //     .join("\n")
+    Key: Default + Ord + Copy + Hash + Sync + Display,
+    Payload: Default + Clone + Sync + Display>(root: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
+{
+    let mut queue = VecDeque::new();
+    queue.push_back(root);
+
+    while !queue.is_empty() {
+        let next = queue.pop_front().unwrap();
+
+        match next.unsafe_borrow().as_ref() {
+            Node::Index(index_page) =>
+                println!("id: {}, Index(keys: {}, children: {})",
+                         next.unsafe_borrow().block_id(),
+                         index_page.keys()
+                             .iter()
+                             .join(","),
+                         index_page.children()
+                             .iter()
+                             .map(|b| {
+                                 queue.push_back(b.clone());
+                                 b.unsafe_borrow().block_id()
+                             })
+                             .join(",")),
+            Node::Leaf(leaf_page) =>
+                println!("id: {}, Leaf({})",
+                         next.unsafe_borrow().block_id(),
+                         leaf_page.as_records().iter().join(","))
+        }
+    }
 }
 
 // pub fn beast_test2<

@@ -23,71 +23,63 @@ impl<const FAN_OUT: usize,
                                   path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                                   org_key_interval: Interval<Key>) -> TransactionResult<Key, Payload>
     {
-        let mut key_interval = org_key_interval.clone();
-        let mut all_results = vec![];
-        let mut history_path = VecDeque::new();
+        let mut key_interval
+            = org_key_interval.clone();
+
+        let mut all_results
+            = vec![];
+
+        let mut history_path
+            = VecDeque::with_capacity(2);
+
         loop {
             history_path.push_back(path.clone());
 
             let local_results =
                 self.range_query_leaf_results(path, &key_interval);
 
+            if path.len() >= 2 {
+                let prev_path
+                    = history_path.pop_front().unwrap();
+
+                match prev_path.get(prev_path.len() - 2) {
+                    Some((.., parent_leaf)) if !parent_leaf.is_valid() =>
+                        return self.execute(Transaction::Range(org_key_interval)),
+                    _ => {}
+                };
+            }
+
+            let (leaf_space, ..)
+                = path.last().unwrap();
+
+            key_interval.set_lower((self.inc_key)(leaf_space.upper()));
+
             if !local_results.is_empty() {
-                let highest_key = local_results.last().unwrap().key;
-                key_interval.set_lower((self.inc_key)(highest_key));
-
                 all_results.extend(local_results);
-
-                if history_path.len() >= 2 {
-                    let trace
-                        = history_path.pop_front().unwrap();
-
-                    let (_, l_leaf)
-                        = trace.last().unwrap();
-
-                    let ll_parent = match trace.get(trace.len() - 2) {
-                        Some((_, l)) => Some(l),
-                        _ => None
-                    };
-
-                    if !l_leaf.is_valid() {
-                        return self.execute(Transaction::Range(org_key_interval));
-                    }
-
-                    if ll_parent.is_some() && !ll_parent.unwrap().is_valid() {
-                        return self.execute(Transaction::Range(org_key_interval));
-                    }
-                }
 
                 self.next_leaf_page(path,
                                     path.len() - 2,
                                     key_interval.lower());
             } else {
-                key_interval.set_lower((self.inc_key)(key_interval.lower()));
-                if key_interval.lower().gt(&key_interval.upper()) {
-                    break;
-                }
-
-                self.next_leaf_page(path,
-                                    path.len() - 2,
-                                    key_interval.lower());
+                break
             }
         }
 
         TransactionResult::MatchedRecords(all_results)
     }
 
+    #[inline]
     fn next_leaf_page(&self,
                       path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                       mut parent_index: usize,
                       next_key: Key)
     {
-        unsafe {
-            let k: u64 = *(&next_key as *const Key as *const u64);
-            if k == 22 {
-                let mahala = 1231231;
-            }
-        }
+        // unsafe {
+        //     let k: u64 = *(&next_key as *const Key as *const u64);
+        //     if k == 22 {
+        //         let mahala = 1231231;
+        //     }
+        // }
         loop {
             if parent_index >= path.len() { // when all path is invalid, we run stacking path function again!
                 *path = unsafe {
@@ -168,6 +160,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    #[inline(always)]
     fn range_query_leaf_results(&self,
                                 path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                                 key_interval: &Interval<Key>)
@@ -180,9 +173,8 @@ impl<const FAN_OUT: usize,
 
         match leaf_unchecked {
             Node::Leaf(leaf_page) if interval.overlap(&key_interval) => unsafe {
-                println!("Records in Leaf = {}", leaf_page
-                    .as_records_mut().iter().join(","));
-
+                // println!("Records in Leaf = {}", leaf_page
+                //     .as_records_mut().iter().join(","));
                 let mut potential_results = leaf_page
                     .as_records()
                     .iter()
@@ -191,7 +183,7 @@ impl<const FAN_OUT: usize,
                     .map(|record| record.unsafe_clone())
                     .collect::<Vec<_>>();
 
-                println!("Filtered Records = {}", potential_results.iter().join(","));
+                // println!("Filtered Records = {}", potential_results.iter().join(","));
                 if leaf.is_valid() {
                     potential_results
                 } else {
@@ -202,10 +194,7 @@ impl<const FAN_OUT: usize,
                 }
             }
             Node::Leaf(..) => Vec::with_capacity(0),
-            _ => {
-                println!("Found Index but expected leaf = {}", leaf_unchecked);
-                unreachable!()
-            }
+            _ => unreachable!("Found Index but expected leaf = {}", leaf_unchecked)
         }
     }
 }

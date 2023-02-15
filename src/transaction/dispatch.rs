@@ -6,7 +6,7 @@ use crate::page_model::node::Node;
 use crate::record_model::unsafe_clone::UnsafeClone;
 use crate::tx_model::transaction::Transaction;
 use crate::tx_model::transaction_result::TransactionResult;
-use crate::utils::hybrid_cell::WRITE_OBSOLETE_FLAG_VERSION;
+use crate::utils::smart_cell::WRITE_OBSOLETE_FLAG_VERSION;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,

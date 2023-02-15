@@ -1,17 +1,10 @@
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
-use std::sync::Arc;
-use crate::utils::hybrid_cell::HybridCell::{ConcurrencyControlCell, OptimisticCell};
-use crate::utils::hybrid_cell::{ConcurrentGuard, GuardDerefResult, HybridCell, OptCell, sched_yield, WRITE_FLAG_VERSION};
-use serde::{Serialize, Deserialize};
 use crate::page_model::{BlockID, BlockRef};
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::record_model::Version;
-// use crate::record_model::record_like::RecordLike;
-// use crate::record_model::Version;
-use crate::utils::cc_cell::CCCell;
 use crate::utils::smart_cell::{SmartFlavor, SmartGuard};
 
 // #[repr(align(4096))]
@@ -180,10 +173,10 @@ impl<'a,
     // }
 }
 
-pub type BlockGuardResult<
-    'a,
-    const FAN_OUT: usize,
-    const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
-    Payload: Default + Clone
-> = GuardDerefResult<'a, Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
+// pub type BlockGuardResult<
+//     'a,
+//     const FAN_OUT: usize,
+//     const NUM_RECORDS: usize,
+//     Key: Default + Ord + Copy + Hash,
+//     Payload: Default + Clone
+// > = GuardDerefResult<'a, Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;

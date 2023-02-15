@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
-use itertools::Itertools;
 use crate::index::bplus_tree::BPlusTree;
 use crate::page_model::block::BlockGuard;
 use crate::page_model::node::Node;
@@ -43,7 +42,7 @@ impl<const FAN_OUT: usize,
                     = history_path.pop_front().unwrap();
 
                 match prev_path.get(prev_path.len() - 2) {
-                    Some((.., parent_leaf)) if !parent_leaf.is_valid() =>
+                    Some((.., parent_leaf)) if !parent_leaf.is_read_not_obsolete() =>
                         return self.execute(Transaction::Range(org_key_interval)),
                     _ => {}
                 };
@@ -74,12 +73,6 @@ impl<const FAN_OUT: usize,
                       mut parent_index: usize,
                       next_key: Key)
     {
-        // unsafe {
-        //     let k: u64 = *(&next_key as *const Key as *const u64);
-        //     if k == 22 {
-        //         let mahala = 1231231;
-        //     }
-        // }
         loop {
             if parent_index >= path.len() { // when all path is invalid, we run stacking path function again!
                 *path = unsafe {

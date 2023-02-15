@@ -5,8 +5,8 @@ use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::page_model::{Attempts, Height, Level};
 use crate::page_model::block::BlockGuard;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
-use crate::utils::hybrid_cell::sched_yield;
 use crate::utils::interval::Interval;
+use crate::utils::smart_cell::sched_yield;
 
 const DEBUG: bool = false;
 
@@ -538,7 +538,7 @@ impl<const FAN_OUT: usize,
                     Err((curr_level - 1, attempt + 1))
                 },
                 // _ if current_guard.upgrade_write_lock() => return Ok(current_guard),
-                _ => return Err((curr_level - 1, attempt + 1))
+                // _ => return Err((curr_level - 1, attempt + 1))
             }
         }
     }

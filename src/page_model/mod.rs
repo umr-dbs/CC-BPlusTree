@@ -4,10 +4,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use crate::page_model::block::Block;
 // use crate::record_model::record_like::RecordLike;
-use crate::utils::hybrid_cell::{HybridCell, OptCell};
 use serde::{Deserialize, Serialize};
 use crate::utils::cc_cell::CCCell;
-use crate::utils::smart_cell::{SmartCell, SmartFlavor};
+use crate::utils::smart_cell::{OptCell, SmartCell, SmartFlavor};
 
 pub mod internal_page;
 pub mod leaf_page;

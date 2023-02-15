@@ -26,7 +26,7 @@ fn main() {
     show_alignment_bsz();
     simple_test();
     // simple_test2();
-    // experiment();
+    experiment();
     //
     // experiment2();
 }
@@ -109,14 +109,14 @@ fn experiment() {
         // 100,
         // 1_000,
         // 10_000,
-        // 100_000,
+        100_000,
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
         // 10_000_000,
         // 20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));

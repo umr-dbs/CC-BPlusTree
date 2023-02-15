@@ -1,15 +1,13 @@
-use std::hash::Hash;
-use std::mem;
-use std::mem::ManuallyDrop;
+use std::fmt::{Display, Formatter};
+use std::{hint, mem};
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
+use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
-use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
-use crate::page_model::block::Block;
-// use crate::record_model::AtomicVersion;
-use crate::utils::cc_cell::{CCCell, CCCellGuard};
-use crate::utils::cc_cell::CCCellGuard::Reader;
-use crate::utils::hybrid_cell::{LatchVersion, OBSOLETE_FLAG_VERSION, OptCell, WRITE_FLAG_VERSION};
+use parking_lot::{RawMutex, RawRwLock};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use crate::record_model::{AtomicVersion, Version};
+use crate::utils::cc_cell::CCCell;
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::SmartFlavor::{ControlCell, OLCCell};
 use crate::utils::smart_cell::SmartGuard::{LockFree, MutExclusive, OLCReader, OLCWriter, RwReader, RwWriter};
@@ -18,6 +16,184 @@ use crate::utils::smart_cell::SmartGuard::{LockFree, MutExclusive, OLCReader, OL
 //     pub cccell: ManuallyDrop<CCCell<E>>,
 //     pub opt_cell: ManuallyDrop<OptCell<E>>,
 // }
+
+pub const OBSOLETE_FLAG_VERSION: Version = 0x8_000000000000000;
+pub const WRITE_FLAG_VERSION: Version = 0x4_000000000000000;
+pub const WRITE_OBSOLETE_FLAG_VERSION: Version = 0xC_000000000000000;
+const READ_FLAG_VERSION: Version = 0x0_000000000000000;
+// const LOCK_FREE_FLAG_VERSION: Version = 0x00_00_00_00_00_00_00_00;
+// const LOCKING_FLAG_VERSION: Version = OBSOLETE_FLAG_VERSION;
+
+// const READERS_NUM_BITS: Version = 6 + 8;
+// 0xC_0 + 0x_00 free bits
+// const MAX_READERS: Version = (1 << READERS_NUM_BITS) - 1;
+// const LOCKING_BITS_OFFSET: Version = 2;
+// const VERSIONING_COUNTER_BITS: Version = (8 * mem::size_of::<Version>() as Version) - READERS_NUM_BITS - LOCKING_BITS_OFFSET;
+
+#[inline(always)]
+#[cfg(target_os = "linux")]
+pub fn sched_yield(attempt: usize) {
+    if attempt > 3 {
+        unsafe { libc::sched_yield(); }
+    } else {
+        hint::spin_loop();
+    }
+}
+
+#[inline(always)]
+#[cfg(not(target_os = "linux"))]
+pub fn sched_yield(attempt: usize) {
+    if attempt > 3 {
+        std::thread::sleep(std::time::Duration::from_nanos(0))
+    } else {
+        hint::spin_loop();
+    }
+}
+
+pub type LatchVersion = Version;
+
+// pub const fn num_readers(version: Version) -> Version {
+//     (((version << LOCKING_BITS_OFFSET) >> LOCKING_BITS_OFFSET) & MAX_READERS) >> (mem::size_of::<Version>() as Version - READERS_NUM_BITS - LOCKING_BITS_OFFSET)
+// }
+
+pub struct OptCell<E: Default> {
+    pub(crate) cell: SafeCell<E>,
+    cell_version: AtomicVersion,
+}
+
+impl<E: Default + Serialize> Serialize for OptCell<E> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        self.cell.serialize(serializer)
+    }
+}
+
+impl<'de, E: Default + Deserialize<'de>> Deserialize<'de> for OptCell<E> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+        Ok(OptCell::new(E::deserialize(deserializer)?))
+    }
+}
+
+impl<E: Default + Display> Display for OptCell<E> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OptCell {{\ncell: {}\n\t\tcell_version: {}\n\t}}", self.cell.get_mut(), self.load_version())
+    }
+}
+
+impl<E: Default> Default for OptCell<E> {
+    fn default() -> Self {
+        Self::new(E::default())
+    }
+}
+
+impl<E: Default> OptCell<E> {
+    const CELL_START_VERSION: Version = 0;
+
+    #[inline(always)]
+    pub const fn new(data: E) -> Self {
+        Self {
+            cell: SafeCell::new(data),
+            cell_version: AtomicVersion::new(Self::CELL_START_VERSION),
+        }
+    }
+
+    #[inline(always)]
+    pub fn load_version(&self) -> Version {
+        self.cell_version.load(Relaxed)
+    }
+
+    #[inline(always)]
+    pub unsafe fn load_version_force(&self) -> Version {
+        self.cell_version.load(Acquire)
+    }
+
+    #[inline(always)]
+    pub fn read_lock(&self) -> (bool, LatchVersion) {
+        let version = self.load_version();
+        if version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+            // hint::spin_loop();
+            (false, version)
+        } else {
+            (true, version)
+        }
+    }
+
+    // fn is_any_valid(&self, v: Version) -> bool {
+    //     let load = self.load_version();
+    //     v == load && load & OBSOLETE_FLAG_VERSION == 0
+    // }
+
+    #[inline(always)]
+    pub fn is_read_valid(&self, v: LatchVersion) -> bool {
+        let load = self.load_version();
+        v == load && load & WRITE_OBSOLETE_FLAG_VERSION == 0
+    }
+
+    #[inline(always)]
+    pub fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
+        // if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+        //     return None;
+        // }
+
+        match self.cell_version.compare_exchange(
+            read_version,
+            WRITE_FLAG_VERSION | read_version,
+            Acquire,
+            Relaxed)
+        {
+            Ok(..) => Some(WRITE_FLAG_VERSION | read_version),
+            Err(..) => {
+                // hint::spin_loop();
+                None
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn write_unlock(&self, write_version: LatchVersion) {
+        debug_assert!(write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
+
+        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, SeqCst)
+    }
+
+    #[inline(always)]
+    pub fn write_obsolete(&self, write_version: LatchVersion) {
+        debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
+
+        self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, SeqCst);
+    }
+
+    #[inline(always)]
+    pub fn is_obsolete(&self) -> bool {
+        self.load_version() & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+        // self.cell_version.load(Relaxed) & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+    }
+
+    #[inline(always)]
+    pub fn is_read_obsolete(&self) -> bool {
+        let load = self.load_version();
+        load & WRITE_FLAG_VERSION == 0 && load & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+    }
+
+    #[inline(always)]
+    pub fn is_write(&self) -> bool {
+        self.load_version() & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION
+    }
+
+    #[inline(always)]
+    pub fn is_read_not_obsolete(&self) -> bool {
+        self.load_version() & WRITE_OBSOLETE_FLAG_VERSION == 0
+    }
+}
+
+#[derive(Default)]
+pub struct SmartCell<E: Default>(pub Arc<SmartFlavor<E>>);
+
+impl<E: Default> Clone for SmartCell<E> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        SmartCell(self.0.clone())
+    }
+}
 
 pub enum SmartFlavor<E: Default> {
     ControlCell(CCCell<E>),
@@ -32,10 +208,41 @@ impl<E: Default> Default for SmartFlavor<E> {
 
 impl<E: Default> SmartFlavor<E> {
     #[inline(always)]
-    fn is_version_valid(&self, read_version: LatchVersion) -> bool {
+    fn is_read_valid(&self, read_version: LatchVersion) -> bool {
         match self {
-            OLCCell(opt) =>
-                opt.load_version() == read_version && read_version & OBSOLETE_FLAG_VERSION == 0,
+            OLCCell(opt) => opt.is_read_valid(read_version),
+            _ => true
+        }
+    }
+
+    #[inline(always)]
+    fn is_obsolete(&self) -> bool {
+        match self {
+            OLCCell(opt) => opt.is_obsolete(),
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    fn is_read_obsolete(&self) -> bool {
+        match self {
+            OLCCell(opt) => opt.is_read_obsolete(),
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    fn is_write(&self) -> bool {
+        match self {
+            OLCCell(opt) => opt.is_write(),
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    fn is_read_not_obsolete(&self) -> bool {
+        match self {
+            OLCCell(opt) => opt.is_read_not_obsolete(),
             _ => true
         }
     }
@@ -69,16 +276,6 @@ impl<E: Default + 'static> DerefMut for SmartFlavor<E> {
             OLCCell(opt) => opt.cell.get_mut(),
             _ => unreachable!()
         }
-    }
-}
-
-#[derive(Default)]
-pub struct SmartCell<E: Default>(pub Arc<SmartFlavor<E>>);
-
-impl<E: Default> Clone for SmartCell<E> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        SmartCell(self.0.clone())
     }
 }
 
@@ -168,7 +365,27 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     pub fn is_valid(&self) -> bool {
         match self {
             OLCReader(Some((cell, latch))) => cell
-                .is_version_valid(*latch),
+                .is_read_valid(*latch),
+            OLCWriter(None) => false,
+            OLCReader(None) => false,
+            _ => true
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_obsolete(&self) -> bool {
+        match self {
+            OLCReader(Some((cell, ..))) => cell.is_obsolete(),
+            OLCWriter(None) => true,
+            OLCReader(None) => true,
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_read_not_obsolete(&self) -> bool {
+        match self {
+            OLCReader(Some((cell, ..))) => cell.is_read_not_obsolete(),
             OLCWriter(None) => false,
             OLCReader(None) => false,
             _ => true
@@ -183,7 +400,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             RwWriter(.., ptr) => unsafe { ptr.as_ref() },
             MutExclusive(.., ptr) => unsafe { ptr.as_ref() },
             OLCReader(Some((cell, latch)))
-            if cell.is_version_valid(*latch) =>
+            if cell.is_read_valid(*latch) =>
                 Some(cell.as_ref()),
             OLCWriter(Some((cell, ..))) =>
                 Some(cell.as_ref()),
@@ -302,12 +519,12 @@ impl<E: Default> SmartCell<E> {
 
 impl<'a, E: Default> Drop for SmartGuard<'a, E> {
     fn drop(&mut self) {
-        if let OLCWriter(Some((cell, read_version))) = self {
-            if *read_version & OBSOLETE_FLAG_VERSION == 0 {
+        if let OLCWriter(Some((cell, write_version))) = self {
+            // if *read_version & OBSOLETE_FLAG_VERSION == 0 {
                 if let OLCCell(opt) = cell.as_ref() {
-                    opt.write_unlock(*read_version);
+                    opt.write_unlock(*write_version);
                 }
-            }
+            // }
         }
     }
 }
@@ -315,7 +532,3 @@ impl<'a, E: Default> Drop for SmartGuard<'a, E> {
 unsafe impl<'a, E: Default + 'a> Sync for SmartGuard<'a, E> {}
 
 unsafe impl<'a, E: Default + 'a> Send for SmartGuard<'a, E> {}
-
-
-
-

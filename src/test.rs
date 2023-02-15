@@ -47,7 +47,7 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 pub const MAKE_INDEX_MULTI: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_multi_version_for(ls, Key::MIN, Key::MAX, inc_key, dec_key);
 
-pub const EXE_LOOK_UPS: bool = false;
+pub const EXE_LOOK_UPS: bool = true;
 
 pub fn log_debug_ln(s: String) {
     println!("> {}", s.replace("\n", "\n>"))

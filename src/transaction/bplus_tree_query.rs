@@ -694,15 +694,12 @@ impl<const FAN_OUT: usize,
                     current_guard = self.lock_reader(&next_node);
                 }
                 Node::Leaf(..) => {
-                    // let records
-                    //     = leaf_page.as_records();
-                    //
-                    // key_interval = Interval::new(
-                    //     records.first().unwrap().key,
-                    //     records.last().unwrap().key);
-                    //
-                    // path.push((key_interval, current_guard));
-                    path.push((key_interval, current_guard));
+                    if !current_guard.is_read_not_obsolete() {
+                        path.clear();
+                    }
+                    else {
+                        path.push((key_interval, current_guard));
+                    }
 
                     break path
                 },

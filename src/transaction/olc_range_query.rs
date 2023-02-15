@@ -42,7 +42,7 @@ impl<const FAN_OUT: usize,
                     = history_path.pop_front().unwrap();
 
                 match prev_path.get(prev_path.len() - 2) {
-                    Some((.., parent_leaf)) if !parent_leaf.is_read_not_obsolete() =>
+                    Some((.., parent_leaf)) if !parent_leaf.is_valid() =>
                         return self.execute(Transaction::Range(org_key_interval)),
                     _ => {}
                 };
@@ -100,7 +100,15 @@ impl<const FAN_OUT: usize,
                 curr_parent = n_curr_parent;
             }
 
-            match unsafe { curr_parent.deref_unsafe() }.unwrap().as_ref() {
+            let curr_deref
+                = unsafe { curr_parent.deref_unsafe() };
+
+            if !curr_parent.is_valid() {
+                parent_index -= 1;
+                continue
+            }
+
+            match curr_deref.unwrap().as_ref() {
                 Node::Index(index_page) => {
                     let keys = index_page.keys();
                     let children = index_page.children();
@@ -135,19 +143,14 @@ impl<const FAN_OUT: usize,
                     };
                 }
                 Node::Leaf(..) => {
-                    // let records
-                    //     = leaf_page.as_records();
-
-                    // curr_interval = Interval::new(
-                    //     records.first().unwrap().key,
-                    //     records.last().unwrap().key);
-
                     path.truncate(parent_index + 1);
-                    // let (last_interval, _)
-                    //     = path.last_mut().unwrap();
-                    //
-                    // *last_interval = curr_interval;
-                    return;
+
+                    if !path.last().unwrap().1.is_read_not_obsolete() {
+                        parent_index -= 1;
+                    }
+                    else {
+                        return;
+                    }
                 }
             }
         }

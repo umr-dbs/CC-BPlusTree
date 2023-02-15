@@ -117,6 +117,9 @@ impl<const FAN_OUT: usize,
                 }
             }
             Transaction::Range(interval) => {
+
+
+
                 unimplemented!("RangeSearch in olc not implemented yet!")
             }
             Transaction::Empty => TransactionResult::Error,

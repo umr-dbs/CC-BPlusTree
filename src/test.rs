@@ -98,7 +98,8 @@ pub fn simple_test() {
 
     // let mut keys_insert = gen_rand_data(10_000_000);
 
-    let tree = MAKE_INDEX_MULTI(LockingStrategy::OLC(LevelConstraints::Unlimited));
+    let tree = MAKE_INDEX(
+        LockingStrategy::MonoWriter);
     let mut search_queries = vec![];
 
     for (i, tx) in keys_insert.into_iter().enumerate() {
@@ -263,7 +264,7 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
                     };
                     // }
 
-                    if index.locking_strategy.is_olc() {
+                    if index.locking_strategy.is_olc() || true {
                         match index.execute(Transaction::Range((key..=key).into())) {
                             TransactionResult::MatchedRecords(records)
                             if records.len() != 1 =>

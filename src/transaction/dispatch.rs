@@ -116,14 +116,23 @@ impl<const FAN_OUT: usize,
                     _ => TransactionResult::Error
                 }
             }
-            Transaction::Range(interval) => {
-
-
-
-                unimplemented!("RangeSearch in olc not implemented yet!")
-            }
+            Transaction::Range(interval) => self
+                .traversal_read_range_deterministic(
+                    &interval,
+                    self.lock_reader(&self.root.get().block))
+                .into_iter()
+                .flat_map(|leafs| leafs
+                    .deref()
+                    .unwrap()
+                    .as_ref()
+                    .records_mut()
+                    .iter()
+                    .filter(|record| interval.contains(record.key))
+                    .cloned()
+                    .collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+                .into(),
             Transaction::Empty => TransactionResult::Error,
-            _ => unimplemented!("Not impl yet!"),
         }
     }
 }

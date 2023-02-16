@@ -633,7 +633,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_read_range_OLC_internal(&self, key_low: Key)
-        -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
+                                         -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
     {
         let root
             = self.root.get();
@@ -696,13 +696,12 @@ impl<const FAN_OUT: usize,
                 Node::Leaf(..) => {
                     if current_guard.is_obsolete() {
                         path.clear();
-                    }
-                    else {
+                    } else {
                         path.push((key_interval, current_guard));
                     }
 
-                    break path
-                },
+                    break path;
+                }
             }
         }
     }
@@ -720,6 +719,41 @@ impl<const FAN_OUT: usize,
                 }
                 path => break path,
             }
+        }
+    }
+
+    pub(crate) fn traversal_read_range_deterministic(&self,
+                                                     current_range: &Interval<Key>,
+                                                     current_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
+                                                     -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>>
+    {
+        match current_guard.deref().unwrap().as_ref() {
+            Node::Index(index_page) => {
+                let keys
+                    = index_page.keys();
+
+                let children
+                    = index_page.children();
+
+                let mut window = keys.iter()
+                    .enumerate()
+                    .skip_while(|(_, k)| current_range.lower().gt(*k))
+                    .take_while(|(_, k)| current_range.upper().le(*k))
+                    .map(|(pos, _)| children.get(pos).unwrap())
+                    .collect::<Vec<_>>();
+
+                if current_range.lower().le(keys.last().unwrap()) {
+                    window.push(children.last().unwrap())
+                }
+
+                window.into_iter()
+                    .flat_map(|child| self.traversal_read_range_deterministic(
+                        &current_range,
+                        self.lock_reader(child)))
+                    .skip_while(|page| page.deref().unwrap().is_directory())
+                    .collect::<Vec<_>>()
+            }
+            _ => vec![unsafe { mem::transmute(current_guard) }],
         }
     }
 }

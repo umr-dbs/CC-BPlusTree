@@ -145,7 +145,7 @@ impl<const FAN_OUT: usize,
                 Node::Leaf(..) => {
                     path.truncate(parent_index + 1);
 
-                    if !path.last().unwrap().1.is_read_not_obsolete() {
+                    if path.last().unwrap().1.is_obsolete() {
                         parent_index -= 1;
                     }
                     else {
@@ -169,25 +169,32 @@ impl<const FAN_OUT: usize,
 
         match leaf_unchecked {
             Node::Leaf(leaf_page) if interval.overlap(&key_interval) => unsafe {
-                // println!("Records in Leaf = {}", leaf_page
-                //     .as_records_mut().iter().join(","));
-                let mut potential_results = leaf_page
-                    .as_records()
-                    .iter()
-                    .skip_while(|record| record.key.lt(&key_interval.lower()))
-                    .take_while(|record| record.key.le(&key_interval.upper()))
-                    .map(|record| record.unsafe_clone())
-                    .collect::<Vec<_>>();
+                let (read, current_read_version)
+                    = leaf.is_read_not_obsolete_result();
 
-                // println!("Filtered Records = {}", potential_results.iter().join(","));
-                if leaf.is_valid() {
-                    potential_results
-                } else {
-                    potential_results.set_len(0);
-                    let parent_index = path.len() - 2;
-                    self.next_leaf_page(path, parent_index, key_interval.lower());
-                    self.range_query_leaf_results(path, key_interval)
+                if read {
+                    // println!("Records in Leaf = {}", leaf_page
+                    //     .as_records_mut().iter().join(","));
+                    let mut potential_results = leaf_page
+                        .as_records()
+                        .iter()
+                        .skip_while(|record| record.key.lt(&key_interval.lower()))
+                        .take_while(|record| record.key.le(&key_interval.upper()))
+                        .map(|record| record.unsafe_clone())
+                        .collect::<Vec<_>>();
+
+                    // println!("Filtered Records = {}", potential_results.iter().join(","));
+                    if leaf.cell_version_olc() == current_read_version { // avoid write in-between
+                        return potential_results
+                    }
+                    else {
+                        potential_results.set_len(0);
+                    }
                 }
+
+                let parent_index = path.len() - 2;
+                self.next_leaf_page(path, parent_index, key_interval.lower());
+                self.range_query_leaf_results(path, key_interval)
             }
             Node::Leaf(..) => Vec::with_capacity(0),
             _ => unreachable!("Found Index but expected leaf = {}", leaf_unchecked)

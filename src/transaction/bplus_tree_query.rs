@@ -694,7 +694,7 @@ impl<const FAN_OUT: usize,
                     current_guard = self.lock_reader(&next_node);
                 }
                 Node::Leaf(..) => {
-                    if !current_guard.is_read_not_obsolete() {
+                    if current_guard.is_obsolete() {
                         path.clear();
                     }
                     else {

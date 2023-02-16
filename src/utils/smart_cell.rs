@@ -183,6 +183,12 @@ impl<E: Default> OptCell<E> {
     pub fn is_read_not_obsolete(&self) -> bool {
         self.load_version() & WRITE_OBSOLETE_FLAG_VERSION == 0
     }
+
+    #[inline(always)]
+    pub fn is_read_not_obsolete_result(&self) -> (bool, LatchVersion) {
+        let load = self.load_version();
+        (load & WRITE_OBSOLETE_FLAG_VERSION == 0, load)
+    }
 }
 
 #[derive(Default)]
@@ -244,6 +250,14 @@ impl<E: Default> SmartFlavor<E> {
         match self {
             OLCCell(opt) => opt.is_read_not_obsolete(),
             _ => true
+        }
+    }
+
+    #[inline(always)]
+    fn is_read_not_obsolete_result(&self) -> (bool, LatchVersion) {
+        match self {
+            OLCCell(opt) => opt.is_read_not_obsolete_result(),
+            _ => (true, LatchVersion::MIN)
         }
     }
 
@@ -389,6 +403,16 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             OLCWriter(None) => false,
             OLCReader(None) => false,
             _ => true
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_read_not_obsolete_result(&self) -> (bool, LatchVersion) {
+        match self {
+            OLCReader(Some((cell, ..))) => cell.is_read_not_obsolete_result(),
+            OLCWriter(None) => (false, LatchVersion::MIN),
+            OLCReader(None) => (false, LatchVersion::MIN),
+            _ => (true, LatchVersion::MIN)
         }
     }
 

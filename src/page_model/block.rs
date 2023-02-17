@@ -96,7 +96,6 @@ impl<const FAN_OUT: usize,
     }
 }
 
-
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash,

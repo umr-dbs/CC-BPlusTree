@@ -1,5 +1,7 @@
 use std::hash::Hash;
 use std::mem;
+use itertools::{EitherOrBoth, Itertools};
+use CCBPlusTree::page_model::BlockRef;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::page_model::{Attempts, Height, Level};
@@ -706,8 +708,9 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    #[inline]
     pub(crate) fn traversal_read_range_OLC(&self, key: Key)
-        -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
+                                           -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
     {
         let mut attempt = 0;
 
@@ -722,35 +725,33 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    #[inline]
     pub(crate) fn traversal_read_range_deterministic(&self,
                                                      current_range: &Interval<Key>,
                                                      current_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
                                                      -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
         match current_guard.deref().unwrap().as_ref() {
-            Node::Index(index_page) => {
+            Node::Index(index_page) => unsafe {
                 let keys
                     = index_page.keys();
 
-                let children
-                    = index_page.children();
+                let first_pos = match keys.binary_search(&current_range.lower) {
+                    Ok(pos) => pos,
+                    Err(pos) => pos
+                };
 
-                let mut window = keys.iter()
-                    .enumerate()
-                    .skip_while(|(_, k)| current_range.lower().gt(*k))
-                    .take_while(|(_, k)| current_range.upper().le(*k))
-                    .map(|(pos, _)| children.get(pos).unwrap())
-                    .collect::<Vec<_>>();
+                let last_pos = match keys.binary_search(&(self.inc_key)(current_range.upper)) {
+                    Ok(pos) => pos,
+                    Err(pos) => pos
+                };
 
-                if current_range.lower().le(keys.last().unwrap()) {
-                    window.push(children.last().unwrap())
-                }
-
-                window.into_iter()
+                index_page.children()
+                    .get_unchecked(first_pos..=last_pos)
+                    .iter()
                     .flat_map(|child| self.traversal_read_range_deterministic(
                         &current_range,
                         self.lock_reader(child)))
-                    .skip_while(|page| page.deref().unwrap().is_directory())
                     .collect::<Vec<_>>()
             }
             _ => vec![unsafe { mem::transmute(current_guard) }],

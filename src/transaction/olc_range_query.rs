@@ -162,13 +162,13 @@ impl<const FAN_OUT: usize,
                                 key_interval: &Interval<Key>)
                                 -> Vec<RecordPoint<Key, Payload>>
     {
-        let (interval, leaf)
+        let (.., leaf)
             = path.last().unwrap();
 
         let leaf_unchecked = unsafe { leaf.deref_unsafe() }.unwrap().as_ref();
 
         match leaf_unchecked {
-            Node::Leaf(leaf_page) if interval.overlap(&key_interval) => unsafe {
+            Node::Leaf(leaf_page) => unsafe {
                 let (read, current_read_version)
                     = leaf.is_read_not_obsolete_result();
 
@@ -196,7 +196,6 @@ impl<const FAN_OUT: usize,
                 self.next_leaf_page(path, parent_index, key_interval.lower());
                 self.range_query_leaf_results(path, key_interval)
             }
-            Node::Leaf(..) => Vec::with_capacity(0),
             _ => unreachable!("Found Index but expected leaf = {}", leaf_unchecked)
         }
     }

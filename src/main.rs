@@ -26,7 +26,7 @@ fn main() {
     show_alignment_bsz();
     simple_test();
     // simple_test2();
-    // experiment();
+    experiment();
     //
     // experiment2();
 }

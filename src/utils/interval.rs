@@ -9,8 +9,8 @@ pub type U64interval = Interval<u64>;
 
 #[derive(Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize)]
 pub struct Interval<E: Ord + Copy + Hash> {
-    lower: E,
-    upper: E,
+    pub lower: E,
+    pub upper: E,
 }
 
 impl U64interval {

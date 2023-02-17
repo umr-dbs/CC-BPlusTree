@@ -69,9 +69,9 @@ pub fn simple_test() {
     ];
 
     let keys_insert_org: Vec<Key> = vec![
-        8, 11, 19, 33, 24, 36, 34, 25, 12, 37, 14, 10, 45, 31, 18,];
-      //  3, 9, 5, 2, 13, 40, 38, 41, 27, 16, 28, 42, 1, 43, 23, 26,
-       // 44, 17, 29, 39, 20, 6, 4, 7, 30, 21, 35, 8];
+        8, 11, 19, 33, 24, 36, 34, 25, 12, 37, 14, 10, 45, 31, 18, ];
+    //  3, 9, 5, 2, 13, 40, 38, 41, 27, 16, 28, 42, 1, 43, 23, 26,
+    // 44, 17, 29, 39, 20, 6, 4, 7, 30, 21, 35, 8];
 
     // let mut rand = rand::thread_rng();
     // let mut keys_insert = gen_rand_data(1_000);
@@ -180,8 +180,8 @@ pub fn simple_test() {
     show_alignment_bsz();
 
     let range = Interval::new(
-        0,
-        33,
+        18,
+        36,
     );
 
     let matches = keys_insert_org
@@ -248,35 +248,28 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
                 TransactionResult::Inserted(key, ..) |
                 TransactionResult::Updated(key, ..) => if EXE_LOOK_UPS
                 {
-                    // loop {
                     match index.execute(Transaction::Point(key)) {
                         TransactionResult::MatchedRecord(Some(record))
-                        if record.key == key => {}//,
-                        // TransactionResult::MatchedRecordVersioned(Some(record))
-                        // if record.key() == key => {}//,
+                        if record.key == key => {}
                         joe => { //  if !index.locking_strategy().is_dolos()
                             log_debug_ln(format!("\nERROR Search -> Transaction::{}",
                                                  Transaction::<_, Payload>::Point(key)));
                             log_debug_ln(format!("\n****ERROR: {}, TransactionResult::{}", index.locking_strategy, joe));
                             panic!()
                         }
-                        // _ => {}
                     };
-                    // }
 
-                    if index.locking_strategy.is_olc() || true {
-                        match index.execute(Transaction::Range((key..=key).into())) {
-                            TransactionResult::MatchedRecords(records)
-                            if records.len() != 1 =>
-                                panic!("Sleepy Joe => len = {} - {}",
-                                       records.len(),
-                                       records.iter().join("\n")),
-                            TransactionResult::MatchedRecords(ref records)
-                            if records[0].key != key =>
-                                panic!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
-                            _ => {}
-                        };
-                    }
+                    match index.execute(Transaction::Range((key..=key).into())) {
+                        TransactionResult::MatchedRecords(records)
+                        if records.len() != 1 =>
+                            panic!("Sleepy Joe => len = {} - {}",
+                                   records.len(),
+                                   records.iter().join("\n")),
+                        TransactionResult::MatchedRecords(ref records)
+                        if records[0].key != key =>
+                            panic!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
+                        _ => {}
+                    };
                 },
                 joey => {
                     log_debug_ln(format!("\n#### ERROR: {}, {}", index.locking_strategy, joey));

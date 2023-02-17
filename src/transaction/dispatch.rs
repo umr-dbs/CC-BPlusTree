@@ -16,11 +16,6 @@ impl<const FAN_OUT: usize,
 {
     pub fn execute(&self, transaction: Transaction<Key, Payload>) -> TransactionResult<Key, Payload> {
         match transaction {
-            Transaction::Range(key_interval)
-            if self.locking_strategy.is_olc() => self.range_query_olc(
-                &mut self.traversal_read_range_OLC(key_interval.lower()),
-                key_interval,
-            ),
             Transaction::Delete(key) => {
                 let guard
                     = self.traversal_write(key);
@@ -116,18 +111,23 @@ impl<const FAN_OUT: usize,
                     _ => TransactionResult::Error
                 }
             }
+            Transaction::Range(key_interval) if self.locking_strategy.is_olc() => self.range_query_olc(
+                &mut self.traversal_read_range_OLC(key_interval.lower()),
+                key_interval,
+            ),
             Transaction::Range(interval) => self
                 .traversal_read_range_deterministic(
                     &interval,
-                    self.lock_reader(&self.root.get().block))
+                    self.lock_reader(&self.root.get().block()))
                 .into_iter()
                 .flat_map(|leafs| leafs
                     .deref()
                     .unwrap()
                     .as_ref()
-                    .records_mut()
+                    .as_records()
                     .iter()
-                    .filter(|record| interval.contains(record.key))
+                    .skip_while(|record| !interval.contains(record.key))
+                    .take_while(|record| interval.contains(record.key))
                     .cloned()
                     .collect::<Vec<_>>())
                 .collect::<Vec<_>>()

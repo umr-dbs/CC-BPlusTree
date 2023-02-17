@@ -150,6 +150,15 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    #[inline(always)]
+    pub fn as_records(&self) -> &[RecordPoint<Key, Payload>] {
+        match self {
+            Node::Leaf(records_page) =>
+                records_page.as_records(),
+            _ => unreachable!("Sleepy Joe hit me -> Not index Page .records_mut")
+        }
+    }
+
     // #[inline(always)]
     // pub fn record_lists_mut(&self) -> ShadowVec<RecordList<Key, Payload>> {
     //     match self {

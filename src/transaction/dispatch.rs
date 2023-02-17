@@ -115,23 +115,28 @@ impl<const FAN_OUT: usize,
                 &mut self.traversal_read_range_OLC(key_interval.lower()),
                 key_interval,
             ),
-            Transaction::Range(interval) => self
-                .traversal_read_range_deterministic(
-                    &interval,
-                    self.lock_reader(&self.root.get().block()))
-                .into_iter()
-                .flat_map(|leafs| leafs
-                    .deref()
-                    .unwrap()
-                    .as_ref()
-                    .as_records()
-                    .iter()
-                    .skip_while(|record| !interval.contains(record.key))
-                    .take_while(|record| interval.contains(record.key))
-                    .cloned()
-                    .collect::<Vec<_>>())
-                .collect::<Vec<_>>()
-                .into(),
+            Transaction::Range(interval) => {
+                let root
+                    = self.root.block();
+
+                self.traversal_read_range_deterministic(
+                        &interval,
+                        root.clone(),
+                        self.lock_reader(&root))
+                    .into_iter()
+                    .flat_map(|(_block, leaf)| leaf
+                        .deref()
+                        .unwrap()
+                        .as_ref()
+                        .as_records()
+                        .iter()
+                        .skip_while(|record| !interval.contains(record.key))
+                        .take_while(|record| interval.contains(record.key))
+                        .cloned()
+                        .collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+                    .into()
+            },
             Transaction::Empty => TransactionResult::Error,
         }
     }

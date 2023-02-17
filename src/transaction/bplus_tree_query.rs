@@ -1,10 +1,9 @@
 use std::hash::Hash;
 use std::mem;
 use itertools::{EitherOrBoth, Itertools};
-use CCBPlusTree::page_model::BlockRef;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
-use crate::page_model::{Attempts, Height, Level};
+use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::block::BlockGuard;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::utils::interval::Interval;
@@ -726,10 +725,12 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub(crate) fn traversal_read_range_deterministic(&self,
-                                                     current_range: &Interval<Key>,
-                                                     current_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
-                                                     -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>>
+    pub(crate) fn traversal_read_range_deterministic(
+        &self,
+        current_range: &Interval<Key>,
+        current_block: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        current_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
+    -> Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
     {
         match current_guard.deref().unwrap().as_ref() {
             Node::Index(index_page) => unsafe {
@@ -751,10 +752,11 @@ impl<const FAN_OUT: usize,
                     .iter()
                     .flat_map(|child| self.traversal_read_range_deterministic(
                         &current_range,
-                        self.lock_reader(child)))
+                        child.clone(),
+                        self.lock_reader(&child)))
                     .collect::<Vec<_>>()
             }
-            _ => vec![unsafe { mem::transmute(current_guard) }],
+            _ => vec![(current_block, unsafe { mem::transmute(current_guard) })],
         }
     }
 }

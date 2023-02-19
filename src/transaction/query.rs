@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
 use itertools::{EitherOrBoth, Itertools};
@@ -9,7 +10,7 @@ use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::sched_yield;
 
-const DEBUG: bool = false;
+pub const DEBUG: bool = false;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -18,7 +19,7 @@ impl<const FAN_OUT: usize,
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    fn has_overflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
+    pub(crate) fn has_overflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
         match node.is_leaf() {
             true => node.is_overflow(self.block_manager.allocation_leaf()),
             false => node.is_overflow(self.block_manager.allocation_directory())
@@ -40,7 +41,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
+    pub(crate) fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
                      -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
     {
         let is_olc = self.locking_strategy.is_olc();
@@ -269,7 +270,7 @@ impl<const FAN_OUT: usize,
         Ok((root_guard, n_height))
     }
 
-    fn do_overflow_correction(
+    pub(crate) fn do_overflow_correction(
         &self,
         parent_guard: &mut BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         child_pos: usize,
@@ -422,53 +423,31 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
-                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
+    pub(crate) fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
+                                    -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
     {
         let mut curr_level = INIT_TREE_HEIGHT;
 
         let (mut current_guard, height, lock_level, attempt)
             = self.retrieve_root(lock_level, attempt);
 
+        let key = (self.inc_key)(key);
         loop {
             let current_guard_result
                 = current_guard.deref();
-
-            if current_guard_result.is_none() {
-                mem::drop(height);
-                mem::drop(current_guard);
-
-                if DEBUG {
-                    println!("6 \tAttempt = {}", attempt);
-                }
-
-                return Err((curr_level - 1, attempt + 1));
-            }
 
             match current_guard_result.unwrap().as_ref() {
                 Node::Index(index_page) => {
                     let keys = index_page.keys();
                     let children = index_page.children();
 
-                    let (next_node, child_pos) = keys
-                        .iter()
-                        .enumerate()
-                        .find(|(_, k)| key.lt(k))
-                        .map(|(pos, _)| (children.get(pos).cloned(), pos))
-                        .unwrap_or_else(|| (children.last().cloned(), keys.len()));
+                    let (child_pos, next_node)
+                        = match keys.binary_search(&key)
+                    {
+                        Ok(pos) => (pos, unsafe { children.get_unchecked(pos).clone() }),
+                        Err(pos) => (pos, unsafe {  children.get_unchecked(pos).clone() })
+                    };
 
-                    if next_node.is_none() || !current_guard.is_valid() {
-                        mem::drop(next_node);
-                        mem::drop(current_guard);
-
-                        if DEBUG {
-                            println!("8 \tAttempt = {}", attempt);
-                        }
-
-                        return Err((curr_level - 1, attempt + 1));
-                    }
-
-                    let next_node = next_node.unwrap();
                     curr_level += 1;
 
                     let mut next_guard = self.apply_for(
@@ -480,18 +459,6 @@ impl<const FAN_OUT: usize,
 
                     let next_guard_result
                         = next_guard.deref();
-
-                    if next_guard_result.is_none() || !current_guard.is_valid() {
-                        mem::drop(height);
-                        mem::drop(next_guard);
-                        mem::drop(current_guard);
-
-                        if DEBUG {
-                            println!("9 \tAttempt = {}", attempt);
-                        }
-
-                        return Err((curr_level - 1, attempt + 1));
-                    }
 
                     let has_overflow_next
                         = self.has_overflow(next_guard_result.unwrap());
@@ -519,16 +486,6 @@ impl<const FAN_OUT: usize,
                             &mut current_guard,
                             child_pos,
                             next_guard)
-                    } else if !current_guard.is_valid() || !next_guard.is_valid() {
-                        mem::drop(height);
-                        mem::drop(next_guard);
-                        mem::drop(current_guard);
-
-                        if DEBUG {
-                            println!("11 \tAttempt = {}", attempt);
-                        }
-
-                        return Err((curr_level - 1, attempt + 1));
                     } else {
                         current_guard = next_guard;
                     }
@@ -538,8 +495,6 @@ impl<const FAN_OUT: usize,
                 } else {
                     Err((curr_level - 1, attempt + 1))
                 },
-                // _ if current_guard.upgrade_write_lock() => return Ok(current_guard),
-                // _ => return Err((curr_level - 1, attempt + 1))
             }
         }
     }
@@ -548,17 +503,12 @@ impl<const FAN_OUT: usize,
     pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
-        let olc = self.locking_strategy.is_olc();
 
         loop {
             match self.traversal_write_internal(lock_level, attempt, key) {
                 Err((n_lock_level, n_attempt)) => {
                     attempt = n_attempt;
                     lock_level = n_lock_level;
-
-                    if olc {
-                        sched_yield(attempt);
-                    }
                 }
                 Ok(guard) => break guard,
             }
@@ -566,197 +516,85 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn traversal_read_internal(&self, key: Key) -> Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        let root
-            = self.root.get();
-
-        // let root
-        //     = self.root.clone();
+    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        let mut current_block
+            = self.root.block();
 
         let mut current_guard
-            = self.lock_reader(&root.block);
+            = self.lock_reader(&current_block);
 
+        let key = (self.inc_key)(key);
         loop {
             let current
                 = current_guard.deref();
 
-            if current.is_none() {
-                mem::drop(current_guard);
-
-                return None;
-            }
-
             match current.unwrap().as_ref() {
                 Node::Index(index_page) => {
-                    let keys = index_page.keys();
-                    let children = index_page.children();
-
-                    let next_node = keys
-                        .iter()
-                        .enumerate()
-                        .find(|(_, k)| key.lt(k))
-                        .map(|(pos, _)| children.get(pos).cloned())
-                        .unwrap_or_else(|| children.last().cloned());
-
-                    if next_node.is_none() || !current_guard.is_valid() {
-                        return None;
+                    current_guard = match index_page.keys().binary_search(&key) {
+                        Ok(pos) => unsafe {
+                            current_block = index_page.children().get_unchecked(pos).clone();
+                            self.lock_reader(&current_block)
+                        },
+                        Err(pos) => unsafe {
+                            current_block = index_page.children().get_unchecked(pos).clone();
+                            self.lock_reader(&current_block)
+                        }
                     }
-
-                    let next_node
-                        = next_node.unwrap();
-
-                    current_guard = self.lock_reader(&next_node);
                 }
-                _ => break Some(current_guard),
+                _ => break current_guard,
             }
         }
     }
 
     #[inline]
-    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        let mut attempt = 0;
-        let olc = self.locking_strategy.is_olc();
-        // let olc_limited = self.locking_strategy.is_olc_limited();
-
-        loop {
-            match self.traversal_read_internal(key) {
-                Some(guard) => break guard,
-                _ => {
-                    attempt += 1;
-
-                    if olc {
-                        sched_yield(attempt)
-                    }
-                }
-            }
-        }
-    }
-
-    #[inline]
-    fn traversal_read_range_OLC_internal(&self, key_low: Key)
-                                         -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
+    pub(crate) fn traversal_read_range(
+        &self,
+        current_range: &Interval<Key>)
+    -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
-        let root
-            = self.root.get();
+        let root_block
+            = self.root.block();
+
+        let mut current_guard
+            = self.lock_reader(&root_block);
 
         let mut path
-            = Vec::with_capacity(self.height() as _);
+            = VecDeque::new();
 
-        let mut key_interval
-            = Interval::new(self.min_key, self.max_key);
+        path.push_back(current_guard);
 
-        let mut current_guard
-            = self.lock_reader(&root.block);
+        let mut results
+            = Vec::new();
 
-        // path.push((key_interval.clone(), self.lock_reader(&root.block)));
+        while !path.is_empty() {
+            current_guard
+                = path.pop_front().unwrap();
 
-        loop {
-            let current
-                = current_guard.deref();
+            match current_guard.deref().unwrap().as_ref() {
+                Node::Index(index_page) => unsafe {
+                    let keys
+                        = index_page.keys();
 
-            if current.is_none() {
-                mem::drop(current_guard);
+                    let first_pos = match keys.binary_search(&current_range.lower) {
+                        Ok(pos) => pos,
+                        Err(pos) => pos
+                    };
 
-                path.clear();
-                return path;
-            }
+                    let last_pos = match keys.binary_search(&(self.inc_key)(current_range.upper)) {
+                        Ok(pos) => pos,
+                        Err(pos) => pos
+                    };
 
-            match current.unwrap().as_ref() {
-                Node::Index(index_page) => {
-                    let keys = index_page.keys();
-                    let children = index_page.children();
-
-                    let (index_of_child, next_node) = keys
+                    path.extend(index_page.children()
+                        .get_unchecked(first_pos..=last_pos)
                         .iter()
-                        .enumerate()
-                        .find(|(_, k)| key_low.lt(k))
-                        .map(|(pos, _)| (pos, children.get(pos).cloned()))
-                        .unwrap_or_else(|| (keys.len(), children.last().cloned()));
-
-                    if next_node.is_none() || !current_guard.is_valid() {
-                        path.clear();
-                        return path;
-                    }
-
-                    let next_node
-                        = next_node.unwrap();
-
-                    let old_interval = key_interval.clone();
-                    key_interval = Interval::new(
-                        keys.get(index_of_child - 1)
-                            .cloned()
-                            .unwrap_or(key_interval.lower()),
-                        keys.get(index_of_child)
-                            .cloned()
-                            .map(|max| (self.dec_key)(max))
-                            .unwrap_or(key_interval.upper()));
-
-                    path.push((old_interval, current_guard));
-                    current_guard = self.lock_reader(&next_node);
+                        .map(|child|
+                            mem::transmute(self.lock_reader(child))));
                 }
-                Node::Leaf(..) => {
-                    if current_guard.is_obsolete() {
-                        path.clear();
-                    } else {
-                        path.push((key_interval, current_guard));
-                    }
-
-                    break path;
-                }
+                _ => results.push(unsafe { mem::transmute(current_guard) }),
             }
         }
-    }
 
-    #[inline]
-    pub(crate) fn traversal_read_range_OLC(&self, key: Key)
-                                           -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
-    {
-        let mut attempt = 0;
-
-        loop {
-            match self.traversal_read_range_OLC_internal(key) {
-                path if path.is_empty() => {
-                    attempt += 1;
-                    sched_yield(attempt)
-                }
-                path => break path,
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn traversal_read_range_deterministic(
-        &self,
-        current_range: &Interval<Key>,
-        current_block: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        current_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
-    -> Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
-    {
-        match current_guard.deref().unwrap().as_ref() {
-            Node::Index(index_page) => unsafe {
-                let keys
-                    = index_page.keys();
-
-                let first_pos = match keys.binary_search(&current_range.lower) {
-                    Ok(pos) => pos,
-                    Err(pos) => pos
-                };
-
-                let last_pos = match keys.binary_search(&(self.inc_key)(current_range.upper)) {
-                    Ok(pos) => pos,
-                    Err(pos) => pos
-                };
-
-                index_page.children()
-                    .get_unchecked(first_pos..=last_pos)
-                    .iter()
-                    .flat_map(|child| self.traversal_read_range_deterministic(
-                        &current_range,
-                        child.clone(),
-                        self.lock_reader(&child)))
-                    .collect::<Vec<_>>()
-            }
-            _ => vec![(current_block, unsafe { mem::transmute(current_guard) })],
-        }
+        results
     }
 }

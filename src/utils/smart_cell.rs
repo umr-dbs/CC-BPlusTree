@@ -298,8 +298,8 @@ pub enum SmartGuard<'a, E: Default> {
     RwReader(RwLockReadGuard<'a, RawRwLock, ()>, *const E),
     RwWriter(RwLockWriteGuard<'a, RawRwLock, ()>, *mut E),
     MutExclusive(MutexGuard<'a, RawMutex, ()>, *mut E),
-    OLCReader(Option<(Arc<SmartFlavor<E>>, LatchVersion)>),
-    OLCWriter(Option<(Arc<SmartFlavor<E>>, LatchVersion)>),
+    OLCReader(Option<(SmartCell<E>, LatchVersion)>),
+    OLCWriter(Option<(SmartCell<E>, LatchVersion)>),
 }
 
 impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
@@ -316,7 +316,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn mark_obsolete(&self) -> bool {
         if let OLCWriter(Some((cell, latch))) = self {
-            if let OLCCell(opt) = cell.as_ref() {
+            if let OLCCell(opt) = cell.0.as_ref() {
                 opt.write_obsolete(*latch);
                 return true;
             }
@@ -342,7 +342,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             MutExclusive(..) => true,
             OLCWriter(Some(..)) => true,
             OLCReader(Some((cell, latch))) => {
-                if let OLCCell(opt) = cell.as_ref() {
+                if let OLCCell(opt) = cell.0.as_ref() {
                     if let Some(write_latch) = opt.write_lock(*latch) {
                         *self = OLCWriter(Some((cell.clone(), write_latch)));
                         return true;
@@ -378,7 +378,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
         match self {
-            OLCReader(Some((cell, latch))) => cell
+            OLCReader(Some((cell, latch))) => cell.0
                 .is_read_valid(*latch),
             OLCWriter(None) => false,
             OLCReader(None) => false,
@@ -389,7 +389,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn is_obsolete(&self) -> bool {
         match self {
-            OLCReader(Some((cell, ..))) => cell.is_obsolete(),
+            OLCReader(Some((cell, ..))) => cell.0.is_obsolete(),
             OLCWriter(None) => true,
             OLCReader(None) => true,
             _ => false
@@ -399,7 +399,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn is_read_not_obsolete(&self) -> bool {
         match self {
-            OLCReader(Some((cell, ..))) => cell.is_read_not_obsolete(),
+            OLCReader(Some((cell, ..))) => cell.0.is_read_not_obsolete(),
             OLCWriter(None) => false,
             OLCReader(None) => false,
             _ => true
@@ -409,7 +409,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn is_read_not_obsolete_result(&self) -> (bool, LatchVersion) {
         match self {
-            OLCReader(Some((cell, ..))) => cell.is_read_not_obsolete_result(),
+            OLCReader(Some((cell, ..))) => cell.0.is_read_not_obsolete_result(),
             OLCWriter(None) => (false, LatchVersion::MIN),
             OLCReader(None) => (false, LatchVersion::MIN),
             _ => (true, LatchVersion::MIN)
@@ -424,10 +424,10 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             RwWriter(.., ptr) => unsafe { ptr.as_ref() },
             MutExclusive(.., ptr) => unsafe { ptr.as_ref() },
             OLCReader(Some((cell, latch)))
-            if cell.is_read_valid(*latch) =>
-                Some(cell.as_ref()),
+            if cell.0.is_read_valid(*latch) =>
+                Some(cell.0.as_ref()),
             OLCWriter(Some((cell, ..))) =>
-                Some(cell.as_ref()),
+                Some(cell.0.as_ref()),
             _ => None
         }
     }
@@ -439,8 +439,8 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             RwReader(.., ptr) => ptr.as_ref(),
             RwWriter(.., ptr) => ptr.as_ref(),
             MutExclusive(.., ptr) => ptr.as_ref(),
-            OLCReader(Some((cell, ..))) => Some(cell.as_ref()),
-            OLCWriter(Some((cell, ..))) => Some(cell.as_ref()),
+            OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
+            OLCWriter(Some((cell, ..))) => Some(cell.0.as_ref()),
             _ => None
         }
     }
@@ -451,7 +451,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             LockFree(ptr) => unsafe { ptr.as_mut() },
             RwWriter(.., ptr) => unsafe { ptr.as_mut() },
             MutExclusive(.., ptr) => unsafe { ptr.as_mut() },
-            OLCWriter(Some((cell, ..))) => Some(cell.as_mut()),
+            OLCWriter(Some((cell, ..))) => Some(cell.0.as_mut()),
             _ => None
         }
     }
@@ -496,7 +496,7 @@ impl<E: Default> SmartCell<E> {
                 let (success, read)
                     = opt.read_lock();
 
-                OLCReader(success.then(|| (self.0.clone(), read)))
+                OLCReader(success.then(|| (self.clone(), read)))
             }
         }
     }
@@ -531,7 +531,7 @@ impl<E: Default> SmartCell<E> {
                     OLCWriter(None)
                 } else {
                     if let Some(latched) = opt.write_lock(read) {
-                        OLCWriter(Some((self.0.clone(), latched)))
+                        OLCWriter(Some((self.clone(), latched)))
                     } else {
                         OLCWriter(None)
                     }
@@ -545,7 +545,7 @@ impl<'a, E: Default> Drop for SmartGuard<'a, E> {
     fn drop(&mut self) {
         if let OLCWriter(Some((cell, write_version))) = self {
             // if *read_version & OBSOLETE_FLAG_VERSION == 0 {
-                if let OLCCell(opt) = cell.as_ref() {
+                if let OLCCell(opt) = cell.0.as_ref() {
                     opt.write_unlock(*write_version);
                 }
             // }

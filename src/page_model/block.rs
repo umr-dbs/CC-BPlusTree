@@ -143,12 +143,12 @@ impl<'a,
         match self {
             BlockGuard::OLCWriter(Some((.., latch))) => *latch,
             BlockGuard::OLCReader(Some((cell, ..))) =>
-                if let SmartFlavor::OLCCell(opt) = cell.as_ref() {
+                if let SmartFlavor::OLCCell(opt) = cell.0.as_ref() {
                     opt.load_version_force()
                 } else {
-                    unreachable!()
+                    Version::MIN
                 },
-            _ => unreachable!()
+            _ => Version::MIN
         }
     }
 

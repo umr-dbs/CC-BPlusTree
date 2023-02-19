@@ -192,12 +192,12 @@ pub fn simple_test() {
     let results
         = tree.execute(Transaction::Range(range.clone()));
 
-    println!("Results of Range Query:\n{}\n\nExpected: \t{}\nFound: \t\t{}\nRange: {}", results, matches.count(), match results {
+    log_debug_ln(format!("Results of Range Query:\n{}\n\nExpected: \t{}\nFound: \t\t{}\nRange: {}", results, matches.count(), match results {
         TransactionResult::MatchedRecords(ref records) => records.len(),
         _ => 0
-    }, range);
+    }, range));
 
-    println!("Printing Tree:\n");
+    log_debug_ln(format!("Printing Tree:\n"));
     level_order(tree.root.block.clone());
     // json_index(&tree, "simple_tree.json");
 }

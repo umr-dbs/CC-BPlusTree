@@ -92,7 +92,7 @@ fn experiment() {
         32,
         64,
         128,
-        256,
+        // 256,
         // 512,
         // 1024,
     ];
@@ -116,7 +116,7 @@ fn experiment() {
         10_000_000,
         // 20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
@@ -171,7 +171,7 @@ fn experiment() {
                 .iter()
                 .for_each(|st| log_debug_ln(format!("\t\t\t\t{}", st)))
         } else {
-            log_debug_ln(format!("\t\t{}", strategies[0]));
+            println!("\t\t{}", strategies[0]);
             (&strategies[1..])
                 .iter()
                 .for_each(|st| log_debug_ln(format!("\t\t\t\t{}", st)))

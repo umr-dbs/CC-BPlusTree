@@ -15,7 +15,18 @@ impl<const FAN_OUT: usize,
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     pub fn execute(&self, transaction: Transaction<Key, Payload>) -> TransactionResult<Key, Payload> {
+        let olc = self.locking_strategy.is_olc();
         match transaction {
+            Transaction::Delete(key) if olc => {
+                let guard
+                    = self.traversal_write_olc(key);
+
+                guard.deref_mut()
+                    .unwrap()
+                    .delete_key(key)
+                    .map(|payload| TransactionResult::Deleted(key, payload))
+                    .unwrap_or_default()
+            }
             Transaction::Delete(key) => {
                 let guard
                     = self.traversal_write(key);
@@ -24,6 +35,16 @@ impl<const FAN_OUT: usize,
                     .unwrap()
                     .delete_key(key)
                     .map(|payload| TransactionResult::Deleted(key, payload))
+                    .unwrap_or_default()
+            }
+            Transaction::Insert(key, payload) if olc => {
+                let guard
+                    = self.traversal_write_olc(key);
+
+                guard.deref_mut()
+                    .unwrap()
+                    .push_record_point(key, payload)
+                    .then(|| TransactionResult::Inserted(key))
                     .unwrap_or_default()
             }
             Transaction::Insert(key, payload) => {
@@ -36,9 +57,9 @@ impl<const FAN_OUT: usize,
                     .then(|| TransactionResult::Inserted(key))
                     .unwrap_or_default()
             }
-            Transaction::Update(key, payload) => {
+            Transaction::Update(key, payload) if olc => {
                 let guard
-                    = self.traversal_write(key);
+                    = self.traversal_write_olc(key);
 
                 guard.deref_mut()
                     .unwrap()
@@ -46,9 +67,19 @@ impl<const FAN_OUT: usize,
                     .map(|old| TransactionResult::Updated(key, old))
                     .unwrap_or_default()
             }
-            Transaction::Point(key) if self.locking_strategy.is_olc() => unsafe {
+            Transaction::Update(key, payload) => {
                 let guard
-                    = self.traversal_read(key);
+                    = self.traversal_write_olc(key);
+
+                guard.deref_mut()
+                    .unwrap()
+                    .update_record_point(key, payload)
+                    .map(|old| TransactionResult::Updated(key, old))
+                    .unwrap_or_default()
+            }
+            Transaction::Point(key) if olc => unsafe {
+                let guard
+                    = self.traversal_read_olc(key);
 
                 let reader = guard
                     .deref();
@@ -111,32 +142,24 @@ impl<const FAN_OUT: usize,
                     _ => TransactionResult::Error
                 }
             }
-            Transaction::Range(key_interval) if self.locking_strategy.is_olc() => self.range_query_olc(
-                &mut self.traversal_read_range_OLC(key_interval.lower()),
+            Transaction::Range(key_interval) if olc => self.range_query_olc(
+                &mut self.traversal_read_range_olc(key_interval.lower()),
                 key_interval,
             ),
-            Transaction::Range(interval) => {
-                let root
-                    = self.root.block();
-
-                self.traversal_read_range_deterministic(
-                        &interval,
-                        root.clone(),
-                        self.lock_reader(&root))
-                    .into_iter()
-                    .flat_map(|(_block, leaf)| leaf
-                        .deref()
-                        .unwrap()
-                        .as_ref()
-                        .as_records()
-                        .iter()
-                        .skip_while(|record| !interval.contains(record.key))
-                        .take_while(|record| interval.contains(record.key))
-                        .cloned()
-                        .collect::<Vec<_>>())
-                    .collect::<Vec<_>>()
-                    .into()
-            },
+            Transaction::Range(interval) => self.traversal_read_range(&interval)
+                .into_iter()
+                .flat_map(|leaf| leaf
+                    .deref()
+                    .unwrap()
+                    .as_ref()
+                    .as_records()
+                    .iter()
+                    .skip_while(|record| !interval.contains(record.key))
+                    .take_while(|record| interval.contains(record.key))
+                    .cloned()
+                    .collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+                .into(),
             Transaction::Empty => TransactionResult::Error,
         }
     }

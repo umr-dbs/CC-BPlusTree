@@ -550,25 +550,28 @@ impl<const FAN_OUT: usize,
     pub(crate) fn traversal_read_range(
         &self,
         current_range: &Interval<Key>)
-    -> Vec<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>>
+    -> Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
     {
-        let root_block
+        let mut current_block
             = self.root.block();
 
         let mut current_guard
-            = self.lock_reader(&root_block);
+            = self.lock_reader(&current_block);
 
         let mut path
             = VecDeque::new();
 
-        path.push_back(current_guard);
+        path.push_back((current_block, current_guard));
 
         let mut results
             = Vec::new();
 
         while !path.is_empty() {
-            current_guard
+            let (n_current_block, n_current_guard)
                 = path.pop_front().unwrap();
+
+            current_guard = n_current_guard;
+            current_block = n_current_block;
 
             match current_guard.deref().unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
@@ -588,10 +591,10 @@ impl<const FAN_OUT: usize,
                     path.extend(index_page.children()
                         .get_unchecked(first_pos..=last_pos)
                         .iter()
-                        .map(|child|
-                            mem::transmute(self.lock_reader(child))));
+                        .map(|child|(child.clone(),
+                            mem::transmute(self.lock_reader(child)))));
                 }
-                _ => results.push(unsafe { mem::transmute(current_guard) }),
+                _ => results.push((current_block, unsafe { mem::transmute(current_guard) })),
             }
         }
 

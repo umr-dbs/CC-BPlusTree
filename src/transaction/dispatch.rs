@@ -6,6 +6,7 @@ use crate::page_model::node::Node;
 use crate::record_model::unsafe_clone::UnsafeClone;
 use crate::tx_model::transaction::Transaction;
 use crate::tx_model::transaction_result::TransactionResult;
+use crate::utils::interval::Interval;
 use crate::utils::smart_cell::WRITE_OBSOLETE_FLAG_VERSION;
 
 impl<const FAN_OUT: usize,
@@ -142,13 +143,21 @@ impl<const FAN_OUT: usize,
                     _ => TransactionResult::Error
                 }
             }
-            Transaction::Range(key_interval) if olc => self.range_query_olc(
-                &mut self.traversal_read_range_olc(key_interval.lower()),
-                key_interval,
-            ),
+            Transaction::Range(key_interval) if olc => {
+                let mut path = vec![
+                    (Interval::new(self.min_key, self.max_key),
+                     unsafe { mem::transmute(self.lock_reader(&self.root.block)) })
+                ];
+
+                self.next_leaf_page(path.as_mut(),
+                                    0,
+                                    key_interval.lower);
+
+                self.range_query_olc(path.as_mut(), key_interval)
+            },
             Transaction::Range(interval) => self.traversal_read_range(&interval)
                 .into_iter()
-                .flat_map(|leaf| leaf
+                .flat_map(|(_block, guard)| guard
                     .deref()
                     .unwrap()
                     .as_ref()

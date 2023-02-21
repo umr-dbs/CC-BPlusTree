@@ -72,18 +72,17 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn next_leaf_page(&self,
+    pub(crate) fn next_leaf_page(&self,
                       path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                       mut parent_index: usize,
                       next_key: Key)
     {
         loop {
             if parent_index >= path.len() { // when all path is invalid, we run stacking path function again!
-                *path = unsafe {
-                    mem::transmute(
-                        self.traversal_read_range_olc(next_key))
-                };
-                return;
+                path.clear();
+                path.push((Interval::new(self.min_key, self.max_key),
+                          unsafe { mem::transmute(self.lock_reader(&self.root.block)) }));
+                parent_index = 0;
             }
 
             let (curr_interval, curr_parent)
@@ -107,10 +106,16 @@ impl<const FAN_OUT: usize,
             let curr_deref
                 = unsafe { curr_parent.deref_unsafe() };
 
-            if !curr_parent.is_valid() {
+            let (read, current_reader_version)
+                = curr_parent.is_read_not_obsolete_result();
+
+            if curr_deref.is_none() || !read {
                 parent_index -= 1;
                 continue;
             }
+
+            let checker
+                = move |(read, v)| read && v == current_reader_version;
 
             match curr_deref.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
@@ -127,15 +132,15 @@ impl<const FAN_OUT: usize,
                         Err(pos) => (pos, children.get(pos).cloned())
                     };
 
-                    if next_page.is_none() || !curr_parent.is_valid() {
-                        parent_index = parent_index - 1;
+                    if next_page.is_none() || !checker(curr_parent.is_read_not_obsolete_result()) {
+                        parent_index -= 1;
                         continue;
                     }
 
                     let next_page
                         = next_page.unwrap();
 
-                    parent_index = parent_index + 1;
+                    parent_index += 1;
 
                     curr_interval = Interval::new(
                         keys.get(index_of_child - 1)
@@ -147,23 +152,17 @@ impl<const FAN_OUT: usize,
                             .unwrap_or(curr_interval.upper()));
 
                     if parent_index == path.len() {
-                        parent_index = path.len();
-
                         path.push((curr_interval,
                                    mem::transmute(self.lock_reader(&next_page))));
-                    } else {
+                    }
+                    else {
                         *path.get_unchecked_mut(parent_index)
                             = (curr_interval, mem::transmute(self.lock_reader(&next_page)));
                     }
                 }
                 Node::Leaf(..) => {
                     path.truncate(parent_index + 1);
-
-                    if path.last().unwrap().1.is_obsolete() {
-                        parent_index -= 1;
-                    } else {
-                        return;
-                    }
+                    return
                 }
             }
         }
@@ -221,23 +220,28 @@ impl<const FAN_OUT: usize,
             let current
                 = current_guard.deref();
 
-            if current.is_none() {
+            let (read, current_reader_version)
+                = current_guard.is_read_not_obsolete_result();
+
+            if current.is_none() || !read {
                 mem::drop(current_guard);
 
                 return None;
             }
 
+            let checker
+                = move |(read, v)| read && v == current_reader_version;
+
             match current.unwrap().as_ref() {
                 Node::Index(index_page) => {
-                    let keys = index_page.keys();
                     let children = index_page.children();
 
-                    let next_node = match keys.binary_search(&key) {
+                    let next_node = match index_page.keys().binary_search(&key) {
                         Ok(pos) => children.get(pos).cloned(),
                         Err(pos) => children.get(pos).cloned()
                     };
 
-                    if next_node.is_none() || !current_guard.is_valid() {
+                    if next_node.is_none() || !checker(current_guard.is_read_not_obsolete_result()) {
                         return None;
                     }
 
@@ -262,96 +266,6 @@ impl<const FAN_OUT: usize,
                     attempt += 1;
                     sched_yield(attempt)
                 }
-            }
-        }
-    }
-
-    #[inline]
-    fn traversal_read_range_olc_internal(&self, key_low: Key)
-                                         -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
-    {
-        let root
-            = self.root.get();
-
-        let mut path
-            = Vec::with_capacity(self.height() as _);
-
-        let mut key_interval
-            = Interval::new(self.min_key, self.max_key);
-
-        let mut current_guard
-            = self.lock_reader(&root.block);
-
-        loop {
-            let current
-                = current_guard.deref();
-
-            if current.is_none() {
-                mem::drop(current_guard);
-
-                path.clear();
-                return path;
-            }
-
-            match current.unwrap().as_ref() {
-                Node::Index(index_page) => {
-                    let keys = index_page.keys();
-                    let children = index_page.children();
-
-                    let (index_of_child, next_node)
-                        = match keys.binary_search(&(self.inc_key)(key_low))
-                    {
-                        Ok(pos) => (pos, children.get(pos).cloned()),
-                        Err(pos) => (pos, children.get(pos).cloned())
-                    };
-
-                    if next_node.is_none() || !current_guard.is_valid() {
-                        path.clear();
-                        return path;
-                    }
-
-                    let next_node
-                        = next_node.unwrap();
-
-                    let old_interval = key_interval.clone();
-                    key_interval = Interval::new(
-                        keys.get(index_of_child - 1)
-                            .cloned()
-                            .unwrap_or(key_interval.lower()),
-                        keys.get(index_of_child)
-                            .cloned()
-                            .map(|max| (self.dec_key)(max))
-                            .unwrap_or(key_interval.upper()));
-
-                    path.push((old_interval, current_guard));
-                    current_guard = self.lock_reader(&next_node);
-                }
-                Node::Leaf(..) => {
-                    if current_guard.is_obsolete() {
-                        path.clear();
-                    } else {
-                        path.push((key_interval, current_guard));
-                    }
-
-                    break path;
-                }
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn traversal_read_range_olc(&self, key: Key)
-                                           -> Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
-    {
-        let mut attempt = 0;
-
-        loop {
-            match self.traversal_read_range_olc_internal(key) {
-                path if path.is_empty() => {
-                    attempt += 1;
-                    sched_yield(attempt)
-                }
-                path => break path,
             }
         }
     }

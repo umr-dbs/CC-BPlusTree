@@ -25,13 +25,11 @@ impl<const FAN_OUT: usize,
 > Drop for InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     fn drop(&mut self) {
-        unsafe {
-            self.children_mut()
-                .clear();
+        self.children_mut()
+            .clear();
 
-            self.keys_mut()
-                .clear();
-        }
+        self.keys_mut()
+            .clear();
     }
 }
 

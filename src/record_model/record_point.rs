@@ -1,18 +1,24 @@
 use std::hash::Hash;
-use std::{mem, ptr};
+use std::mem;
 use std::fmt::{Display, Formatter};
-use std::mem::MaybeUninit;
-// use crate::record_model::record_like::RecordLike;
-// use crate::record_model::record_list::PayloadVersioned;
+use std::ptr::{addr_of, addr_of_mut};
 use crate::record_model::unsafe_clone::UnsafeClone;
-// use crate::record_model::Version;
-// use crate::record_model::version_info::VersionInfo;
-use serde::{Serialize, Deserialize, Deserializer};
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Default)]
+#[repr(C, packed)]
 pub struct RecordPoint<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> {
     pub key: Key,
     pub payload: Payload
+}
+
+impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> Clone for RecordPoint<Key, Payload> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key(),
+            payload: self.payload_ref().clone(),
+        }
+    }
 }
 
 impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> RecordPoint<Key, Payload> {
@@ -21,6 +27,34 @@ impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> RecordPoint<Key
         Self {
             key,
             payload
+        }
+    }
+
+    #[inline(always)]
+    pub const fn key(&self) -> Key {
+        unsafe {
+            *addr_of!(self.key)
+        }
+    }
+
+    #[inline(always)]
+    pub const fn key_ref(&self) -> &Key {
+        unsafe {
+            &*addr_of!(self.key)
+        }
+    }
+
+    #[inline(always)]
+    pub const fn payload_ref(&self) -> &Payload {
+        unsafe {
+            &*addr_of!(self.payload)
+        }
+    }
+
+    #[inline(always)]
+    pub fn payload_mut(&mut self) -> &mut Payload {
+        unsafe {
+            &mut *addr_of_mut!(self.payload)
         }
     }
 }
@@ -72,7 +106,7 @@ impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> UnsafeClone for
 
 impl<Key: Display + Ord + Copy + Hash + Default, Payload: Default + Display + Clone> Display for RecordPoint<Key, Payload> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RecordPoint(Key: {}, Payload: {})", self.key, self.payload)
+        write!(f, "RecordPoint(Key: {}, Payload: {})", self.key(), self.payload_ref())
     }
 }
 

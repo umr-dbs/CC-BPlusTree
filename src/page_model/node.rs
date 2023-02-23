@@ -199,10 +199,10 @@ impl<const FAN_OUT: usize,
                 .as_records()
                 .binary_search_by_key(&key, |e| e.key)
                 .map(|found| unsafe {
-                    mem::replace(&mut events_page
+                    mem::replace(events_page
                     .as_records_mut()
                     .get_unchecked_mut(found)
-                    .payload,payload)
+                    .payload_mut(),payload)
                 })
                 .ok(),
             _ => None

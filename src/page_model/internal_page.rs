@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use std::mem;
 use std::mem::MaybeUninit;
 use std::ptr::null_mut;
-use std::sync::Arc;
 use crate::page_model::{BlockRef, ObjectCount};
 use crate::utils::shadow_vec::ShadowVec;
 
@@ -97,25 +96,9 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn get_child(&self, index: usize) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub fn get_child_result(&self, index: usize) -> MaybeUninit<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         unsafe {
-            let child
-                = mem::transmute_copy(self.children_array.get_unchecked(index));
-
-            Arc::increment_strong_count(&child);
-            child
-
-            // let mut child_ref
-            //     = mem::MaybeUninit::<BlockRef<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>>::uninit().assume_init();
-            //
-            // ptr::copy_nonoverlapping(
-            //     self.children_array.get_unchecked(index)
-            //         .as_ptr() as *const BlockRef<KEY_SIZE, FAN_OUT, NUM_RECORDS, Key, Payload, Entry>,
-            //     &mut child_ref, 1);
-            //
-            // // mem::forget(child_ref.clone()); // ensure ref is valid in leaked slice
-            // Arc::increment_strong_count(&child_ref);
-            // child_ref
+            mem::transmute_copy(self.children_array.get_unchecked(index))
         }
     }
 

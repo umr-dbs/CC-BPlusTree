@@ -8,12 +8,11 @@ use crate::page_model::block::BlockGuard;
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPoint;
 use crate::record_model::unsafe_clone::UnsafeClone;
-use crate::test::{Key, Payload};
 use crate::transaction::query::DEBUG;
 use crate::tx_model::transaction::Transaction;
 use crate::tx_model::transaction_result::TransactionResult;
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::{LatchVersion, sched_yield};
+use crate::utils::smart_cell::sched_yield;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -138,16 +137,10 @@ impl<const FAN_OUT: usize,
                 continue;
             }
 
-            let checker
-                = move |read, v| read && v == current_reader_version;
-
             match curr_deref.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
                     let keys
                         = index_page.keys();
-
-                    let children
-                        = index_page.children();
 
                     let (curr_interval, next_page)
                         = match keys.binary_search(&(self.inc_key)(next_key))
@@ -157,28 +150,33 @@ impl<const FAN_OUT: usize,
                                 .unwrap_or(curr_interval.lower()),
                             keys.get(pos).cloned()
                                 .map(|max| (self.dec_key)(max)).unwrap_or(curr_interval.upper())),
-                                    children.get(pos).cloned()),
+                                    index_page.get_child_result(pos)),
                         Err(pos) => (Interval::new(
                             keys.get(pos - 1).cloned()
                                 .unwrap_or(curr_interval.lower()),
                             keys.get(pos).cloned()
                                 .map(|max| (self.dec_key)(max)).unwrap_or(curr_interval.upper())),
-                                     children.get(pos).cloned())
+                                     index_page.get_child_result(pos))
                     };
 
                     let (read, read_version)
                         = curr_parent.is_read_not_obsolete_result();
 
-                    if next_page.is_none() || !checker(read, read_version) {
+                    if !read || read_version != current_reader_version {
                         path.truncate(parent_index);
                         parent_index -= 1;
                         attempts += 1;
                         continue;
                     }
 
+                    let next_page = {
+                        let child = next_page.assume_init();
+                        mem::forget(child.clone());
+
+                        child
+                    };
+
                     curr_parent.update_read_latch(read_version);
-                    let next_page
-                        = next_page.unwrap();
 
                     attempts = 0;
                     parent_index += 1;
@@ -213,8 +211,8 @@ impl<const FAN_OUT: usize,
                         let mut potential_results = leaf_page
                             .as_records()
                             .iter()
-                            .skip_while(|record| record.key.lt(&key_interval.lower()))
-                            .take_while(|record| record.key.le(&key_interval.upper()))
+                            .skip_while(|record| record.key().lt(&key_interval.lower()))
+                            .take_while(|record| record.key().le(&key_interval.upper()))
                             .map(|record| record.unsafe_clone())
                             .collect::<Vec<_>>();
 
@@ -241,7 +239,7 @@ impl<const FAN_OUT: usize,
         let key = (self.inc_key)(key);
         loop {
             let current
-                = current_guard.deref();
+                = unsafe { current_guard.deref_unsafe() };
 
             let (read, current_reader_version)
                 = current_guard.is_read_not_obsolete_result();
@@ -252,24 +250,26 @@ impl<const FAN_OUT: usize,
                 return None;
             }
 
-            let checker
-                = move |(read, v)| read && v == current_reader_version;
-
             match current.unwrap().as_ref() {
                 Node::Index(index_page) => {
-                    let children = index_page.children();
-
                     let next_node = match index_page.keys().binary_search(&key) {
-                        Ok(pos) => children.get(pos).cloned(),
-                        Err(pos) => children.get(pos).cloned()
+                        Ok(pos) => index_page.get_child_result(pos),
+                        Err(pos) => index_page.get_child_result(pos)
                     };
 
-                    if next_node.is_none() || !checker(current_guard.is_read_not_obsolete_result()) {
+                    let (read, read_version)
+                        = current_guard.is_read_not_obsolete_result();
+
+                    if !read || read_version != current_reader_version {
                         return None;
                     }
 
-                    let next_node
-                        = next_node.unwrap();
+                    let next_node = unsafe {
+                        let child = next_node.assume_init();
+                        mem::forget(child.clone());
+
+                        child
+                    };
 
                     current_guard = self.lock_reader(&next_node);
                 }
@@ -297,7 +297,6 @@ impl<const FAN_OUT: usize,
     pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
-        let olc = self.locking_strategy.is_olc();
 
         loop {
             match self.traversal_write_olc_internal(lock_level, attempt, key) {
@@ -305,9 +304,7 @@ impl<const FAN_OUT: usize,
                     attempt = n_attempt;
                     lock_level = n_lock_level;
 
-                    if olc {
-                        sched_yield(attempt);
-                    }
+                    sched_yield(attempt);
                 }
                 Ok(guard) => break guard,
             }
@@ -341,17 +338,14 @@ impl<const FAN_OUT: usize,
 
             match current_guard_result.unwrap().as_ref() {
                 Node::Index(index_page) => {
-                    let keys = index_page.keys();
-                    let children = index_page.children();
-
                     let (child_pos, next_node)
-                        = match keys.binary_search(&key)
+                        = match index_page.keys().binary_search(&key)
                     {
-                        Ok(pos) => (pos, children.get(pos).cloned()),
-                        Err(pos) => (pos, children.get(pos).cloned())
+                        Ok(pos) => (pos, index_page.get_child_result(pos)),
+                        Err(pos) => (pos, index_page.get_child_result(pos))
                     };
 
-                    if next_node.is_none() || !current_guard.is_valid() {
+                    if !current_guard.is_valid() {
                         mem::drop(next_node);
                         mem::drop(current_guard);
 
@@ -362,8 +356,12 @@ impl<const FAN_OUT: usize,
                         return Err((curr_level - 1, attempt + 1));
                     }
 
-                    let next_node
-                        = next_node.unwrap();
+                    let next_node = unsafe {
+                        let child = next_node.assume_init();
+                        mem::forget(child.clone());
+
+                        child
+                    };
 
                     curr_level += 1;
 
@@ -375,7 +373,7 @@ impl<const FAN_OUT: usize,
                         next_node);
 
                     let next_guard_result
-                        = next_guard.deref();
+                        = unsafe { next_guard.deref_unsafe() };
 
                     if next_guard_result.is_none() || !current_guard.is_valid() {
                         mem::drop(height);

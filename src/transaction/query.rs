@@ -525,12 +525,9 @@ impl<const FAN_OUT: usize,
 
         let key = (self.inc_key)(key);
         loop {
-            let current
-                = current_guard.deref();
-
-            match current.unwrap().as_ref() {
-                Node::Index(index_page) => {
-                    current_guard = match index_page.keys().binary_search(&key) {
+            match current_guard.deref().unwrap().as_ref() {
+                Node::Index(index_page) => current_guard =
+                    match index_page.keys().binary_search(&key) {
                         Ok(pos) => unsafe {
                             current_block = index_page.children().get_unchecked(pos).clone();
                             self.lock_reader(&current_block)
@@ -539,8 +536,7 @@ impl<const FAN_OUT: usize,
                             current_block = index_page.children().get_unchecked(pos).clone();
                             self.lock_reader(&current_block)
                         }
-                    }
-                }
+                    },
                 _ => break current_guard,
             }
         }

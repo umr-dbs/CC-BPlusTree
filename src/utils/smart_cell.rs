@@ -408,7 +408,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
 
     #[inline(always)]
     pub unsafe fn update_read_latch(&mut self, read_latch: LatchVersion) {
-        if let OLCReader(Some((.., latched))) = self  {
+        if let OLCReader(Some((.., latched))) = self {
             *latched = read_latch
         }
     }

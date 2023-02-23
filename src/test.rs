@@ -5,7 +5,6 @@ use std::hash::Hash;
 use std::time::SystemTime;
 use itertools::Itertools;
 use rand::RngCore;
-use CCBPlusTree::page_model::Level;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
@@ -42,10 +41,8 @@ pub fn dec_key(k: Key) -> Key {
 pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
-= |ls| INDEX::new_single_version_for(ls, Key::MIN, Key::MAX, inc_key, dec_key);
+= |ls| INDEX::new_with(ls, Key::MIN, Key::MAX, inc_key, dec_key);
 
-pub const MAKE_INDEX_MULTI: fn(LockingStrategy) -> INDEX
-= |ls| INDEX::new_multi_version_for(ls, Key::MIN, Key::MAX, inc_key, dec_key);
 
 pub const EXE_LOOK_UPS: bool = true;
 
@@ -408,11 +405,9 @@ pub fn level_order<
 
 pub fn simple_test2() {
     let singled_versioned_index = MAKE_INDEX(LockingStrategy::MonoWriter);
-    let multi_versioned_index = MAKE_INDEX_MULTI(LockingStrategy::MonoWriter);
 
     for key in 1..=10_000 as Key {
         singled_versioned_index.execute(Transaction::Insert(key, key as f64));
-        multi_versioned_index.execute(Transaction::Insert(key, key as f64));
     }
 
     log_debug_ln(format!(""));

@@ -146,13 +146,14 @@ impl<const FAN_OUT: usize,
             Transaction::Range(key_interval) if olc => {
                 let mut path = vec![
                     (Interval::new(self.min_key, self.max_key),
-                     unsafe { mem::transmute(self.lock_reader(&self.root.block)) })
+                     self.lock_reader(&self.root.block))
                 ];
 
-                self.next_leaf_page(path.as_mut(),
+                let len = self.next_leaf_page(path.as_mut(),
                                     0,
                                     key_interval.lower);
 
+                path.truncate(len);
                 self.range_query_olc(path.as_mut(), key_interval)
             },
             Transaction::Range(interval) => self.traversal_read_range(&interval)

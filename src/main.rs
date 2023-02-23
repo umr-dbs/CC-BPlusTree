@@ -88,8 +88,8 @@ fn experiment() {
         // 10,
         // 12,
         // 16,
-        24,
-        32,
+        // 24,
+        // 32,
         64,
         128,
         // 256,
@@ -196,7 +196,7 @@ fn experiment() {
     // thread::sleep(Duration::from_secs(4));
     println!("Number Insertions,Number Threads,Locking Strategy,Height,Time,Fan Out,Leaf Records,Block Size");
 
-    cases.iter().for_each(|(t1s, strats)|
+    cases.into_iter().for_each(|(t1s, strats)|
         for num_threads in threads_cpu.iter() {
             if *num_threads > t1s.len() {
                 log_debug_ln("WARNING: Number of Threads larger than number of Transactions!".to_string());

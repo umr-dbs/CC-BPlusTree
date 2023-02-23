@@ -149,11 +149,10 @@ impl<const FAN_OUT: usize,
                      self.lock_reader(&self.root.block))
                 ];
 
-                let len = self.next_leaf_page(path.as_mut(),
+                self.next_leaf_page(path.as_mut(),
                                     0,
                                     key_interval.lower);
 
-                path.truncate(len);
                 self.range_query_olc(path.as_mut(), key_interval)
             },
             Transaction::Range(interval) => self.traversal_read_range(&interval)

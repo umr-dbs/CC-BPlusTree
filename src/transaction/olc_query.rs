@@ -13,7 +13,7 @@ use crate::transaction::query::DEBUG;
 use crate::tx_model::transaction::Transaction;
 use crate::tx_model::transaction_result::TransactionResult;
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::sched_yield;
+use crate::utils::smart_cell::{LatchVersion, sched_yield};
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -35,31 +35,20 @@ impl<const FAN_OUT: usize,
         let mut history_path
             = VecDeque::with_capacity(2);
 
-        let mut path_len
-            = path.len();
-
         loop {
-            unsafe {
-                path.set_len(path_len);
-            }
             history_path.push_back(path.clone());
 
             let local_results =
                 self.range_query_leaf_results(path, &key_interval);
 
-            if path.len() >= 2 {
+            if history_path.len() >= 2 {
                 let prev_path
                     = history_path.pop_front().unwrap();
 
                 match prev_path.get(prev_path.len() - 2) {
                     Some((.., parent_leaf)) if !parent_leaf.is_valid() =>
                         return self.execute(Transaction::Range(org_key_interval)),
-                    None => match prev_path.get(prev_path.len() - 1) {
-                        Some((.., leaf)) if !leaf.is_valid() =>
-                            return self.execute(Transaction::Range(org_key_interval)),
-                        _ => unreachable!()
-                    }
-                    _ => { }
+                    _ => {}
                 };
             }
 
@@ -72,16 +61,15 @@ impl<const FAN_OUT: usize,
                 key_interval.set_lower((self.inc_key)(leaf_space.upper()));
 
                 if key_interval.lower > key_interval.upper {
-                    break
+                    break;
                 }
 
-                path_len = self.next_leaf_page(
+                self.next_leaf_page(
                     path,
-                    path_len - 2,
+                    path.len() - 2,
                     key_interval.lower());
-            }
-            else {
-                break
+            } else {
+                break;
             }
         }
 
@@ -90,20 +78,36 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn next_leaf_page(&self,
-                      path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
-                      mut parent_index: usize,
-                      next_key: Key) -> usize
+                                 path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
+                                 mut parent_index: usize,
+                                 next_key: Key)
     {
+        let mut attempts = 0;
         loop {
+            if attempts > 0 {
+                sched_yield(attempts);
+            }
+
             if parent_index >= path.len() { // when all path is invalid, we run stacking path function again!
                 path.clear();
+
+                let root_read
+                    = self.lock_reader(&self.root.block);
+
+                if !root_read.is_read_not_obsolete() {
+                    attempts += 1;
+                    continue
+                }
+
                 path.push((Interval::new(self.min_key, self.max_key),
-                          unsafe { mem::transmute(self.lock_reader(&self.root.block)) }));
+                           unsafe { mem::transmute(root_read) }));
+
+                attempts = 0;
                 parent_index = 0;
             }
 
             let (curr_interval, curr_parent)
-                = path.get(parent_index).unwrap();
+                = path.get_mut(parent_index).unwrap();
 
             let mut curr_interval
                 = curr_interval.clone();
@@ -112,9 +116,10 @@ impl<const FAN_OUT: usize,
                 = curr_parent;
 
             while !curr_interval.contains(next_key) {
+                path.truncate(parent_index);
                 parent_index -= 1;
-                let (n_curr_interval, n_curr_parent)
-                    = path.get(parent_index).unwrap();
+                let (n_curr_interval, .., n_curr_parent)
+                    = path.get_mut(parent_index).unwrap();
 
                 curr_interval = n_curr_interval.clone();
                 curr_parent = n_curr_parent;
@@ -127,12 +132,14 @@ impl<const FAN_OUT: usize,
                 = curr_parent.is_read_not_obsolete_result();
 
             if curr_deref.is_none() || !read {
+                path.truncate(parent_index);
+                attempts += 1;
                 parent_index -= 1;
                 continue;
             }
 
             let checker
-                = move |(read, v)| read && v == current_reader_version;
+                = move |read, v| read && v == current_reader_version;
 
             match curr_deref.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
@@ -159,22 +166,26 @@ impl<const FAN_OUT: usize,
                                      children.get(pos).cloned())
                     };
 
-                    if next_page.is_none() || !checker(curr_parent.is_read_not_obsolete_result()) {
+                    let (read, read_version)
+                        = curr_parent.is_read_not_obsolete_result();
+
+                    if next_page.is_none() || !checker(read, read_version) {
+                        path.truncate(parent_index);
                         parent_index -= 1;
+                        attempts += 1;
                         continue;
                     }
 
+                    curr_parent.update_read_latch(read_version);
                     let next_page
                         = next_page.unwrap();
 
+                    attempts = 0;
                     parent_index += 1;
-
                     path.insert(parent_index,
                                 (curr_interval, mem::transmute(self.lock_reader(&next_page))));
                 }
-                Node::Leaf(..) => return parent_index + 1
-                    // path.set_len(parent_index + 1);
-                    // path.truncate(parent_index + 1);
+                Node::Leaf(..) => return
             }
         }
     }
@@ -185,47 +196,41 @@ impl<const FAN_OUT: usize,
                                 key_interval: &Interval<Key>)
                                 -> Vec<RecordPoint<Key, Payload>>
     {
-        let mut path_len
-            = path.len();
+        loop {
+            let (.., leaf)
+                = path.last().unwrap();
 
-       loop {
-           unsafe {
-               path.set_len(path_len);
-           }
-           let (.., leaf)
-               = path.last().unwrap();
+            let leaf_unchecked = unsafe { leaf.deref_unsafe() }.unwrap().as_ref();
 
-           let leaf_unchecked = unsafe { leaf.deref_unsafe() }.unwrap().as_ref();
+            match leaf_unchecked {
+                Node::Leaf(leaf_page) => unsafe {
+                    let (read, current_read_version)
+                        = leaf.is_read_not_obsolete_result();
 
-           match leaf_unchecked {
-               Node::Leaf(leaf_page) => unsafe {
-                   let (read, current_read_version)
-                       = leaf.is_read_not_obsolete_result();
+                    if read {
+                        // println!("Records in Leaf = {}", leaf_page
+                        //     .as_records_mut().iter().join(","));
+                        let mut potential_results = leaf_page
+                            .as_records()
+                            .iter()
+                            .skip_while(|record| record.key.lt(&key_interval.lower()))
+                            .take_while(|record| record.key.le(&key_interval.upper()))
+                            .map(|record| record.unsafe_clone())
+                            .collect::<Vec<_>>();
 
-                   if read {
-                       // println!("Records in Leaf = {}", leaf_page
-                       //     .as_records_mut().iter().join(","));
-                       let mut potential_results = leaf_page
-                           .as_records()
-                           .iter()
-                           .skip_while(|record| record.key.lt(&key_interval.lower()))
-                           .take_while(|record| record.key.le(&key_interval.upper()))
-                           .map(|record| record.unsafe_clone())
-                           .collect::<Vec<_>>();
+                        // println!("Filtered Records = {}", potential_results.iter().join(","));
+                        if leaf.cell_version_olc() == current_read_version { // avoid write in-between
+                            return potential_results;
+                        } else {
+                            potential_results.set_len(0);
+                        }
+                    }
 
-                       // println!("Filtered Records = {}", potential_results.iter().join(","));
-                       if leaf.cell_version_olc() == current_read_version { // avoid write in-between
-                           return potential_results;
-                       } else {
-                           potential_results.set_len(0);
-                       }
-                   }
-
-                   path_len = self.next_leaf_page(path, path.len() - 2, key_interval.lower());
-               }
-               _ => unreachable!("Found Index but expected leaf = {}", leaf_unchecked)
-           }
-       }
+                    self.next_leaf_page(path, path.len() - 2, key_interval.lower());
+                }
+                _ => unreachable!("Found Index but expected leaf = {}", leaf_unchecked)
+            }
+        }
     }
 
     #[inline]

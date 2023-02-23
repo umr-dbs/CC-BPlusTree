@@ -407,6 +407,13 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     }
 
     #[inline(always)]
+    pub unsafe fn update_read_latch(&mut self, read_latch: LatchVersion) {
+        if let OLCReader(Some((.., latched))) = self  {
+            *latched = read_latch
+        }
+    }
+
+    #[inline(always)]
     pub fn is_read_not_obsolete_result(&self) -> (bool, LatchVersion) {
         match self {
             OLCReader(Some((cell, ..))) => cell.0.is_read_not_obsolete_result(),
@@ -441,6 +448,23 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             MutExclusive(.., ptr) => ptr.as_ref(),
             OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
             OLCWriter(Some((cell, ..))) => Some(cell.0.as_ref()),
+            _ => None
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn deref_unsafe_static(&self) -> Option<&'static E> {
+        match self {
+            LockFree(ptr) => ptr.as_ref(),
+            RwReader(.., ptr) => ptr.as_ref(),
+            RwWriter(.., ptr) => ptr.as_ref(),
+            MutExclusive(.., ptr) => ptr.as_ref(),
+            OLCReader(Some((cell, ..))) => unsafe {
+                mem::transmute(Some(cell.0.as_ref()))
+            },
+            OLCWriter(Some((cell, ..))) => unsafe {
+                mem::transmute(Some(cell.0.as_ref()))
+            },
             _ => None
         }
     }

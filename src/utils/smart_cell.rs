@@ -103,7 +103,7 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub unsafe fn load_version_force(&self) -> Version {
-        self.cell_version.load(Acquire)
+        self.cell_version.load(SeqCst)
     }
 
     #[inline(always)]
@@ -137,7 +137,7 @@ impl<E: Default> OptCell<E> {
         match self.cell_version.compare_exchange(
             read_version,
             WRITE_FLAG_VERSION | read_version,
-            Acquire,
+            SeqCst,
             Relaxed)
         {
             Ok(..) => Some(WRITE_FLAG_VERSION | read_version),

@@ -103,6 +103,13 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub unsafe fn get_child_unsafe(&self, index: usize) -> &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        self.children_array
+            .get_unchecked(index)
+            .assume_init_ref()
+    }
+
+    #[inline(always)]
     pub const fn keys_len(&self) -> usize {
         unsafe {
             *(self.key_array.as_ptr() as *const ObjectCount) as usize

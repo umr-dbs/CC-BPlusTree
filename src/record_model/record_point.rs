@@ -5,7 +5,7 @@ use std::ptr::{addr_of, addr_of_mut};
 use crate::record_model::unsafe_clone::UnsafeClone;
 
 #[derive(Default)]
-#[repr(C, packed)]
+#[repr(C)]
 pub struct RecordPoint<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> {
     pub key: Key,
     pub payload: Payload

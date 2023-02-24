@@ -6,7 +6,7 @@ use crate::index::bplus_tree;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::page_model::block::Block;
 use crate::page_model::LevelVariant;
-use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, level_order, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test, simple_test2};
+use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test};
 
 mod index;
 mod transaction;
@@ -19,16 +19,11 @@ mod utils;
 mod tx_model;
 
 fn main() {
-    // println!("{}", mem::align_of::<Block<0,0,Key, Payload>>() +
-    //           16
-    // );
     make_splash();
     show_alignment_bsz();
+
     simple_test();
-    // simple_test2();
     experiment();
-    //
-    // experiment2();
 }
 
 fn show_alignment_bsz() {
@@ -80,21 +75,21 @@ fn experiment() {
     let cpu_threads = true;
     // test::show_bsz_alignment();
     let threads_cpu = vec![
-        // 1,
-        // 2,
-        // 3,
-        // 4,
-        // 8,
-        // 10,
-        // 12,
-        // 16,
-        // 24,
-        // 32,
-        // 64,
-        // 128,
+        1,
+        2,
+        3,
+        4,
+        8,
+        10,
+        12,
+        16,
+        24,
+        32,
+        64,
+        128,
         // 256,
-        512,
-        1024,
+        // 512,
+        // 1024,
     ];
 
     // let mut threads_cpu = (1..=usize::max(num_cpus::get(), *threads_cpu.last().unwrap()))
@@ -109,20 +104,20 @@ fn experiment() {
         // 100,
         // 1_000,
         // 10_000,
-        100_000,
+        // 100_000,
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
+        // 10_000_000,
         // 20_000_000,
         // 50_000_000,
-        // 100_000_000,
+        100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::LockCoupling);
+    strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -137,9 +132,9 @@ fn experiment() {
     // strategies.push(LockingStrategy::OLC(
     //     LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
     //
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     4));
+    strategies.push(LockingStrategy::RWLockCoupling(
+        LevelVariant::new_height_lock(1 as _),
+        4));
     //
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(0.8 as _),

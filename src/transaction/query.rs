@@ -44,25 +44,21 @@ impl<const FAN_OUT: usize,
     pub(crate) fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
                      -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
     {
-        let is_olc = self.locking_strategy.is_olc();
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
                 Err((n_lock_level, n_attempt)) => {
                     lock_level = n_lock_level;
                     attempt = n_attempt;
-
-                    if is_olc {
-                        sched_yield(attempt);
-                    }
                 }
-                Ok((guard, height)) => break (guard, height, lock_level, attempt)
+                Ok((guard, height)) =>
+                    break (guard, height, lock_level, attempt)
             }
         }
     }
 
     #[inline]
-    fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts)
-                              -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
+    pub(crate) fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts)
+    -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
     {
         // let root
         //     = self.root.clone();
@@ -529,11 +525,11 @@ impl<const FAN_OUT: usize,
                 Node::Index(index_page) => current_guard =
                     match index_page.keys().binary_search(&key) {
                         Ok(pos) => unsafe {
-                            current_block = index_page.children().get_unchecked(pos).clone();
+                            current_block = index_page.get_child_unsafe(pos).clone();
                             self.lock_reader(&current_block)
                         },
                         Err(pos) => unsafe {
-                            current_block = index_page.children().get_unchecked(pos).clone();
+                            current_block = index_page.get_child_unsafe(pos).clone();
                             self.lock_reader(&current_block)
                         }
                     },

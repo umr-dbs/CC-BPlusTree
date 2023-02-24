@@ -3,7 +3,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
-use crate::page_model::Attempts;
+use crate::page_model::{Attempts, Height, Level};
 use crate::page_model::block::BlockGuard;
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPoint;
@@ -20,6 +20,23 @@ impl<const FAN_OUT: usize,
     Payload: Default + Clone + Sync + Display
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
+    #[inline]
+    pub(crate) fn retrieve_root_olc(&self, mut lock_level: Level, mut attempt: Attempts)
+    -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
+    {
+        loop {
+            match self.retrieve_root_internal(lock_level, attempt) {
+                Err((n_lock_level, n_attempt)) => {
+                    lock_level = n_lock_level;
+                    attempt = n_attempt;
+
+                    sched_yield(attempt);
+                }
+                Ok((guard, height)) => break (guard, height, lock_level, attempt)
+            }
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn range_query_olc(&self,
                                   path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
@@ -183,7 +200,10 @@ impl<const FAN_OUT: usize,
                     path.insert(parent_index,
                                 (curr_interval, mem::transmute(self.lock_reader(&next_page))));
                 }
-                Node::Leaf(..) => return
+                Node::Leaf(..) => {
+                    path.truncate(parent_index + 1);
+                    return
+                }
             }
         }
     }
@@ -318,7 +338,7 @@ impl<const FAN_OUT: usize,
         let mut curr_level = INIT_TREE_HEIGHT;
 
         let (mut current_guard, height, lock_level, attempt)
-            = self.retrieve_root(lock_level, attempt);
+            = self.retrieve_root_olc(lock_level, attempt);
 
         let key = (self.inc_key)(key);
         loop {

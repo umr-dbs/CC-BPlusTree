@@ -52,18 +52,36 @@ impl<const FAN_OUT: usize,
             = VecDeque::with_capacity(2);
 
         loop {
-            history_path.push_back(path.clone());
+            history_path.push_back(path.to_vec());
 
-            let local_results =
+            let mut local_results =
                 self.range_query_leaf_results(path, &key_interval);
 
             if history_path.len() >= 2 {
-                let prev_path
+                let mut prev_path
                     = history_path.pop_front().unwrap();
 
                 match prev_path.get(prev_path.len() - 2) {
-                    Some((.., parent_leaf)) if !parent_leaf.is_valid() =>
-                        return self.execute(Transaction::Range(org_key_interval)),
+                    Some((.., parent_leaf)) if !parent_leaf.is_valid() => {
+                        prev_path.clear();
+                        history_path.clear();
+
+                        local_results.clear();
+                        all_results.clear();
+
+                        path.clear();
+                        return self.execute(Transaction::Range(org_key_interval))
+                    }
+                    None if !prev_path.first().unwrap().1.is_valid() => {
+                        prev_path.clear();
+                        history_path.clear();
+
+                        local_results.clear();
+                        all_results.clear();
+
+                        path.clear();
+                        return self.execute(Transaction::Range(org_key_interval))
+                    }
                     _ => {}
                 };
             }
@@ -126,7 +144,7 @@ impl<const FAN_OUT: usize,
                 = path.get_mut(parent_index).unwrap();
 
             let mut curr_interval
-                = curr_interval.clone();
+                = curr_interval;
 
             let mut curr_parent
                 = curr_parent;
@@ -137,7 +155,7 @@ impl<const FAN_OUT: usize,
                 let (n_curr_interval, .., n_curr_parent)
                     = path.get_mut(parent_index).unwrap();
 
-                curr_interval = n_curr_interval.clone();
+                curr_interval = n_curr_interval;
                 curr_parent = n_curr_parent;
             }
 
@@ -186,19 +204,15 @@ impl<const FAN_OUT: usize,
                         continue;
                     }
 
-                    let next_page = {
-                        let child = next_page.assume_init();
-                        mem::forget(child.clone());
-
-                        child
-                    };
+                    let next_page
+                        = self.lock_reader(next_page.assume_init_ref());
 
                     curr_parent.update_read_latch(read_version);
 
                     attempts = 0;
                     parent_index += 1;
                     path.insert(parent_index,
-                                (curr_interval, mem::transmute(self.lock_reader(&next_page))));
+                                (curr_interval, mem::transmute(next_page)));
                 }
                 Node::Leaf(..) => {
                     path.truncate(parent_index + 1);
@@ -226,8 +240,6 @@ impl<const FAN_OUT: usize,
                         = leaf.is_read_not_obsolete_result();
 
                     if read {
-                        // println!("Records in Leaf = {}", leaf_page
-                        //     .as_records_mut().iter().join(","));
                         let mut potential_results = leaf_page
                             .as_records()
                             .iter()
@@ -236,9 +248,8 @@ impl<const FAN_OUT: usize,
                             .map(|record| record.unsafe_clone())
                             .collect::<Vec<_>>();
 
-                        // println!("Filtered Records = {}", potential_results.iter().join(","));
                         if leaf.cell_version_olc() == current_read_version { // avoid write in-between
-                            return potential_results;
+                            return potential_results
                         } else {
                             potential_results.set_len(0);
                         }
@@ -271,7 +282,7 @@ impl<const FAN_OUT: usize,
             }
 
             match current.unwrap().as_ref() {
-                Node::Index(index_page) => {
+                Node::Index(index_page) => unsafe {
                     let next_node = match index_page.keys().binary_search(&key) {
                         Ok(pos) => index_page.get_child_result(pos),
                         Err(pos) => index_page.get_child_result(pos)
@@ -284,14 +295,8 @@ impl<const FAN_OUT: usize,
                         return None;
                     }
 
-                    let next_node = unsafe {
-                        let child = next_node.assume_init();
-                        mem::forget(child.clone());
-
-                        child
-                    };
-
-                    current_guard = self.lock_reader(&next_node);
+                    current_guard
+                        = self.lock_reader(next_node.assume_init_ref());
                 }
                 _ => break Some(current_guard),
             }
@@ -346,18 +351,13 @@ impl<const FAN_OUT: usize,
                 = current_guard.deref();
 
             if current_guard_result.is_none() {
-                mem::drop(height);
                 mem::drop(current_guard);
-
-                if DEBUG {
-                    println!("6 \tAttempt = {}", attempt);
-                }
 
                 return Err((curr_level - 1, attempt + 1));
             }
 
             match current_guard_result.unwrap().as_ref() {
-                Node::Index(index_page) => {
+                Node::Index(index_page) => unsafe {
                     let (child_pos, next_node)
                         = match index_page.keys().binary_search(&key)
                     {
@@ -366,43 +366,26 @@ impl<const FAN_OUT: usize,
                     };
 
                     if !current_guard.is_valid() {
-                        mem::drop(next_node);
                         mem::drop(current_guard);
-
-                        if DEBUG {
-                            println!("8 \tAttempt = {}", attempt);
-                        }
 
                         return Err((curr_level - 1, attempt + 1));
                     }
 
-                    let next_node = unsafe {
-                        let child = next_node.assume_init();
-                        mem::forget(child.clone());
-
-                        child
-                    };
-
                     curr_level += 1;
 
-                    let mut next_guard = self.apply_for(
+                    let mut next_guard = self.apply_for_ref(
                         curr_level,
                         lock_level,
                         attempt,
                         height,
-                        next_node);
+                        next_node.assume_init_ref());
 
                     let next_guard_result
-                        = unsafe { next_guard.deref_unsafe() };
+                        = next_guard.deref_unsafe();
 
                     if next_guard_result.is_none() || !current_guard.is_valid() {
-                        mem::drop(height);
                         mem::drop(next_guard);
                         mem::drop(current_guard);
-
-                        if DEBUG {
-                            println!("9 \tAttempt = {}", attempt);
-                        }
 
                         return Err((curr_level - 1, attempt + 1));
                     }
@@ -412,31 +395,22 @@ impl<const FAN_OUT: usize,
 
                     if has_overflow_next {
                         if !current_guard.upgrade_write_lock() || !next_guard.upgrade_write_lock() {
-                            mem::drop(height);
                             mem::drop(next_guard);
                             mem::drop(current_guard);
-
-                            if DEBUG {
-                                println!("10 \tAttempt = {}", attempt);
-                            }
 
                             return Err((curr_level - 1, attempt + 1));
                         }
 
-                        debug_assert!(current_guard.is_write_lock() && next_guard.is_write_lock());
+                        debug_assert!(current_guard.upgrade_write_lock() &&
+                            next_guard.upgrade_write_lock());
 
                         self.do_overflow_correction(
                             &mut current_guard,
                             child_pos,
                             next_guard)
                     } else if !current_guard.is_valid() || !next_guard.is_valid() {
-                        mem::drop(height);
                         mem::drop(next_guard);
                         mem::drop(current_guard);
-
-                        if DEBUG {
-                            println!("11 \tAttempt = {}", attempt);
-                        }
 
                         return Err((curr_level - 1, attempt + 1));
                     } else {

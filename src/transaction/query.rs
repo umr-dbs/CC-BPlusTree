@@ -433,20 +433,17 @@ impl<const FAN_OUT: usize,
                 = current_guard.deref();
 
             match current_guard_result.unwrap().as_ref() {
-                Node::Index(index_page) => {
-                    let keys = index_page.keys();
-                    let children = index_page.children();
-
+                Node::Index(index_page) => unsafe {
                     let (child_pos, next_node)
-                        = match keys.binary_search(&key)
+                        = match index_page.keys().binary_search(&key)
                     {
-                        Ok(pos) => (pos, unsafe { children.get_unchecked(pos).clone() }),
-                        Err(pos) => (pos, unsafe {  children.get_unchecked(pos).clone() })
+                        Ok(pos) => (pos, index_page.get_child_unsafe(pos)),
+                        Err(pos) => (pos, index_page.get_child_unsafe(pos))
                     };
 
                     curr_level += 1;
 
-                    let mut next_guard = self.apply_for(
+                    let mut next_guard = self.apply_for_ref(
                         curr_level,
                         lock_level,
                         attempt,
@@ -522,15 +519,27 @@ impl<const FAN_OUT: usize,
         let key = (self.inc_key)(key);
         loop {
             match current_guard.deref().unwrap().as_ref() {
-                Node::Index(index_page) => current_guard =
+                Node::Index(index_page) =>
                     match index_page.keys().binary_search(&key) {
                         Ok(pos) => unsafe {
-                            current_block = index_page.get_child_unsafe(pos).clone();
-                            self.lock_reader(&current_block)
+                            let next_block
+                                = index_page.get_child_unsafe_cloned(pos);
+
+                            let next_guard
+                                = self.lock_reader(&next_block);
+
+                            current_guard = next_guard;
+                            current_block = next_block;
                         },
                         Err(pos) => unsafe {
-                            current_block = index_page.get_child_unsafe(pos).clone();
-                            self.lock_reader(&current_block)
+                            let next_block
+                                = index_page.get_child_unsafe_cloned(pos);
+
+                            let next_guard
+                                = self.lock_reader(&next_block);
+
+                            current_guard = next_guard;
+                            current_block = next_block;
                         }
                     },
                 _ => break current_guard,
@@ -583,8 +592,10 @@ impl<const FAN_OUT: usize,
                     path.extend(index_page.children()
                         .get_unchecked(first_pos..=last_pos)
                         .iter()
-                        .map(|child|(child.clone(),
-                            mem::transmute(self.lock_reader(child)))));
+                        .map(|child|
+                            (child.clone(),
+                             mem::transmute(self.lock_reader(child))))
+                    );
                 }
                 _ => results.push((current_block, unsafe { mem::transmute(current_guard) })),
             }

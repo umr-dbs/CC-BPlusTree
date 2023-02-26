@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::{hint, mem};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
+use std::sync::atomic::Ordering::SeqCst;
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{RawMutex, RawRwLock};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -86,7 +86,7 @@ impl<E: Default> Default for OptCell<E> {
 }
 
 impl<E: Default> OptCell<E> {
-    const CELL_START_VERSION: Version = 0;
+    const CELL_START_VERSION: LatchVersion = 0;
 
     #[inline(always)]
     pub const fn new(data: E) -> Self {
@@ -97,14 +97,14 @@ impl<E: Default> OptCell<E> {
     }
 
     #[inline(always)]
-    pub fn load_version(&self) -> Version {
-        self.cell_version.load(Relaxed)
-    }
-
-    #[inline(always)]
-    pub unsafe fn load_version_force(&self) -> Version {
+    pub fn load_version(&self) -> LatchVersion {
         self.cell_version.load(SeqCst)
     }
+
+    // #[inline(always)]
+    // pub unsafe fn load_version_force(&self) -> Version {
+    //     self.cell_version.load(SeqCst)
+    // }
 
     #[inline(always)]
     pub fn read_lock(&self) -> (bool, LatchVersion) {
@@ -138,7 +138,7 @@ impl<E: Default> OptCell<E> {
             read_version,
             WRITE_FLAG_VERSION | read_version,
             SeqCst,
-            Relaxed)
+            SeqCst)
         {
             Ok(..) => Some(WRITE_FLAG_VERSION | read_version),
             Err(..) => {
@@ -305,7 +305,6 @@ pub enum SmartGuard<'a, E: Default> {
 impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
     fn clone(&self) -> Self {
         match self {
-            LockFree(p) => LockFree(*p),
             OLCReader(inner) => OLCReader(inner.clone()),
             _ => unreachable!()
         }

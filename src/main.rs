@@ -75,7 +75,7 @@ fn experiment() {
     let cpu_threads = true;
     // test::show_bsz_alignment();
     let threads_cpu = vec![
-        1,
+        // 1,
         2,
         3,
         4,
@@ -84,9 +84,9 @@ fn experiment() {
         12,
         16,
         24,
-        32,
-        64,
-        128,
+        // 32,
+        // 64,
+        // 128,
         // 256,
         // 512,
         // 1024,
@@ -108,16 +108,16 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        // 10_000_000,
+        10_000_000,
         // 20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::LockCoupling);
+    // strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -132,9 +132,9 @@ fn experiment() {
     // strategies.push(LockingStrategy::OLC(
     //     LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
     //
-    strategies.push(LockingStrategy::RWLockCoupling(
-        LevelVariant::new_height_lock(1 as _),
-        4));
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(1 as _),
+    //     4));
     //
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(0.8 as _),

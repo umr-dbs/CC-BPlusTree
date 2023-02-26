@@ -144,7 +144,7 @@ impl<'a,
             BlockGuard::OLCWriter(Some((.., latch))) => *latch,
             BlockGuard::OLCReader(Some((cell, ..))) =>
                 if let SmartFlavor::OLCCell(opt) = cell.0.as_ref() {
-                    opt.load_version_force()
+                    opt.load_version()
                 } else {
                     Version::MIN
                 },

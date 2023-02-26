@@ -168,4 +168,33 @@ impl<const FAN_OUT: usize,
                 block_cc.borrow_free(),
         }
     }
+
+    #[inline]
+    pub(crate) fn apply_for_ref(&self,
+                            curr_level: Level,
+                            max_level: Level,
+                            attempt: Attempts,
+                            height: Level,
+                            block_cc: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
+    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
+    {
+        match self.locking_strategy() {
+            LockingStrategy::MonoWriter =>
+                block_cc.borrow_free(),
+            LockingStrategy::LockCoupling =>
+                block_cc.borrow_mut_exclusive(),
+            LockingStrategy::RWLockCoupling(lock_level, attempts)
+            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
+                block_cc.borrow_mut(),
+            LockingStrategy::RWLockCoupling(..) =>
+                block_cc.borrow_read(),
+            LockingStrategy::OLC(LevelConstraints::Unlimited) =>
+                block_cc.borrow_free(),
+            LockingStrategy::OLC(LevelConstraints::OptimisticLimit { attempts, level })
+            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
+                block_cc.borrow_mut(),
+            LockingStrategy::OLC(..) =>
+                block_cc.borrow_free(),
+        }
+    }
 }

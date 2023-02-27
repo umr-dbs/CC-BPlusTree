@@ -46,7 +46,8 @@ pub const FORCE_YIELD: usize = 4;
 #[cfg(not(target_os = "linux"))]
 pub fn sched_yield(attempt: usize) {
     if attempt > 3 {
-        std::thread::sleep(std::time::Duration::from_nanos(0))
+        std::thread::yield_now();
+        // std::thread::sleep(std::time::Duration::from_nanos(0))
     } else {
         hint::spin_loop();
     }

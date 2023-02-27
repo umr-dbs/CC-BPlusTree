@@ -40,6 +40,8 @@ pub fn sched_yield(attempt: usize) {
     }
 }
 
+pub const FORCE_YIELD: usize = 4;
+
 #[inline(always)]
 #[cfg(not(target_os = "linux"))]
 pub fn sched_yield(attempt: usize) {
@@ -186,6 +188,7 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn is_read_not_obsolete_result(&self) -> (bool, LatchVersion) {
+        sched_yield(FORCE_YIELD);
         let load = self.load_version();
         (load & WRITE_OBSOLETE_FLAG_VERSION == 0, load)
     }
@@ -306,7 +309,7 @@ impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
     fn clone(&self) -> Self {
         match self {
             OLCReader(inner) => OLCReader(inner.clone()),
-            _ => unreachable!()
+            _ => OLCReader(None)
         }
     }
 }

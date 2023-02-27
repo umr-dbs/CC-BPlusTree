@@ -1,6 +1,6 @@
 [package]
 name = "CCBPlusTree"
-version = "0.0.61"
+version = "0.0.62"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "Experimental Concurrency Control CRUD B+Tree Implementation"

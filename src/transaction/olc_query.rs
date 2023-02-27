@@ -8,7 +8,6 @@ use crate::page_model::block::BlockGuard;
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPoint;
 use crate::record_model::unsafe_clone::UnsafeClone;
-use crate::transaction::query::DEBUG;
 use crate::tx_model::transaction::Transaction;
 use crate::tx_model::transaction_result::TransactionResult;
 use crate::utils::interval::Interval;
@@ -150,9 +149,8 @@ impl<const FAN_OUT: usize,
                 = curr_parent;
 
             while !curr_interval.contains(next_key) {
-                path.truncate(parent_index);
                 parent_index -= 1;
-                let (n_curr_interval, .., n_curr_parent)
+                let (n_curr_interval, n_curr_parent)
                     = path.get_mut(parent_index).unwrap();
 
                 curr_interval = n_curr_interval;

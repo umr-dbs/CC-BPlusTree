@@ -244,10 +244,10 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
             match index.execute(next_query) { // index.execute(transaction),
                 TransactionResult::Inserted(key, ..) |
                 TransactionResult::Updated(key, ..) => if EXE_LOOK_UPS
-                {
+                { loop {
                     match index.execute(Transaction::Point(key)) {
                         TransactionResult::MatchedRecord(Some(record))
-                        if record.key == key => {}
+                        if record.key == key => {break}
                         joe => { //  if !index.locking_strategy().is_dolos()
                             log_debug_ln(format!("\nERROR Search -> Transaction::{}",
                                                  Transaction::<_, Payload>::Point(key)));
@@ -255,18 +255,20 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
                             println!()
                         }
                     };
-
-                    match index.execute(Transaction::Range((key..=key).into())) {
-                        TransactionResult::MatchedRecords(records)
-                        if records.len() != 1 =>
-                            println!("Sleepy Joe => len = {} - {}",
-                                   records.len(),
-                                   records.iter().join("\n")),
-                        TransactionResult::MatchedRecords(ref records)
-                        if records[0].key != key =>
-                            println!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
-                        _ => {}
-                    };
+                }
+                    loop {
+                        match index.execute(Transaction::Range((key..=key).into())) {
+                            TransactionResult::MatchedRecords(records)
+                            if records.len() != 1 =>
+                                println!("Sleepy Joe => len = {} - {}",
+                                         records.len(),
+                                         records.iter().join("\n")),
+                            TransactionResult::MatchedRecords(ref records)
+                            if records[0].key != key => //{}
+                                println!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
+                            _ => {break}
+                        };
+                    }
                 },
                 joey => {
                     log_debug_ln(format!("\n#### ERROR: {}, {}", index.locking_strategy, joey));

@@ -460,13 +460,8 @@ impl<const FAN_OUT: usize,
                         if self.locking_strategy.additional_lock_required() &&
                             (!current_guard.upgrade_write_lock() || !next_guard.upgrade_write_lock())
                         {
-                            mem::drop(height);
                             mem::drop(next_guard);
                             mem::drop(current_guard);
-
-                            if DEBUG {
-                                println!("10 \tAttempt = {}", attempt);
-                            }
 
                             return Err((curr_level - 1, attempt + 1));
                         }

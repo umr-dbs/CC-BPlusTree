@@ -207,6 +207,12 @@ impl<const FAN_OUT: usize,
 
                     curr_parent.update_read_latch(read_version);
 
+                    if !next_page.is_read_not_obsolete() {
+                        path.truncate(parent_index);
+                        attempts += 1;
+                        continue;
+                    }
+
                     attempts = 0;
                     parent_index += 1;
                     path.insert(parent_index,

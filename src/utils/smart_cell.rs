@@ -189,7 +189,7 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn is_read_not_obsolete_result(&self) -> (bool, LatchVersion) {
-        sched_yield(FORCE_YIELD);
+        // sched_yield(FORCE_YIELD);
         let load = self.load_version();
         (load & WRITE_OBSOLETE_FLAG_VERSION == 0, load)
     }

@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::SeqCst;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::page_model::{Attempts, Height, Level};
 use crate::page_model::block::BlockGuard;
@@ -38,7 +40,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub(crate) fn range_query_olc(&self,
-                                  path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
+                                  path: &mut Vec<(Interval<Key>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                                   org_key_interval: Interval<Key>) -> TransactionResult<Key, Payload>
     {
         let mut key_interval
@@ -60,6 +62,7 @@ impl<const FAN_OUT: usize,
                 let mut prev_path
                     = history_path.pop_front().unwrap();
 
+                fence(SeqCst);
                 match prev_path.get(prev_path.len() - 2) {
                     Some((.., parent_leaf)) if !parent_leaf.is_valid() => {
                         prev_path.clear();
@@ -85,6 +88,7 @@ impl<const FAN_OUT: usize,
                 };
             }
 
+            fence(SeqCst);
             if !local_results.is_empty() {
                 all_results.extend(local_results);
 
@@ -97,6 +101,7 @@ impl<const FAN_OUT: usize,
                     break;
                 }
 
+                fence(SeqCst);
                 self.next_leaf_page(
                     path,
                     path.len() - 2,
@@ -111,7 +116,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn next_leaf_page(&self,
-                                 path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
+                                 path: &mut Vec<(Interval<Key>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                                  mut parent_index: usize,
                                  next_key: Key)
     {
@@ -121,24 +126,27 @@ impl<const FAN_OUT: usize,
                 sched_yield(attempts);
             }
 
+            fence(SeqCst);
             if parent_index >= path.len() { // when all path is invalid, we run stacking path function again!
                 path.clear();
 
                 let root_read
                     = self.lock_reader(&self.root.block);
 
+                fence(SeqCst);
                 if !root_read.is_read_not_obsolete() {
                     attempts += 1;
                     continue
                 }
 
-                path.push((Interval::new(self.min_key, self.max_key),
-                           unsafe { mem::transmute(root_read) }));
+                fence(SeqCst);
+                path.push((Interval::new(self.min_key, self.max_key), root_read));
 
                 attempts = 0;
                 parent_index = 0;
             }
 
+            fence(SeqCst);
             let (curr_interval, curr_parent)
                 = path.get_mut(parent_index).unwrap();
 
@@ -157,12 +165,14 @@ impl<const FAN_OUT: usize,
                 curr_parent = n_curr_parent;
             }
 
+            fence(SeqCst);
             let curr_deref
                 = unsafe { curr_parent.deref_unsafe() };
 
             let (read, current_reader_version)
                 = curr_parent.is_read_not_obsolete_result();
 
+            fence(SeqCst);
             if curr_deref.is_none() || !read {
                 path.truncate(parent_index);
                 attempts += 1;
@@ -170,6 +180,7 @@ impl<const FAN_OUT: usize,
                 continue;
             }
 
+            fence(SeqCst);
             match curr_deref.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
                     let keys
@@ -192,6 +203,7 @@ impl<const FAN_OUT: usize,
                                      index_page.get_child_result(pos))
                     };
 
+                    fence(SeqCst);
                     let (read, read_version)
                         = curr_parent.is_read_not_obsolete_result();
 
@@ -202,21 +214,13 @@ impl<const FAN_OUT: usize,
                         continue;
                     }
 
-                    let next_page
-                        = self.lock_reader(next_page.assume_init_ref());
+                    fence(SeqCst);
 
                     curr_parent.update_read_latch(read_version);
 
-                    if !next_page.is_read_not_obsolete() {
-                        path.truncate(parent_index);
-                        attempts += 1;
-                        continue;
-                    }
-
                     attempts = 0;
                     parent_index += 1;
-                    path.insert(parent_index,
-                                (curr_interval, mem::transmute(next_page)));
+                    path.insert(parent_index, (curr_interval, self.lock_reader(next_page.assume_init_ref())));
                 }
                 Node::Leaf(..) => {
                     path.truncate(parent_index + 1);
@@ -228,11 +232,12 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     fn range_query_leaf_results(&self,
-                                path: &mut Vec<(Interval<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
+                                path: &mut Vec<(Interval<Key>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                                 key_interval: &Interval<Key>)
                                 -> Vec<RecordPoint<Key, Payload>>
     {
         loop {
+            fence(SeqCst);
             let (.., leaf)
                 = path.last().unwrap();
 
@@ -240,10 +245,12 @@ impl<const FAN_OUT: usize,
 
             match leaf_unchecked {
                 Node::Leaf(leaf_page) => unsafe {
+                    fence(SeqCst);
                     let (read, current_read_version)
                         = leaf.is_read_not_obsolete_result();
 
                     if read {
+                        fence(SeqCst);
                         let mut potential_results = leaf_page
                             .as_records()
                             .iter()
@@ -252,6 +259,7 @@ impl<const FAN_OUT: usize,
                             .map(|record| record.unsafe_clone())
                             .collect::<Vec<_>>();
 
+                        fence(SeqCst);
                         if leaf.cell_version_olc() == current_read_version { // avoid write in-between
                             return potential_results
                         } else {
@@ -273,6 +281,7 @@ impl<const FAN_OUT: usize,
 
         let key = (self.inc_key)(key);
         loop {
+            fence(SeqCst);
             let current
                 = unsafe { current_guard.deref_unsafe() };
 
@@ -285,6 +294,7 @@ impl<const FAN_OUT: usize,
                 return None;
             }
 
+            fence(SeqCst);
             match current.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
                     let next_node = match index_page.keys().binary_search(&key) {
@@ -292,6 +302,7 @@ impl<const FAN_OUT: usize,
                         Err(pos) => index_page.get_child_result(pos)
                     };
 
+                    fence(SeqCst);
                     let (read, read_version)
                         = current_guard.is_read_not_obsolete_result();
 
@@ -302,7 +313,10 @@ impl<const FAN_OUT: usize,
                     current_guard
                         = self.lock_reader(next_node.assume_init_ref());
                 }
-                _ => break Some(current_guard),
+                _ => {
+                    fence(SeqCst);
+                    break Some(current_guard)
+                },
             }
         }
     }
@@ -351,6 +365,7 @@ impl<const FAN_OUT: usize,
 
         let key = (self.inc_key)(key);
         loop {
+            fence(SeqCst);
             let current_guard_result
                 = current_guard.deref();
 
@@ -360,6 +375,7 @@ impl<const FAN_OUT: usize,
                 return Err((curr_level - 1, attempt + 1));
             }
 
+            fence(SeqCst);
             match current_guard_result.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
                     let (child_pos, next_node)
@@ -369,6 +385,7 @@ impl<const FAN_OUT: usize,
                         Err(pos) => (pos, index_page.get_child_result(pos))
                     };
 
+                    fence(SeqCst);
                     if !current_guard.is_valid() {
                         mem::drop(current_guard);
 
@@ -387,6 +404,7 @@ impl<const FAN_OUT: usize,
                     let next_guard_result
                         = next_guard.deref_unsafe();
 
+                    fence(SeqCst);
                     if next_guard_result.is_none() || !current_guard.is_valid() {
                         mem::drop(next_guard);
                         mem::drop(current_guard);
@@ -405,6 +423,7 @@ impl<const FAN_OUT: usize,
                             return Err((curr_level - 1, attempt + 1));
                         }
 
+                        fence(SeqCst);
                         debug_assert!(current_guard.upgrade_write_lock() &&
                             next_guard.upgrade_write_lock());
 
@@ -422,6 +441,7 @@ impl<const FAN_OUT: usize,
                     }
                 }
                 _ => return if current_guard.upgrade_write_lock() {
+                    fence(SeqCst);
                     Ok(current_guard)
                 } else {
                     Err((curr_level - 1, attempt + 1))

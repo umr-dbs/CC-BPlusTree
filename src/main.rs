@@ -6,7 +6,7 @@ use crate::index::bplus_tree;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::page_model::block::Block;
 use crate::page_model::LevelVariant;
-use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test};
+use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test};
 
 mod index;
 mod transaction;
@@ -88,7 +88,7 @@ fn experiment() {
         // 64,
         // 128,
         // 256,
-        512,
+        // 512,
         1024,
     ];
 
@@ -110,7 +110,7 @@ fn experiment() {
         // 5_000_000,
         10_000_000,
         // 20_000_000,
-        // 50_000_000,
+        50_000_000,
         // 100_000_000,
     ];
 
@@ -202,6 +202,9 @@ fn experiment() {
                 if EXE_LOOK_UPS {
                     log_debug_ln(format!("Warning: Look-up queries enabled!"))
                 }
+                if EXE_RANGE_LOOK_UPS {
+                    log_debug_ln(format!("Warning: Range queries enabled!"))
+                }
 
                 print!("{}", t1s.len());
                 print!(",{}", *num_threads);
@@ -222,6 +225,9 @@ fn experiment() {
             for ls in strats.iter() {
                 if EXE_LOOK_UPS {
                     log_debug_ln(format!("Warning: Look-up queries enabled!"))
+                }
+                if EXE_RANGE_LOOK_UPS {
+                    log_debug_ln(format!("Warning: Range queries enabled!"))
                 }
 
                 print!("{}", t1s.len());

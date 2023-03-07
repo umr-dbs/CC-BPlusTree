@@ -1,5 +1,7 @@
 use std::hash::Hash;
 use std::mem;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::SeqCst;
 use crate::block::block_manager::BlockManager;
 use crate::index::root::Root;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
@@ -70,6 +72,7 @@ impl<const FAN_OUT: usize,
             self.root.block.unsafe_borrow_mut(),
             new_root,
         ));
+        fence(SeqCst);
     }
 
     fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -131,7 +134,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub(crate) fn lock_reader(&self, node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
-        -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
+        -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy {
             LockingStrategy::MonoWriter => node.borrow_free(),

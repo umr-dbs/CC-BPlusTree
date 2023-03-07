@@ -2,7 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::{hint, mem};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{RawMutex, RawRwLock};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -101,7 +102,8 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn load_version(&self) -> LatchVersion {
-        self.cell_version.load(SeqCst)
+        fence(Acquire);
+        self.cell_version.load(Acquire)
     }
 
     // #[inline(always)]
@@ -137,32 +139,38 @@ impl<E: Default> OptCell<E> {
         //     return None;
         // }
 
-        match self.cell_version.compare_exchange(
+        // fence(SeqCst);
+        let ret = match self.cell_version.compare_exchange(
             read_version,
             WRITE_FLAG_VERSION | read_version,
-            SeqCst,
-            SeqCst)
+            AcqRel,
+            Acquire)
         {
             Ok(..) => Some(WRITE_FLAG_VERSION | read_version),
             Err(..) => {
                 // hint::spin_loop();
                 None
             }
-        }
+        };
+
+        fence(SeqCst);
+        ret
     }
 
     #[inline(always)]
     pub fn write_unlock(&self, write_version: LatchVersion) {
         debug_assert!(write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, SeqCst)
+        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release);
+        fence(SeqCst);
     }
 
     #[inline(always)]
     pub fn write_obsolete(&self, write_version: LatchVersion) {
         debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, SeqCst);
+        self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, Release);
+        fence(SeqCst);
     }
 
     #[inline(always)]

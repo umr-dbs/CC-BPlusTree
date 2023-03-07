@@ -1,13 +1,13 @@
 use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
-use std::fmt::{Display, Formatter};
+use std::fmt::Display;
 use std::hash::Hash;
 use std::time::SystemTime;
 use itertools::Itertools;
 use rand::RngCore;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
-use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::locking::locking_strategy::LockingStrategy;
 use crate::page_model::BlockRef;
 use crate::page_model::node::Node;
 use crate::show_alignment_bsz;
@@ -16,6 +16,8 @@ use crate::tx_model::transaction_result::TransactionResult;
 use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 
+pub const EXE_LOOK_UPS: bool = false;
+pub const EXE_RANGE_LOOK_UPS: bool = false;
 
 pub const BSZ_BASE: usize = _4KB;
 pub const BSZ: usize = BSZ_BASE - bsz_alignment::<Key, Payload>();
@@ -42,9 +44,6 @@ pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, Key::MIN, Key::MAX, inc_key, dec_key);
-
-
-pub const EXE_LOOK_UPS: bool = true;
 
 pub fn log_debug_ln(s: String) {
     println!("> {}", s.replace("\n", "\n>"))
@@ -243,35 +242,39 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
         handles.push(thread::spawn(move || current_chunk.into_inner().into_iter().for_each(|next_query| {
             match index.execute(next_query) { // index.execute(transaction),
                 TransactionResult::Inserted(key, ..) |
-                TransactionResult::Updated(key, ..) => if EXE_LOOK_UPS
-                { loop {
-                    match index.execute(Transaction::Point(key)) {
-                        TransactionResult::MatchedRecord(Some(record))
-                        if record.key == key => {break}
-                        joe => { //  if !index.locking_strategy().is_dolos()
-                            log_debug_ln(format!("\nERROR Search -> Transaction::{}",
-                                                 Transaction::<_, Payload>::Point(key)));
-                            log_debug_ln(format!("\n****ERROR: {}, TransactionResult::{}", index.locking_strategy, joe));
-                            println!()
+                TransactionResult::Updated(key, ..) => {
+                    if EXE_LOOK_UPS {
+                        loop {
+                            match index.execute(Transaction::Point(key)) {
+                                TransactionResult::MatchedRecord(Some(record))
+                                if record.key == key => { break; }
+                                joe => { //  if !index.locking_strategy().is_dolos()
+                                    log_debug_ln(format!("\nSleepy Joe => Transaction::{} ->",
+                                                         Transaction::<_, Payload>::Point(key)));
+                                    log_debug_ln(format!("\nTransactionResult::{}", joe));
+                                    println!()
+                                }
+                            };
                         }
-                    };
-                }
-                    loop {
-                        match index.execute(Transaction::Range((key..=key).into())) {
-                            TransactionResult::MatchedRecords(records)
-                            if records.len() != 1 =>
-                                println!("Sleepy Joe => len = {} - {}",
-                                         records.len(),
-                                         records.iter().join("\n")),
-                            TransactionResult::MatchedRecords(ref records)
-                            if records[0].key != key => //{}
-                                println!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
-                            _ => {break}
-                        };
                     }
-                },
+                    if EXE_RANGE_LOOK_UPS {
+                        loop {
+                            match index.execute(Transaction::Range((key..=key).into())) {
+                                TransactionResult::MatchedRecords(records)
+                                if records.len() != 1 =>
+                                    println!("Sleepy Joe => RangeQuery len = {} - {}",
+                                             records.len(),
+                                             records.iter().join("\n")),
+                                TransactionResult::MatchedRecords(ref records)
+                                if records[0].key != key => //{}
+                                    println!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
+                                _ => { break; }
+                            };
+                        }
+                    }
+                }
                 joey => {
-                    log_debug_ln(format!("\n#### ERROR: {}, {}", index.locking_strategy, joey));
+                    log_debug_ln(format!("\n#### Sleepy Joe => Transaction ERROR: {}, {}", index.locking_strategy, joey));
                     panic!()
                 }
             };

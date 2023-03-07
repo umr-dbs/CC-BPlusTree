@@ -1,6 +1,8 @@
 use std::hash::Hash;
 use std::mem;
 use std::fmt::Display;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::SeqCst;
 use crate::index::bplus_tree::BPlusTree;
 use crate::page_model::node::Node;
 use crate::record_model::unsafe_clone::UnsafeClone;
@@ -82,6 +84,7 @@ impl<const FAN_OUT: usize,
                 let guard
                     = self.traversal_read_olc(key);
 
+                fence(SeqCst);
                 let reader = guard
                     .deref();
 
@@ -93,6 +96,7 @@ impl<const FAN_OUT: usize,
                     = reader.unwrap();
 
                 loop {
+                    fence(SeqCst);
                     let reader_cell_version
                         = guard.cell_version_olc();
 
@@ -114,6 +118,7 @@ impl<const FAN_OUT: usize,
                         _ => None
                     };
 
+                    fence(SeqCst);
                     if guard.cell_version_olc() == reader_cell_version {
                         mem::drop(guard);
                         break maybe_record.into();

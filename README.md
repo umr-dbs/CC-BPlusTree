@@ -1,6 +1,6 @@
 # Experimental Concurrency Control B+Tree with and without Version Lists Implementation
-    Build:             - 05.03.2023
-    Version:           - 0.0.63 (Experimental)
+    Build:             - 07.03.2023
+    Version:           - 0.0.64 (Experimental)
 ---------------------------------------
 # CC B+Tree Build
     Requirements:

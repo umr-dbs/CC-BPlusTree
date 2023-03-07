@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
-use itertools::{EitherOrBoth, Itertools};
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::SeqCst;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::block::BlockGuard;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::sched_yield;
 
 pub const DEBUG: bool = false;
 
@@ -60,9 +60,6 @@ impl<const FAN_OUT: usize,
     pub(crate) fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts)
     -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
     {
-        // let root
-        //     = self.root.clone();
-
         let root
             = self.root.get();
 
@@ -120,14 +117,6 @@ impl<const FAN_OUT: usize,
         if !has_overflow_root {
             return Ok((root_guard, root.height()));
         }
-
-        // debug_assert!(root_guard.is_valid());
-
-        // if !root_guard.upgrade_write_lock() && self.locking_strategy.additional_lock_required() {
-        //     mem::drop(root_guard);
-        //
-        //     return Err((lock_level, attempt + 1));
-        // }
 
         let root_ref
             = root_guard.deref_mut().unwrap();
@@ -223,46 +212,9 @@ impl<const FAN_OUT: usize,
                     new_root,
                     n_height);
             }
-            // Node::MultiVersionLeaf(records) => unsafe {
-            //     let records
-            //         = records.as_records();
-            //
-            //     let records_mid = records.len() / 2;
-            //     let k3 = records
-            //         .get_unchecked(records_mid)
-            //         .key();
-            //
-            //     let new_node_right
-            //         = self.block_manager.new_empty_leaf_multi_version_block();
-            //
-            //     let new_node_left
-            //         = self.block_manager.new_empty_leaf_multi_version_block();
-            //
-            //     let new_root
-            //         = self.block_manager.new_empty_index_block();
-            //
-            //     new_node_right
-            //         .record_lists_mut()
-            //         .extend_from_slice(records.get_unchecked(records_mid..));
-            //
-            //     new_node_left
-            //         .record_lists_mut()
-            //         .extend_from_slice(records.get_unchecked(..records_mid));
-            //
-            //     new_root.children_mut().extend([
-            //         new_node_left.into_cell(is_optimistic),
-            //         new_node_right.into_cell(is_optimistic)
-            //     ]);
-            //
-            //     new_root.keys_mut()
-            //         .push(k3);
-            //
-            //     self.set_new_root(
-            //         new_root,
-            //         n_height);
-            // }
         }
 
+        fence(SeqCst);
         Ok((root_guard, n_height))
     }
 
@@ -319,13 +271,9 @@ impl<const FAN_OUT: usize,
                 parent_children
                     .insert(child_pos + 1, new_node_right.into_cell(olc));
 
-                // if !self.locking_strategy.is_mono_writer() {
                 mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
                                        new_node_from.into_cell(olc)));
-                // } else {
-                //     ptr::write(parent_children.get_unchecked_mut(child_pos),
-                //                new_node_from.into_cell(olc))
-                // }
+                fence(SeqCst);
 
                 parent_mut
                     .keys_mut()
@@ -364,58 +312,16 @@ impl<const FAN_OUT: usize,
                 parent_children
                     .insert(child_pos + 1, new_node.into_cell(olc));
 
-                // if !self.locking_strategy.is_mono_writer() {
                 mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
                                        new_node_from.into_cell(olc)));
-                // } else {
-                //     ptr::write(parent_children.get_unchecked_mut(child_pos),
-                //                new_node_from.into_cell(olc));
-                // }
-
+                fence(SeqCst);
                 parent_mut
                     .keys_mut()
                     .insert(child_pos, k3);
             }
-            // Node::MultiVersionLeaf(records) => unsafe {
-            //     let records
-            //         = records.as_records();
-            //
-            //     let records_mid = records.len() / 2;
-            //     let k3 = records
-            //         .get_unchecked(records_mid)
-            //         .key();
-            //
-            //     let new_node
-            //         = self.block_manager.new_empty_leaf_multi_version_block();
-            //
-            //     let new_node_from
-            //         = self.block_manager.new_empty_leaf_multi_version_block();
-            //
-            //     new_node
-            //         .record_lists_mut()
-            //         .extend_from_slice(records.get_unchecked(records_mid..));
-            //
-            //     new_node_from
-            //         .record_lists_mut()
-            //         .extend_from_slice(records.get_unchecked(..records_mid));
-            //
-            //     let parent_mut = parent_guard
-            //         .deref_mut()
-            //         .unwrap();
-            //
-            //     parent_mut
-            //         .children_mut()
-            //         .insert(child_pos + 1, new_node.into_cell(olc));
-            //
-            //     mem::forget(*parent_mut
-            //         .children_mut()
-            //         .get_unchecked_mut(child_pos) = new_node_from.into_cell(olc));
-            //
-            //     parent_mut
-            //         .keys_mut()
-            //         .insert(child_pos, k3);
-            // }
         }
+
+        fence(SeqCst);
     }
 
     #[inline]
@@ -546,7 +452,7 @@ impl<const FAN_OUT: usize,
     pub(crate) fn traversal_read_range(
         &self,
         current_range: &Interval<Key>)
-    -> Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>
+    -> Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>)>
     {
         let mut current_block
             = self.root.block();
@@ -587,12 +493,9 @@ impl<const FAN_OUT: usize,
                     path.extend(index_page.children()
                         .get_unchecked(first_pos..=last_pos)
                         .iter()
-                        .map(|child|
-                            (child.clone(),
-                             mem::transmute(self.lock_reader(child))))
-                    );
+                        .map(|child| (child.clone(), self.lock_reader(child))));
                 }
-                _ => results.push((current_block, unsafe { mem::transmute(current_guard) })),
+                _ => results.push((current_block, current_guard)),
             }
         }
 

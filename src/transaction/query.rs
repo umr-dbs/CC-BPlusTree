@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
-use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::SeqCst;
 use crate::index::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
@@ -9,6 +8,7 @@ use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::block::BlockGuard;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::utils::interval::Interval;
+use crate::utils::smart_cell::__FENCE;
 
 pub const DEBUG: bool = false;
 
@@ -214,7 +214,7 @@ impl<const FAN_OUT: usize,
             }
         }
 
-        fence(SeqCst);
+        __FENCE(SeqCst);
         Ok((root_guard, n_height))
     }
 
@@ -273,7 +273,7 @@ impl<const FAN_OUT: usize,
 
                 mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
                                        new_node_from.into_cell(olc)));
-                fence(SeqCst);
+                __FENCE(SeqCst);
 
                 parent_mut
                     .keys_mut()
@@ -314,14 +314,14 @@ impl<const FAN_OUT: usize,
 
                 mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
                                        new_node_from.into_cell(olc)));
-                fence(SeqCst);
+                __FENCE(SeqCst);
                 parent_mut
                     .keys_mut()
                     .insert(child_pos, k3);
             }
         }
 
-        fence(SeqCst);
+        __FENCE(SeqCst);
     }
 
     #[inline]

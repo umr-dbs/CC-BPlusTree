@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::{hint, mem};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Release, SeqCst};
+use std::sync::atomic::{fence, Ordering};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{RawMutex, RawRwLock};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -17,11 +17,13 @@ use crate::utils::smart_cell::SmartGuard::{LockFree, MutExclusive, OLCReader, OL
 //     pub cccell: ManuallyDrop<CCCell<E>>,
 //     pub opt_cell: ManuallyDrop<OptCell<E>>,
 // }
+pub const ENABLE_FENCES: bool = false;
+pub const ENABLE_YIELD: bool = true;
 
-pub const OBSOLETE_FLAG_VERSION: Version = 0x8_000000000000000;
-pub const WRITE_FLAG_VERSION: Version = 0x4_000000000000000;
-pub const WRITE_OBSOLETE_FLAG_VERSION: Version = 0xC_000000000000000;
-const READ_FLAG_VERSION: Version = 0x0_000000000000000;
+pub const OBSOLETE_FLAG_VERSION: LatchVersion = 0x8_000000000000000;
+pub const WRITE_FLAG_VERSION: LatchVersion = 0x4_000000000000000;
+pub const WRITE_OBSOLETE_FLAG_VERSION: LatchVersion = 0xC_000000000000000;
+// const READ_FLAG_VERSION: Version = 0x0_000000000000000;
 // const LOCK_FREE_FLAG_VERSION: Version = 0x00_00_00_00_00_00_00_00;
 // const LOCKING_FLAG_VERSION: Version = OBSOLETE_FLAG_VERSION;
 
@@ -30,6 +32,13 @@ const READ_FLAG_VERSION: Version = 0x0_000000000000000;
 // const MAX_READERS: Version = (1 << READERS_NUM_BITS) - 1;
 // const LOCKING_BITS_OFFSET: Version = 2;
 // const VERSIONING_COUNTER_BITS: Version = (8 * mem::size_of::<Version>() as Version) - READERS_NUM_BITS - LOCKING_BITS_OFFSET;
+
+#[inline(always)]
+pub fn __FENCE(order: Ordering) {
+    if ENABLE_FENCES {
+        fence(order);
+    }
+}
 
 #[inline(always)]
 #[cfg(target_os = "linux")]
@@ -102,7 +111,7 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn load_version(&self) -> LatchVersion {
-        fence(Acquire);
+        __FENCE(Acquire);
         self.cell_version.load(Acquire)
     }
 
@@ -135,16 +144,13 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
-        // if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
-        //     return None;
-        // }
+        __FENCE(SeqCst);
 
-        // fence(SeqCst);
         let ret = match self.cell_version.compare_exchange(
             read_version,
             WRITE_FLAG_VERSION | read_version,
-            AcqRel,
-            Acquire)
+            SeqCst,
+            SeqCst)
         {
             Ok(..) => Some(WRITE_FLAG_VERSION | read_version),
             Err(..) => {
@@ -153,7 +159,7 @@ impl<E: Default> OptCell<E> {
             }
         };
 
-        fence(SeqCst);
+        __FENCE(SeqCst);
         ret
     }
 
@@ -162,7 +168,7 @@ impl<E: Default> OptCell<E> {
         debug_assert!(write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
         self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release);
-        fence(SeqCst);
+        __FENCE(SeqCst);
     }
 
     #[inline(always)]
@@ -170,7 +176,7 @@ impl<E: Default> OptCell<E> {
         debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
         self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, Release);
-        fence(SeqCst);
+        __FENCE(SeqCst);
     }
 
     #[inline(always)]
@@ -197,7 +203,9 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn is_read_not_obsolete_result(&self) -> (bool, LatchVersion) {
-        // sched_yield(FORCE_YIELD);
+        if ENABLE_YIELD {
+            sched_yield(FORCE_YIELD);
+        }
         let load = self.load_version();
         (load & WRITE_OBSOLETE_FLAG_VERSION == 0, load)
     }

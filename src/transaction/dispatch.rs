@@ -1,7 +1,6 @@
 use std::hash::Hash;
 use std::mem;
 use std::fmt::Display;
-use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::SeqCst;
 use crate::index::bplus_tree::BPlusTree;
 use crate::page_model::node::Node;
@@ -9,7 +8,7 @@ use crate::record_model::unsafe_clone::UnsafeClone;
 use crate::tx_model::transaction::Transaction;
 use crate::tx_model::transaction_result::TransactionResult;
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::WRITE_OBSOLETE_FLAG_VERSION;
+use crate::utils::smart_cell::{__FENCE, WRITE_OBSOLETE_FLAG_VERSION};
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -80,56 +79,66 @@ impl<const FAN_OUT: usize,
                     .map(|old| TransactionResult::Updated(key, old))
                     .unwrap_or_default()
             }
-            Transaction::Point(key) if olc => unsafe {
-                let guard
-                    = self.traversal_read_olc(key);
-
-                fence(SeqCst);
-                let reader = guard
-                    .deref();
-
-                if reader.is_none() {
-                    return self.execute(Transaction::Point(key));
-                }
-
-                let reader
-                    = reader.unwrap();
-
-                loop {
-                    fence(SeqCst);
-                    let reader_cell_version
-                        = guard.cell_version_olc();
-
-                    if reader_cell_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
-                        mem::drop(guard);
-
-                        return self.execute(Transaction::Point(key));
-                    }
-
-                    let maybe_record = match reader.as_ref() {
-                        Node::Leaf(records) => records
-                            .as_records()
-                            .binary_search_by_key(&key, |record_point| record_point.key)
-                            .ok()
-                            .map(|pos| records
-                                .as_records()
-                                .get_unchecked(pos)
-                                .unsafe_clone()),
-                        _ => None
-                    };
-
-                    fence(SeqCst);
-                    if guard.cell_version_olc() == reader_cell_version {
-                        mem::drop(guard);
-                        break maybe_record.into();
-                    } else {
-                        mem::drop(guard);
-                        mem::forget(maybe_record);
-
-                        return self.execute(Transaction::Point(key));
-                    }
-                }
-            }
+            Transaction::Point(key) if olc => match self.execute(Transaction::Range((key..=key).into())) {
+                TransactionResult::MatchedRecords(mut records) if records.len() <= 1 =>
+                    TransactionResult::MatchedRecord(records.pop()),
+                _ => TransactionResult::Error
+            },
+            // Transaction::Point(key) if olc => unsafe {
+            //     let guard
+            //         = self.traversal_read_olc(key);
+            //
+            //     __FENCE(SeqCst);
+            //     let reader = guard
+            //         .deref();
+            //
+            //     if reader.is_none() {
+            //         return self.execute(Transaction::Point(key));
+            //     }
+            //
+            //     let reader
+            //         = reader.unwrap();
+            //
+            //     loop {
+            //         __FENCE(SeqCst);
+            //         let (read, reader_cell_version)
+            //             = guard.is_read_not_obsolete_result();
+            //
+            //         if !read {
+            //             mem::drop(guard);
+            //
+            //             return self.execute(Transaction::Point(key));
+            //         }
+            //
+            //         __FENCE(SeqCst);
+            //         let maybe_record = match reader.as_ref() {
+            //             Node::Leaf(records) => records
+            //                 .as_records()
+            //                 .binary_search_by_key(&key, |record_point| record_point.key)
+            //                 .ok()
+            //                 .map(|pos| records
+            //                     .as_records()
+            //                     .get_unchecked(pos)
+            //                     .unsafe_clone()),
+            //             _ => None
+            //         };
+            //
+            //         __FENCE(SeqCst);
+            //         let (read, n_reader_cell_version)
+            //             = guard.is_read_not_obsolete_result();
+            //
+            //         if !read || n_reader_cell_version != reader_cell_version {
+            //             mem::drop(guard);
+            //             break maybe_record.into();
+            //         }
+            //         else {
+            //             mem::drop(guard);
+            //             mem::forget(maybe_record);
+            //
+            //             return self.execute(Transaction::Point(key));
+            //         }
+            //     }
+            // }
             Transaction::Point(key) => unsafe {
                 let guard
                     = self.traversal_read(key);

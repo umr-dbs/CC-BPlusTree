@@ -4,12 +4,12 @@ use std::hash::Hash;
 // use crate::record_model::record_like::RecordLike;
 // use crate::record_model::Version;
 use crate::utils::interval::Interval;
-use crate::tx_model::transaction::Transaction::{Empty, Delete, Point, Insert, Range, Update};
+use crate::crud_model::crud_operation::CRUDOperation::{Empty, Delete, Point, Insert, Range, Update};
 
 /// Transactions definitions.
 /// Empty variant indicates an initiation error and/or a default stack allocation.
 #[derive(Clone, Default)]
-pub enum Transaction<Key: Ord + Copy + Hash, Payload: Clone> {
+pub enum CRUDOperation<Key: Ord + Copy + Hash, Payload: Clone> {
     #[default]
     Empty,
 
@@ -21,10 +21,10 @@ pub enum Transaction<Key: Ord + Copy + Hash, Payload: Clone> {
 }
 
 /// Explicitly support move-semantics for Transaction.
-unsafe impl<Key: Ord + Copy + Hash, Payload: Clone> Send for Transaction<Key, Payload> {}
-unsafe impl<Key: Ord + Copy + Hash, Payload: Clone> Sync for Transaction<Key, Payload> {}
+unsafe impl<Key: Ord + Copy + Hash, Payload: Clone> Send for CRUDOperation<Key, Payload> {}
+unsafe impl<Key: Ord + Copy + Hash, Payload: Clone> Sync for CRUDOperation<Key, Payload> {}
 /// Implements Display for Transaction, i.e. pretty printers.
-impl<Key: Display + Ord + Copy + Hash, Payload: Display + Clone> Display for Transaction<Key, Payload> {
+impl<Key: Display + Ord + Copy + Hash, Payload: Display + Clone> Display for CRUDOperation<Key, Payload> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Insert(key, payload) =>
@@ -43,7 +43,7 @@ impl<Key: Display + Ord + Copy + Hash, Payload: Display + Clone> Display for Tra
 }
 
 /// Main implementation block for Transaction.
-impl<Key: Ord + Hash + Copy, Payload: Clone> Transaction<Key, Payload> {
+impl<Key: Ord + Hash + Copy, Payload: Clone> CRUDOperation<Key, Payload> {
     /// Returns true, only if the Transaction does not require write access when executing.
     /// Returns false, otherwise.
     #[inline(always)]

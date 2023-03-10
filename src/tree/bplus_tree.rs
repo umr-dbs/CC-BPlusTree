@@ -1,15 +1,12 @@
 use std::hash::Hash;
 use std::mem;
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::SeqCst;
 use crate::block::block_manager::BlockManager;
-use crate::index::root::Root;
+use crate::tree::root::Root;
 use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
-use crate::page_model::block::{Block, BlockGuard};
+use crate::block::block::{Block, BlockGuard};
 use crate::test::{dec_key, inc_key};
 use crate::utils::un_cell::UnCell;
-// use serde::{Serialize, Deserialize};
 
 pub type LockLevel = ObjectCount;
 pub const INIT_TREE_HEIGHT: Height = 1;
@@ -72,7 +69,6 @@ impl<const FAN_OUT: usize,
             self.root.block.unsafe_borrow_mut(),
             new_root,
         ));
-        fence(SeqCst);
     }
 
     fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -127,11 +123,6 @@ impl<const FAN_OUT: usize,
         self.root.height()
     }
 
-    // #[inline(always)]
-    // pub(crate) fn next_version(&self) -> Version {
-    //     self.version_counter.fetch_add(1, Relaxed)
-    // }
-
     #[inline(always)]
     pub(crate) fn lock_reader(&self, node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
         -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
@@ -140,35 +131,6 @@ impl<const FAN_OUT: usize,
             LockingStrategy::MonoWriter => node.borrow_free(),
             LockingStrategy::LockCoupling => node.borrow_mut_exclusive(),
             _ => node.borrow_read(),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn apply_for(&self,
-                            curr_level: Level,
-                            max_level: Level,
-                            attempt: Attempts,
-                            height: Level,
-                            block_cc: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
-    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
-    {
-        match self.locking_strategy() {
-            LockingStrategy::MonoWriter =>
-                block_cc.borrow_free(),
-            LockingStrategy::LockCoupling =>
-                block_cc.borrow_mut_exclusive(),
-            LockingStrategy::RWLockCoupling(lock_level, attempts)
-            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut(),
-            LockingStrategy::RWLockCoupling(..) =>
-                block_cc.borrow_read(),
-            LockingStrategy::OLC(LevelConstraints::Unlimited) =>
-                block_cc.borrow_free(),
-            LockingStrategy::OLC(LevelConstraints::OptimisticLimit { attempts, level })
-            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut(),
-            LockingStrategy::OLC(..) =>
-                block_cc.borrow_free(),
         }
     }
 

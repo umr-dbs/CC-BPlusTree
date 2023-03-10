@@ -42,7 +42,7 @@
 # else
 #  define COMPILER_VERSION_MAJOR DEC(__INTEL_COMPILER)
 #  define COMPILER_VERSION_MINOR DEC(__INTEL_COMPILER_UPDATE)
-   /* The third version component from --version is an update index,
+   /* The third version component from --version is an update tree,
       but no macro is provided for it.  */
 #  define COMPILER_VERSION_PATCH DEC(0)
 # endif

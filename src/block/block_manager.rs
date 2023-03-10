@@ -4,12 +4,12 @@ use std::marker::PhantomData;
 use std::mem;
 use std::sync::atomic::Ordering;
 use crate::page_model::{AtomicBlockID, BlockID, BlockRef, ObjectCount};
-use crate::page_model::block::Block;
+use crate::block::block::Block;
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::utils::smart_cell::{SmartCell, SmartFlavor};
-// use crate::index::settings::BlockSettings;
+// use crate::tree::settings::BlockSettings;
 
 const ENABLE_SMALL_BLOCK: bool = false;
 const MAX_ZEROS_PER_BLOCK: usize = 3964; // = data region in a block

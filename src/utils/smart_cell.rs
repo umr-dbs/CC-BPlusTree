@@ -13,32 +13,12 @@ use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::SmartFlavor::{ControlCell, OLCCell};
 use crate::utils::smart_cell::SmartGuard::{LockFree, MutExclusive, OLCReader, OLCWriter, RwReader, RwWriter};
 
-// pub union NewCell<E: Default> {
-//     pub cccell: ManuallyDrop<CCCell<E>>,
-//     pub opt_cell: ManuallyDrop<OptCell<E>>,
-// }
-pub const ENABLE_FENCES: bool = false;
-pub const ENABLE_YIELD: bool = true;
+pub const CPU_THREADS: bool = true;
+pub const ENABLE_YIELD: bool = !CPU_THREADS;
 
-pub const OBSOLETE_FLAG_VERSION: LatchVersion = 0x8_000000000000000;
-pub const WRITE_FLAG_VERSION: LatchVersion = 0x4_000000000000000;
+pub const OBSOLETE_FLAG_VERSION: LatchVersion       = 0x8_000000000000000;
+pub const WRITE_FLAG_VERSION: LatchVersion          = 0x4_000000000000000;
 pub const WRITE_OBSOLETE_FLAG_VERSION: LatchVersion = 0xC_000000000000000;
-// const READ_FLAG_VERSION: Version = 0x0_000000000000000;
-// const LOCK_FREE_FLAG_VERSION: Version = 0x00_00_00_00_00_00_00_00;
-// const LOCKING_FLAG_VERSION: Version = OBSOLETE_FLAG_VERSION;
-
-// const READERS_NUM_BITS: Version = 6 + 8;
-// 0xC_0 + 0x_00 free bits
-// const MAX_READERS: Version = (1 << READERS_NUM_BITS) - 1;
-// const LOCKING_BITS_OFFSET: Version = 2;
-// const VERSIONING_COUNTER_BITS: Version = (8 * mem::size_of::<Version>() as Version) - READERS_NUM_BITS - LOCKING_BITS_OFFSET;
-
-#[inline(always)]
-pub fn __FENCE(order: Ordering) {
-    if ENABLE_FENCES {
-        fence(order);
-    }
-}
 
 #[inline(always)]
 #[cfg(target_os = "linux")]
@@ -57,17 +37,12 @@ pub const FORCE_YIELD: usize = 4;
 pub fn sched_yield(attempt: usize) {
     if attempt > 3 {
         std::thread::yield_now();
-        // std::thread::sleep(std::time::Duration::from_nanos(0))
     } else {
         hint::spin_loop();
     }
 }
 
-pub type LatchVersion = Version;
-
-// pub const fn num_readers(version: Version) -> Version {
-//     (((version << LOCKING_BITS_OFFSET) >> LOCKING_BITS_OFFSET) & MAX_READERS) >> (mem::size_of::<Version>() as Version - READERS_NUM_BITS - LOCKING_BITS_OFFSET)
-// }
+type LatchVersion = Version;
 
 pub struct OptCell<E: Default> {
     pub(crate) cell: SafeCell<E>,
@@ -111,30 +86,18 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn load_version(&self) -> LatchVersion {
-        __FENCE(Acquire);
         self.cell_version.load(Acquire)
     }
-
-    // #[inline(always)]
-    // pub unsafe fn load_version_force(&self) -> Version {
-    //     self.cell_version.load(SeqCst)
-    // }
 
     #[inline(always)]
     pub fn read_lock(&self) -> (bool, LatchVersion) {
         let version = self.load_version();
         if version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
-            // hint::spin_loop();
             (false, version)
         } else {
             (true, version)
         }
     }
-
-    // fn is_any_valid(&self, v: Version) -> bool {
-    //     let load = self.load_version();
-    //     v == load && load & OBSOLETE_FLAG_VERSION == 0
-    // }
 
     #[inline(always)]
     pub fn is_read_valid(&self, v: LatchVersion) -> bool {
@@ -144,45 +107,34 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
-        __FENCE(SeqCst);
-
-        let ret = match self.cell_version.compare_exchange(
+        match self.cell_version.compare_exchange_weak(
             read_version,
             WRITE_FLAG_VERSION | read_version,
-            SeqCst,
-            SeqCst)
+            AcqRel,
+            Relaxed)
         {
             Ok(..) => Some(WRITE_FLAG_VERSION | read_version),
-            Err(..) => {
-                // hint::spin_loop();
-                None
-            }
-        };
-
-        __FENCE(SeqCst);
-        ret
+            Err(..) => None
+        }
     }
 
     #[inline(always)]
     pub fn write_unlock(&self, write_version: LatchVersion) {
         debug_assert!(write_version & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release);
-        __FENCE(SeqCst);
+        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release)
     }
 
     #[inline(always)]
     pub fn write_obsolete(&self, write_version: LatchVersion) {
         debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, Release);
-        __FENCE(SeqCst);
+        self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, Release)
     }
 
     #[inline(always)]
     pub fn is_obsolete(&self) -> bool {
         self.load_version() & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
-        // self.cell_version.load(Relaxed) & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
     }
 
     #[inline(always)]
@@ -587,11 +539,9 @@ impl<E: Default> SmartCell<E> {
 impl<'a, E: Default> Drop for SmartGuard<'a, E> {
     fn drop(&mut self) {
         if let OLCWriter(Some((cell, write_version))) = self {
-            // if *read_version & OBSOLETE_FLAG_VERSION == 0 {
-                if let OLCCell(opt) = cell.0.as_ref() {
-                    opt.write_unlock(*write_version);
-                }
-            // }
+            if let OLCCell(opt) = cell.0.as_ref() {
+                opt.write_unlock(*write_version);
+            }
         }
     }
 }

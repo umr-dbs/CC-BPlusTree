@@ -39,7 +39,8 @@ impl<const FAN_OUT: usize,
                 .then(|| CRUDOperationResult::Inserted(key))
                 .unwrap_or_default(),
             CRUDOperation::Insert(key, payload) => self
-                .traversal_write(key).deref_mut()
+                .traversal_write(key)
+                .deref_mut()
                 .unwrap()
                 .push_record_point(key, payload)
                 .then(|| CRUDOperationResult::Inserted(key))
@@ -60,7 +61,8 @@ impl<const FAN_OUT: usize,
                 .unwrap_or_default(),
             CRUDOperation::Point(key) if olc => match self.execute(CRUDOperation::Range((key..=key).into())) {
                 CRUDOperationResult::MatchedRecords(mut records) if records.len() <= 1 =>
-                    CRUDOperationResult::MatchedRecord(records.pop()),
+                    records.pop()
+                        .into(),
                 _ => CRUDOperationResult::Error
             },
             CRUDOperation::Point(key) => match self
@@ -80,7 +82,11 @@ impl<const FAN_OUT: usize,
             CRUDOperation::Range(key_interval) if olc => {
                 let mut path = vec![
                     (Interval::new(self.min_key, self.max_key),
-                     self.lock_reader(&self.root.block))
+                     self.lock_reader_olc(
+                         &self.root.block,
+                         0,
+                         0,
+                         self.height()))
                 ];
 
                 self.next_leaf_page(path.as_mut(),

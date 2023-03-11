@@ -49,6 +49,12 @@ pub enum LevelVariant {
     Const(Level),
 }
 
+impl Default for LevelVariant {
+    fn default() -> Self {
+        Self::Height(1f32)
+    }
+}
+
 /// Sugar implementation, auto wrapping Level.
 impl Into<LevelVariant> for Level {
     fn into(self) -> LevelVariant {

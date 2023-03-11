@@ -2,7 +2,7 @@ use std::hash::Hash;
 use std::mem;
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
-use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::block::block::{Block, BlockGuard};
 use crate::test::{dec_key, inc_key};
@@ -134,6 +134,24 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    #[inline(always)]
+    pub(crate) fn lock_reader_olc(&self,
+                                  node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+                                  curr_level: Level,
+                                  attempt: Attempts,
+                                  height: Height,)
+                                  -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
+    {
+        match self.locking_strategy() {
+            LockingStrategy::MonoWriter => node.borrow_free(),
+            LockingStrategy::LockCoupling => node.borrow_mut_exclusive(),
+            LockingStrategy::OLC(OLCVariant::ReaderLimit { attempts, level })
+            if attempt >= *attempts || level.is_lock(curr_level, height) =>
+                node.borrow_pin(),
+            _ => node.borrow_read(),
+        }
+    }
+
     #[inline]
     pub(crate) fn apply_for_ref(&self,
                             curr_level: Level,
@@ -153,11 +171,14 @@ impl<const FAN_OUT: usize,
                 block_cc.borrow_mut(),
             LockingStrategy::RWLockCoupling(..) =>
                 block_cc.borrow_read(),
-            LockingStrategy::OLC(LevelConstraints::Unlimited) =>
+            LockingStrategy::OLC(OLCVariant::Free) =>
                 block_cc.borrow_free(),
-            LockingStrategy::OLC(LevelConstraints::OptimisticLimit { attempts, level })
+            LockingStrategy::OLC(OLCVariant::WriterLimit { attempts, level })
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut(),
+            LockingStrategy::OLC(OLCVariant::ReaderLimit { attempts, level })
+            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
+                block_cc.borrow_pin(),
             LockingStrategy::OLC(..) =>
                 block_cc.borrow_free(),
         }

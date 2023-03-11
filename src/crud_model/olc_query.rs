@@ -122,8 +122,11 @@ impl<const FAN_OUT: usize,
             if parent_index >= path.len() { // when all path is invalid, we run stacking path function again!
                 path.clear();
 
-                let root_read
-                    = self.lock_reader(&self.root.block);
+                let root_read = self.lock_reader_olc(
+                    &self.root.block,
+                    0,
+                    attempts,
+                    0);
 
                 if !root_read.is_read_not_obsolete() {
                     attempts += 1;
@@ -203,7 +206,11 @@ impl<const FAN_OUT: usize,
 
                     attempts = 0;
                     parent_index += 1;
-                    path.insert(parent_index, (curr_interval, self.lock_reader(next_page.assume_init_ref())));
+                    path.insert(parent_index, (curr_interval, self.lock_reader_olc(
+                        next_page.assume_init_ref(),
+                        parent_index as _,
+                        attempts,
+                        self.height())));
                 }
                 Node::Leaf(..) => {
                     path.truncate(parent_index + 1);
@@ -239,7 +246,10 @@ impl<const FAN_OUT: usize,
                             .map(|record| record.unsafe_clone())
                             .collect::<Vec<_>>();
 
-                        if leaf.cell_version_olc() == current_read_version { // avoid write in-between
+                        let (read, n_current_read_version)
+                            = leaf.is_read_not_obsolete_result();
+
+                        if read && n_current_read_version == current_read_version { // avoid write in-between
                             return potential_results
                         } else {
                             potential_results.set_len(0);
@@ -253,61 +263,61 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline]
-    fn traversal_read_olc_internal(&self, key: Key) -> Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        let mut current_guard
-            = self.lock_reader(&self.root.block);
-
-        let key = (self.inc_key)(key);
-        loop {
-            let current
-                = unsafe { current_guard.deref_unsafe() };
-
-            let (read, current_reader_version)
-                = current_guard.is_read_not_obsolete_result();
-
-            if current.is_none() || !read {
-                mem::drop(current_guard);
-
-                return None;
-            }
-
-            match current.unwrap().as_ref() {
-                Node::Index(index_page) => unsafe {
-                    let next_node = match index_page.keys().binary_search(&key) {
-                        Ok(pos) => index_page.get_child_result(pos),
-                        Err(pos) => index_page.get_child_result(pos)
-                    };
-
-                    let (read, read_version)
-                        = current_guard.is_read_not_obsolete_result();
-
-                    if !read || read_version != current_reader_version {
-                        return None;
-                    }
-
-                    current_guard
-                        = self.lock_reader(next_node.assume_init_ref());
-                }
-                _ => break Some(current_guard),
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn traversal_read_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        let mut attempt = 0;
-
-        loop {
-            match self.traversal_read_olc_internal(key) {
-                Some(guard) => break guard,
-                _ => {
-                    attempt += 1;
-                    sched_yield(attempt)
-                }
-            }
-        }
-    }
+    // #[inline]
+    // fn traversal_read_olc_internal(&self, key: Key) -> Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+    //     let mut current_guard
+    //         = self.lock_reader(&self.root.block);
+    //
+    //     let key = (self.inc_key)(key);
+    //     loop {
+    //         let current
+    //             = unsafe { current_guard.deref_unsafe() };
+    //
+    //         let (read, current_reader_version)
+    //             = current_guard.is_read_not_obsolete_result();
+    //
+    //         if current.is_none() || !read {
+    //             mem::drop(current_guard);
+    //
+    //             return None;
+    //         }
+    //
+    //         match current.unwrap().as_ref() {
+    //             Node::Index(index_page) => unsafe {
+    //                 let next_node = match index_page.keys().binary_search(&key) {
+    //                     Ok(pos) => index_page.get_child_result(pos),
+    //                     Err(pos) => index_page.get_child_result(pos)
+    //                 };
+    //
+    //                 let (read, read_version)
+    //                     = current_guard.is_read_not_obsolete_result();
+    //
+    //                 if !read || read_version != current_reader_version {
+    //                     return None;
+    //                 }
+    //
+    //                 current_guard
+    //                     = self.lock_reader(next_node.assume_init_ref());
+    //             }
+    //             _ => break Some(current_guard),
+    //         }
+    //     }
+    // }
+    //
+    // #[inline]
+    // pub(crate) fn traversal_read_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    //     let mut attempt = 0;
+    //
+    //     loop {
+    //         match self.traversal_read_olc_internal(key) {
+    //             Some(guard) => break guard,
+    //             _ => {
+    //                 attempt += 1;
+    //                 sched_yield(attempt)
+    //             }
+    //         }
+    //     }
+    // }
 
     #[inline]
     pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {

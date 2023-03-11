@@ -3,7 +3,7 @@ use chrono::{DateTime, Local};
 use itertools::Itertools;
 use crate::block::block_manager::bsz_alignment;
 use crate::tree::bplus_tree;
-use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
 use block::block::Block;
 use crate::page_model::LevelVariant;
 use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test};
@@ -19,10 +19,10 @@ mod utils;
 mod test;
 
 fn main() {
-    make_splash();
-    show_alignment_bsz();
+    // make_splash();
+    // show_alignment_bsz();
 
-    simple_test();
+    // simple_test();
     experiment();
 }
 
@@ -73,13 +73,13 @@ fn make_splash() {
 
 fn experiment() {
     let mut threads_cpu = vec![
-        1,
-        2,
-        3,
-        4,
-        8,
-        10,
-        12,
+        // 1,
+        // 2,
+        // 3,
+        // 4,
+        // 8,
+        // 10,
+        // 12,
         16,
         24,
         32,
@@ -102,21 +102,21 @@ fn experiment() {
         // 10,
         // 100,
         // 1_000,
-        // 10_000,
+        10_000,
         // 100_000,
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        // 10_000_000,
-        // 20_000_000,
+        10_000_000,
+        20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::LockCoupling);
+    // strategies.push(LockingStrategy::LockCoupling);
     //
     // strategies.push(LockingStrategy::optimistic_custom(
     //     LevelVariant::new_height_lock(1_f32), 1));
@@ -131,20 +131,25 @@ fn experiment() {
     // strategies.push(LockingStrategy::OLC(
     //     LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
     //
-    strategies.push(LockingStrategy::RWLockCoupling(
-        LevelVariant::new_height_lock(1 as _),
-        4));
-    //
-    strategies.push(LockingStrategy::RWLockCoupling(
-        LevelVariant::new_height_lock(0.8 as _),
-        2));
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(1 as _),
+    //     4));
+    // //
+    // strategies.push(LockingStrategy::RWLockCoupling(
+    //     LevelVariant::new_height_lock(0.8 as _),
+    //     2));
 
-    // strategies.push(LockingStrategy::OLC(LevelConstraints::OptimisticLimit {
+    // strategies.push(LockingStrategy::OLC(OLCVariant::WriterLimit {
     //     attempts: 4,
-    //     level: LevelVariant::new_height_lock(1_f32),
+    //     level: LevelVariant::default(),
     // }));
 
-    strategies.push(LockingStrategy::OLC(LevelConstraints::Unlimited));
+
+    // strategies.push(LockingStrategy::OLC(OLCVariant::Free));
+    strategies.push(LockingStrategy::OLC(OLCVariant::ReaderLimit {
+        attempts: 0,
+        level: LevelVariant::default()
+    }));
 
     // strategies.push(LockingStrategy::RWLockCoupling(
     //     LevelVariant::new_height_lock(1 as _),

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
-use crate::locking::locking_strategy::{LevelConstraints, LockingStrategy};
+use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::block::block::BlockGuard;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
@@ -62,20 +62,13 @@ impl<const FAN_OUT: usize,
         let mut root_guard = match self.locking_strategy {
             LockingStrategy::MonoWriter => root.block.borrow_free(),
             LockingStrategy::LockCoupling => root.block.borrow_mut_exclusive(),
-            LockingStrategy::OLC(LevelConstraints::Unlimited) => root.block.borrow_free(),
-            LockingStrategy::OLC(LevelConstraints::OptimisticLimit { .. })
-            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) => {
-                let guard
-                    = root.block.borrow_mut();
-
-                if !guard.is_write_lock() {
-                    mem::drop(guard);
-
-                    return Err((lock_level, attempt + 1));
-                }
-
-                guard
-            }
+            LockingStrategy::OLC(OLCVariant::Free) => root.block.borrow_free(),
+            LockingStrategy::OLC(OLCVariant::WriterLimit { .. })
+            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+                root.block.borrow_mut(),
+            LockingStrategy::OLC(OLCVariant::ReaderLimit { .. })
+            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+                root.block.borrow_pin(),
             LockingStrategy::OLC(..) => root.block.borrow_free(),
             LockingStrategy::RWLockCoupling(..)
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>

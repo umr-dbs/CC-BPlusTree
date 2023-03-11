@@ -138,19 +138,19 @@ impl<'a,
     Key: Default + Ord + Copy + Hash,
     Payload: Default + Clone
 > BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
-    #[inline(always)]
-    pub unsafe fn cell_version_olc(&self) -> Version {
-        match self {
-            BlockGuard::OLCWriter(Some((.., latch))) => *latch,
-            BlockGuard::OLCReader(Some((cell, ..))) =>
-                if let SmartFlavor::OLCCell(opt) = cell.0.as_ref() {
-                    opt.load_version()
-                } else {
-                    Version::MIN
-                },
-            _ => Version::MIN
-        }
-    }
+    // #[inline(always)]
+    // pub unsafe fn cell_version_olc(&self) -> Version {
+    //     match self {
+    //         BlockGuard::OLCWriter(Some((.., latch))) => *latch,
+    //         BlockGuard::OLCReader(Some((cell, ..))) =>
+    //             if let SmartFlavor::OLCCell(opt) = cell.0.as_ref() {
+    //                 opt.load_version()
+    //             } else {
+    //                 Version::MIN
+    //             },
+    //         _ => Version::MIN
+    //     }
+    // }
 
     // #[inline(always)]
     // pub unsafe fn read_cell_version_as_reader(&self) -> Version {

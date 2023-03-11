@@ -6,32 +6,44 @@ use crate::tree::root::LEVEL_ROOT;
 
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Clone)]
-pub enum LevelConstraints {
-    OptimisticLimit {
+pub enum OLCVariant {
+    Free,
+    ReaderLimit {
         attempts: Attempts,
         level: LevelVariant,
     },
-    Unlimited
+    WriterLimit {
+        attempts: Attempts,
+        level: LevelVariant,
+    },
 }
 
-impl LevelConstraints {
+impl OLCVariant {
     pub const fn attempts(&self) -> Attempts {
         match self {
-            Self::OptimisticLimit {
+            Self::Free => Attempts::MAX,
+            Self::WriterLimit {
                 attempts,
                 ..
             } => *attempts,
-            Self::Unlimited => Attempts::MAX
+            Self::ReaderLimit {
+                attempts,
+                ..
+            } => *attempts,
         }
     }
 
     pub fn level_variant(&self) -> LevelVariant {
         match self {
-            Self::OptimisticLimit {
+            Self::WriterLimit {
                 level,
                 ..
             } => level.clone(),
-            Self::Unlimited => LevelVariant::Const(Level::MAX)
+            Self::ReaderLimit {
+                level,
+                ..
+            } => level.clone(),
+            _ => LevelVariant::Const(Level::MAX),
         }
     }
 }
@@ -43,7 +55,7 @@ pub enum LockingStrategy {
     MonoWriter,
     LockCoupling,
     RWLockCoupling(LevelVariant, Attempts),
-    OLC(LevelConstraints),
+    OLC(OLCVariant),
 }
 
 impl Display for LockingStrategy {
@@ -53,9 +65,11 @@ impl Display for LockingStrategy {
             Self::LockCoupling => write!(f, "LockCoupling"),
             Self::RWLockCoupling(level, attempts) =>
                 write!(f, "RWLockCoupling(Attempts={};Level={})", attempts, level),
-            Self::OLC(LevelConstraints::OptimisticLimit { attempts, level }) =>
-                write!(f, "OLC(Attempts={};Level={})", attempts, level),
-            Self::OLC(LevelConstraints::Unlimited) => write!(f, "OLC(Unlimited)"),
+            Self::OLC(OLCVariant::Free) => write!(f, "OLC-Free"),
+            Self::OLC(OLCVariant::ReaderLimit { attempts, level }) =>
+                write!(f, "OLC-ReaderLimit(Attempts={};Level={})", attempts, level),
+            Self::OLC(OLCVariant::WriterLimit { attempts, level }) =>
+                write!(f, "OLC-WriterLimit(Attempts={};Level={})", attempts, level),
         }
     }
 }
@@ -98,7 +112,7 @@ impl LockingStrategy {
 
     pub(crate) const fn is_olc_limited(&self) -> Option<bool> {
         match self {
-            Self::OLC(LevelConstraints::Unlimited) => Some(false),
+            Self::OLC(OLCVariant::Free) => Some(false),
             Self::OLC(..) => Some(true),
             _ => None
         }
@@ -133,19 +147,22 @@ impl LockingStrategy {
         match self {
             Self::MonoWriter => false,
             Self::LockCoupling => true,
-            Self::RWLockCoupling(lock_level, attempts) => {
+            Self::RWLockCoupling(lock_level, attempts) =>
                 curr_level >= height
                     || curr_level >= max_level
                     || attempt >= *attempts
-                    || lock_level.is_lock(curr_level, height)
-            }
-            Self::OLC(LevelConstraints::Unlimited) => false,
-            Self::OLC(LevelConstraints::OptimisticLimit { attempts, level }) => {
+                    || lock_level.is_lock(curr_level, height),
+            Self::OLC(OLCVariant::Free) => false,
+            Self::OLC(OLCVariant::WriterLimit { attempts, level }) =>
                 curr_level >= height
                     || curr_level >= max_level
                     || attempt >= *attempts
-                    || level.is_lock(curr_level, height)
-            }
+                    || level.is_lock(curr_level, height),
+            LockingStrategy::OLC(OLCVariant::ReaderLimit { attempts, level }) =>
+                curr_level >= height
+                    || curr_level >= max_level
+                    || attempt >= *attempts
+                    || level.is_lock(curr_level, height),
         }
     }
 }

@@ -67,16 +67,7 @@ impl<const FAN_OUT: usize,
                         mem::drop(local_results);
                         mem::drop(all_results);
 
-                        path.clear();
-                        return self.execute(CRUDOperation::Range(org_key_interval))
-                    }
-                    None if !prev_path.first().unwrap().1.is_valid() => {
-                        mem::drop(prev_path);
-                        mem::drop(history_path);
-                        mem::drop(local_results);
-                        mem::drop(all_results);
-
-                        path.clear();
+                        *path = Vec::with_capacity(0);
                         return self.execute(CRUDOperation::Range(org_key_interval))
                     }
                     _ => {}

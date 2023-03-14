@@ -8,11 +8,11 @@ use crate::tree::root::LEVEL_ROOT;
 #[derive(Serialize, Deserialize, Clone)]
 pub enum OLCVariant {
     Free,
-    ReaderLimit {
+    Pinned {
         attempts: Attempts,
         level: LevelVariant,
     },
-    WriterLimit {
+    Bounded {
         attempts: Attempts,
         level: LevelVariant,
     },
@@ -22,11 +22,11 @@ impl OLCVariant {
     pub const fn attempts(&self) -> Attempts {
         match self {
             Self::Free => Attempts::MAX,
-            Self::WriterLimit {
+            Self::Bounded {
                 attempts,
                 ..
             } => *attempts,
-            Self::ReaderLimit {
+            Self::Pinned {
                 attempts,
                 ..
             } => *attempts,
@@ -35,11 +35,11 @@ impl OLCVariant {
 
     pub fn level_variant(&self) -> LevelVariant {
         match self {
-            Self::WriterLimit {
+            Self::Bounded {
                 level,
                 ..
             } => level.clone(),
-            Self::ReaderLimit {
+            Self::Pinned {
                 level,
                 ..
             } => level.clone(),
@@ -66,10 +66,10 @@ impl Display for LockingStrategy {
             Self::RWLockCoupling(level, attempts) =>
                 write!(f, "RWLockCoupling(Attempts={};Level={})", attempts, level),
             Self::OLC(OLCVariant::Free) => write!(f, "OLC-Free"),
-            Self::OLC(OLCVariant::ReaderLimit { attempts, level }) =>
-                write!(f, "OLC-ReaderLimit(Attempts={};Level={})", attempts, level),
-            Self::OLC(OLCVariant::WriterLimit { attempts, level }) =>
-                write!(f, "OLC-WriterLimit(Attempts={};Level={})", attempts, level),
+            Self::OLC(OLCVariant::Pinned { attempts, level }) =>
+                write!(f, "OLC-Pinned(Attempts={};Level={})", attempts, level),
+            Self::OLC(OLCVariant::Bounded { attempts, level }) =>
+                write!(f, "OLC-Pessimistic(Attempts={};Level={})", attempts, level),
         }
     }
 }
@@ -153,12 +153,12 @@ impl LockingStrategy {
                     || attempt >= *attempts
                     || lock_level.is_lock(curr_level, height),
             Self::OLC(OLCVariant::Free) => false,
-            Self::OLC(OLCVariant::WriterLimit { attempts, level }) =>
+            Self::OLC(OLCVariant::Bounded { attempts, level }) =>
                 curr_level >= height
                     || curr_level >= max_level
                     || attempt >= *attempts
                     || level.is_lock(curr_level, height),
-            LockingStrategy::OLC(OLCVariant::ReaderLimit { attempts, level }) =>
+            LockingStrategy::OLC(OLCVariant::Pinned { attempts, level }) =>
                 curr_level >= height
                     || curr_level >= max_level
                     || attempt >= *attempts

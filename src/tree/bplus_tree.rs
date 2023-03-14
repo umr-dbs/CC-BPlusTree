@@ -145,8 +145,11 @@ impl<const FAN_OUT: usize,
         match self.locking_strategy() {
             LockingStrategy::MonoWriter => node.borrow_free(),
             LockingStrategy::LockCoupling => node.borrow_mut_exclusive(),
-            LockingStrategy::OLC(OLCVariant::ReaderLimit { attempts, level })
+            LockingStrategy::OLC(OLCVariant::Pinned { attempts, level })
             if attempt >= *attempts || level.is_lock(curr_level, height) =>
+                node.borrow_pin(),
+            LockingStrategy::OLC(OLCVariant::Bounded { attempts, level })
+            if attempt >= *attempts  || level.is_lock(curr_level, height) =>
                 node.borrow_pin(),
             _ => node.borrow_read(),
         }
@@ -173,10 +176,10 @@ impl<const FAN_OUT: usize,
                 block_cc.borrow_read(),
             LockingStrategy::OLC(OLCVariant::Free) =>
                 block_cc.borrow_free(),
-            LockingStrategy::OLC(OLCVariant::WriterLimit { attempts, level })
+            LockingStrategy::OLC(OLCVariant::Bounded { attempts, level })
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut(),
-            LockingStrategy::OLC(OLCVariant::ReaderLimit { attempts, level })
+            LockingStrategy::OLC(OLCVariant::Pinned { attempts, level })
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
                 block_cc.borrow_pin(),
             LockingStrategy::OLC(..) =>

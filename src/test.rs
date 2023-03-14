@@ -16,8 +16,8 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 
-pub const EXE_LOOK_UPS: bool = false;
-pub const EXE_RANGE_LOOK_UPS: bool = false;
+pub const EXE_LOOK_UPS: bool = true;
+pub const EXE_RANGE_LOOK_UPS: bool = true;
 
 pub const BSZ_BASE: usize = _4KB;
 pub const BSZ: usize = BSZ_BASE - bsz_alignment::<Key, Payload>();

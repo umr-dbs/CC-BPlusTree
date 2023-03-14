@@ -1,6 +1,6 @@
 # Experimental Concurrency Control CRUD B+Tree Implementation
-    Build:             - 11.03.2023
-    Version:           - 0.0.66 (Experimental)
+    Build:             - 14.03.2023
+    Version:           - 0.0.67 (Experimental)
 ### Platform
     - Architecture:  x86, ARM
     - OS:            Linux, Windows
@@ -8,11 +8,11 @@
 ---------------------------------------
 # Locking Strategies Implemented
     - Mono (Single User)
-    - Mutually-Exclusive Lock Coupling (Multi-User)
-    - Readers-Writer Lock Coupling (Multi-User)
-    - Original Optimistic Lock Coupling (Multi-User)
-    - Limited Optimistic Lock Coupling (Multi-User)
-    - Hybrid Optimistic Lock Coupling (Multi-User)
+    - Mutually-Exclusive Lock-Coupling
+    - Optimistic Readers-Writer Lock-Coupling
+    - Optimistic Lock-Coupling
+    - Bounded Optimistic Lock-Coupling 
+    - Lightweight Hybrid Locking (OLC Pinned)
 
 # Querying Support
     - (C) Create  - Insert a new key

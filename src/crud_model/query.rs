@@ -63,10 +63,10 @@ impl<const FAN_OUT: usize,
             LockingStrategy::MonoWriter => root.block.borrow_free(),
             LockingStrategy::LockCoupling => root.block.borrow_mut_exclusive(),
             LockingStrategy::OLC(OLCVariant::Free) => root.block.borrow_free(),
-            LockingStrategy::OLC(OLCVariant::WriterLimit { .. })
+            LockingStrategy::OLC(OLCVariant::Bounded { .. })
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_mut(),
-            LockingStrategy::OLC(OLCVariant::ReaderLimit { .. })
+            LockingStrategy::OLC(OLCVariant::Pinned { .. })
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_pin(),
             LockingStrategy::OLC(..) => root.block.borrow_free(),

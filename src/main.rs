@@ -19,7 +19,7 @@ mod utils;
 mod test;
 
 fn main() {
-    // make_splash();
+    make_splash();
     // show_alignment_bsz();
 
     // simple_test();
@@ -146,7 +146,7 @@ fn experiment() {
 
 
     // strategies.push(LockingStrategy::OLC(OLCVariant::Free));
-    strategies.push(LockingStrategy::OLC(OLCVariant::ReaderLimit {
+    strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
         attempts: 0,
         level: LevelVariant::default()
     }));

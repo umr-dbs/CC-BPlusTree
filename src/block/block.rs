@@ -4,8 +4,7 @@ use std::ptr::{addr_of, addr_of_mut};
 use crate::page_model::{BlockID, BlockRef};
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
-use crate::record_model::Version;
-use crate::utils::smart_cell::{SmartFlavor, SmartGuard};
+use crate::utils::smart_cell::SmartGuard;
 
 // #[repr(align(4096))]
 #[repr(C, packed)]

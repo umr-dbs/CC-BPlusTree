@@ -3,8 +3,7 @@ use std::{hint, mem, ptr};
 use std::mem::transmute_copy;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{RawMutex, RawRwLock};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -48,16 +47,6 @@ pub fn sched_yield(attempt: usize) {
 }
 
 type LatchVersion = Version;
-
-// #[repr(u8)]
-// enum Latch {
-//     Read,
-//     ReadPin,
-//     Write,
-//     Obsolete,
-//     None
-// }
-
 type IsRead = bool;
 
 pub struct OptCell<E: Default> {
@@ -383,7 +372,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                         opt.pin_write_lock(*pin_latch));
 
                     ptr::write(self, writer);
-
                     return true;
                 }
 
@@ -567,7 +555,6 @@ impl<E: Default> SmartCell<E> {
 
     #[inline(always)]
     pub fn borrow_pin(&self) -> SmartGuard<'static, E> {
-        // return self.borrow_read();
         match self.0.deref() {
             OLCCell(opt) => match opt.pin_lock() {
                 Ok(pin_latch) =>

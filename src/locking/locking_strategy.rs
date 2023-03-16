@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
 use crate::page_model::{Attempts, Level, LevelVariant};
 use crate::tree::root::LEVEL_ROOT;
+use crate::utils::smart_cell::LatchType;
 
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Clone)]
@@ -21,7 +22,6 @@ pub enum OLCVariant {
 impl OLCVariant {
     pub const fn attempts(&self) -> Attempts {
         match self {
-            Self::Free => Attempts::MAX,
             Self::Bounded {
                 attempts,
                 ..
@@ -30,6 +30,7 @@ impl OLCVariant {
                 attempts,
                 ..
             } => *attempts,
+            _ => Attempts::MAX,
         }
     }
 
@@ -56,6 +57,7 @@ pub enum LockingStrategy {
     LockCoupling,
     RWLockCoupling(LevelVariant, Attempts),
     OLC(OLCVariant),
+    HybridLocking(LevelVariant, Attempts)
 }
 
 impl Display for LockingStrategy {
@@ -70,6 +72,8 @@ impl Display for LockingStrategy {
                 write!(f, "OLC-Pinned(Attempts={};Level={})", attempts, level),
             Self::OLC(OLCVariant::Bounded { attempts, level }) =>
                 write!(f, "OLC-Pessimistic(Attempts={};Level={})", attempts, level),
+            LockingStrategy::HybridLocking(level, attempts) =>
+                write!(f, "HybridLocking(Attempts={};Level={})", attempts, level),
         }
     }
 }
@@ -87,9 +91,21 @@ impl LockingStrategy {
     }
 
     #[inline(always)]
-    pub(crate) const fn is_olc(&self) -> bool {
+    pub const fn latch_type(&self) -> LatchType {
+        match self {
+            LockingStrategy::MonoWriter => LatchType::None,
+            LockingStrategy::LockCoupling => LatchType::Exclusive,
+            LockingStrategy::RWLockCoupling(..) => LatchType::ReadersWriter,
+            LockingStrategy::OLC(..) => LatchType::Optimistic,
+            LockingStrategy::HybridLocking(..) => LatchType::Hybrid
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_optimistic(&self) -> bool {
         match self {
             Self::OLC(_) => true,
+            Self::HybridLocking(..) => true,
             _ => false
         }
     }
@@ -163,6 +179,11 @@ impl LockingStrategy {
                     || curr_level >= max_level
                     || attempt >= *attempts
                     || level.is_lock(curr_level, height),
+            LockingStrategy::HybridLocking(level, attempts) =>
+                curr_level >= height
+                || curr_level >= max_level
+                || attempt >= *attempts
+                || level.is_lock(curr_level, height),
         }
     }
 }

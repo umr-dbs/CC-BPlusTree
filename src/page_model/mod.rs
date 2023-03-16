@@ -2,10 +2,12 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use parking_lot::lock_api::{Mutex, RwLock};
 use crate::block::block::Block;
 // use crate::record_model::record_like::RecordLike;
 use serde::{Deserialize, Serialize};
 use crate::utils::cc_cell::CCCell;
+use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::{OptCell, SmartCell, SmartFlavor};
 
 pub mod internal_page;
@@ -32,13 +34,36 @@ impl<const FAN_OUT: usize,
     Payload: Default + Clone
 > Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub fn into_olc(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        SmartCell(Arc::new(SmartFlavor::OLCCell(OptCell::new(self))))
+    pub fn into_rw(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        SmartCell(Arc::new(SmartFlavor::ReadersWriterCell(
+            RwLock::new(()),
+            SafeCell::new(self))))
     }
 
     #[inline(always)]
-    pub fn into_cc(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        SmartCell(Arc::new(SmartFlavor::ControlCell(CCCell::new(self))))
+    pub fn into_free(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        SmartCell(Arc::new(SmartFlavor::FreeCell(
+            SafeCell::new(self))))
+    }
+
+    #[inline(always)]
+    pub fn into_olc(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        SmartCell(Arc::new(SmartFlavor::OLCCell(
+            OptCell::new(self))))
+    }
+
+    #[inline(always)]
+    pub fn into_exclusive(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        SmartCell(Arc::new(SmartFlavor::ExclusiveCell(
+            Mutex::new(()),
+            SafeCell::new(self))))
+    }
+
+    #[inline(always)]
+    pub fn into_hybrid(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        SmartCell(Arc::new(SmartFlavor::HybridCell(
+            OptCell::new(self),
+            RwLock::new(()))))
     }
 }
 

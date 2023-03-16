@@ -61,20 +61,25 @@ impl<const FAN_OUT: usize,
 
         let mut root_guard = match self.locking_strategy {
             LockingStrategy::MonoWriter => root.block.borrow_free(),
-            LockingStrategy::LockCoupling => root.block.borrow_mut_exclusive(),
-            LockingStrategy::OLC(OLCVariant::Free) => root.block.borrow_free(),
+            LockingStrategy::LockCoupling => root.block.borrow_mut(),
+            LockingStrategy::OLC(OLCVariant::Free) => root.block.borrow_read(),
             LockingStrategy::OLC(OLCVariant::Bounded { .. })
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_mut(),
             LockingStrategy::OLC(OLCVariant::Pinned { .. })
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_pin(),
-            LockingStrategy::OLC(..) => root.block.borrow_free(),
+            LockingStrategy::OLC(..) => root.block.borrow_read(),
             LockingStrategy::RWLockCoupling(..)
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_mut(),
             LockingStrategy::RWLockCoupling(..) =>
                 root.block.borrow_read(),
+            LockingStrategy::HybridLocking(..)
+            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+                root.block.borrow_mut(),
+            LockingStrategy::HybridLocking(..) =>
+                root.block.borrow_read()
         };
 
         let root_ref
@@ -110,7 +115,7 @@ impl<const FAN_OUT: usize,
         let root_ref
             = root_guard.deref_mut().unwrap();
 
-        let is_optimistic
+        let latch_type
             = root_guard.mark_obsolete();
 
         let n_height
@@ -150,8 +155,8 @@ impl<const FAN_OUT: usize,
                     .extend_from_slice(keys.get_unchecked(..keys_mid));
 
                 index_block.children_mut().extend([
-                    new_root_left.into_cell(is_optimistic),
-                    new_node_right.into_cell(is_optimistic)
+                    new_root_left.into_cell(latch_type),
+                    new_node_right.into_cell(latch_type)
                 ]);
 
                 index_block.keys_mut()
@@ -190,8 +195,8 @@ impl<const FAN_OUT: usize,
                     .extend_from_slice(records.get_unchecked(..records_mid));
 
                 new_root.children_mut().extend([
-                    new_node_left.into_cell(is_optimistic),
-                    new_node_right.into_cell(is_optimistic)
+                    new_node_left.into_cell(latch_type),
+                    new_node_right.into_cell(latch_type)
                 ]);
 
                 new_root.keys_mut()
@@ -212,7 +217,7 @@ impl<const FAN_OUT: usize,
         child_pos: usize,
         from_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
     {
-        let olc
+        let latch_type
             = from_guard.mark_obsolete();
 
         match from_guard.deref_mut().unwrap().as_mut() {
@@ -257,10 +262,10 @@ impl<const FAN_OUT: usize,
                     = parent_mut.children_mut();
 
                 parent_children
-                    .insert(child_pos + 1, new_node_right.into_cell(olc));
+                    .insert(child_pos + 1, new_node_right.into_cell(latch_type));
 
                 mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
-                                       new_node_from.into_cell(olc)));
+                                       new_node_from.into_cell(latch_type)));
 
                 parent_mut
                     .keys_mut()
@@ -297,10 +302,10 @@ impl<const FAN_OUT: usize,
                     = parent_mut.children_mut();
 
                 parent_children
-                    .insert(child_pos + 1, new_node.into_cell(olc));
+                    .insert(child_pos + 1, new_node.into_cell(latch_type));
 
                 mem::drop(mem::replace(parent_children.get_unchecked_mut(child_pos),
-                                       new_node_from.into_cell(olc)));
+                                       new_node_from.into_cell(latch_type)));
 
                 parent_mut
                     .keys_mut()

@@ -1,11 +1,13 @@
 use std::hash::Hash;
 use std::mem;
+use std::sync::atomic::Ordering::{Release, SeqCst};
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::block::block::{Block, BlockGuard};
 use crate::test::{dec_key, inc_key};
+use crate::utils::smart_cell::{OBSOLETE_FLAG_VERSION, SmartFlavor};
 use crate::utils::un_cell::UnCell;
 
 pub type LockLevel = ObjectCount;
@@ -69,6 +71,11 @@ impl<const FAN_OUT: usize,
             self.root.block.unsafe_borrow_mut(),
             new_root,
         ));
+
+        if let SmartFlavor::HybridCell(opt, ..) = self.root.block.0.as_ref() {
+            let load = 1 + opt.load_version() & !OBSOLETE_FLAG_VERSION;
+            opt.cell_version.store(load, Release);
+        }
     }
 
     fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -83,7 +90,7 @@ impl<const FAN_OUT: usize,
 
         Self {
             root: UnCell::new(Root::new(
-                empty_node.into_cell(locking_strategy.is_olc()),
+                empty_node.into_cell(locking_strategy.latch_type()),
                 INIT_TREE_HEIGHT,
             )),
             locking_strategy,
@@ -129,7 +136,7 @@ impl<const FAN_OUT: usize,
     {
         match self.locking_strategy {
             LockingStrategy::MonoWriter => node.borrow_free(),
-            LockingStrategy::LockCoupling => node.borrow_mut_exclusive(),
+            LockingStrategy::LockCoupling => node.borrow_mut(),
             _ => node.borrow_read(),
         }
     }
@@ -144,13 +151,16 @@ impl<const FAN_OUT: usize,
     {
         match self.locking_strategy() {
             LockingStrategy::MonoWriter => node.borrow_free(),
-            LockingStrategy::LockCoupling => node.borrow_mut_exclusive(),
+            LockingStrategy::LockCoupling => node.borrow_mut(),
             LockingStrategy::OLC(OLCVariant::Pinned { attempts, level })
             if attempt >= *attempts || level.is_lock(curr_level, height) =>
                 node.borrow_pin(),
             LockingStrategy::OLC(OLCVariant::Bounded { attempts, level })
             if attempt >= *attempts  || level.is_lock(curr_level, height) =>
                 node.borrow_pin(),
+            LockingStrategy::HybridLocking(level, attempts)
+            if attempt >= *attempts || level.is_lock(curr_level, height) =>
+                node.borrow_read_hybrid(),
             _ => node.borrow_read(),
         }
     }
@@ -168,14 +178,14 @@ impl<const FAN_OUT: usize,
             LockingStrategy::MonoWriter =>
                 block_cc.borrow_free(),
             LockingStrategy::LockCoupling =>
-                block_cc.borrow_mut_exclusive(),
+                block_cc.borrow_mut(),
             LockingStrategy::RWLockCoupling(lock_level, attempts)
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut(),
             LockingStrategy::RWLockCoupling(..) =>
                 block_cc.borrow_read(),
             LockingStrategy::OLC(OLCVariant::Free) =>
-                block_cc.borrow_free(),
+                block_cc.borrow_read(),
             LockingStrategy::OLC(OLCVariant::Bounded { attempts, level })
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut(),
@@ -183,7 +193,11 @@ impl<const FAN_OUT: usize,
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
                 block_cc.borrow_pin(),
             LockingStrategy::OLC(..) =>
-                block_cc.borrow_free(),
+                block_cc.borrow_read(),
+            LockingStrategy::HybridLocking(lock_level, attempts)
+            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
+                block_cc.borrow_mut(),
+            LockingStrategy::HybridLocking(..) => block_cc.borrow_read()
         }
     }
 }

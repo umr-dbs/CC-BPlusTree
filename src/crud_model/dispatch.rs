@@ -14,7 +14,7 @@ impl<const FAN_OUT: usize,
 {
     pub fn execute(&self, crud_operation: CRUDOperation<Key, Payload>) -> CRUDOperationResult<Key, Payload> {
         let olc
-            = self.locking_strategy.is_olc();
+            = self.locking_strategy.is_optimistic();
 
         match crud_operation {
             CRUDOperation::Delete(key) if olc => self

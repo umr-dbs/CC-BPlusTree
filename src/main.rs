@@ -7,7 +7,7 @@ use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
 use block::block::Block;
 use crate::page_model::LevelVariant;
 use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test};
-use crate::utils::smart_cell::CPU_THREADS;
+use crate::utils::smart_cell::{CPU_THREADS, SmartFlavor};
 
 mod block;
 mod crud_model;
@@ -19,6 +19,7 @@ mod utils;
 mod test;
 
 fn main() {
+    // println!("size = {}", mem::size_of::<SmartFlavor<()>>());
     make_splash();
     // show_alignment_bsz();
 
@@ -108,7 +109,7 @@ fn experiment() {
         // 2_000_000,
         // 5_000_000,
         10_000_000,
-        20_000_000,
+        // 20_000_000,
         // 50_000_000,
         // 100_000_000,
     ];
@@ -145,7 +146,8 @@ fn experiment() {
     // }));
 
 
-    // strategies.push(LockingStrategy::OLC(OLCVariant::Free));
+    strategies.push(LockingStrategy::OLC(OLCVariant::Free));
+    strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 2));
     strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
         attempts: 0,
         level: LevelVariant::default()

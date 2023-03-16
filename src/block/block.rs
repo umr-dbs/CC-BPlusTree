@@ -1,10 +1,11 @@
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
+use crate::locking::locking_strategy::LockingStrategy;
 use crate::page_model::{BlockID, BlockRef};
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
-use crate::utils::smart_cell::SmartGuard;
+use crate::utils::smart_cell::{LatchType, SmartGuard};
 
 // #[repr(align(4096))]
 #[repr(C, packed)]
@@ -44,24 +45,14 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn into_cell(self, optimistic: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        if optimistic {
-            self.into_cell_dolos()
-        } else {
-            self.into_cell_cc()
+    pub fn into_cell(self, latch: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        match latch {
+            LatchType::Exclusive => self.into_exclusive(),
+            LatchType::ReadersWriter => self.into_rw(),
+            LatchType::Optimistic => self.into_olc(),
+            LatchType::Hybrid => self.into_hybrid(),
+            LatchType::None => self.into_free(),
         }
-    }
-
-    #[inline(always)]
-    pub fn into_cell_dolos(self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        self.into_olc()
-        // OptimisticCell(Arc::new(OptCell::new(self)))
-    }
-
-    #[inline(always)]
-    pub fn into_cell_cc(self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        self.into_cc()
-        // ConcurrencyControlCell(Arc::new(CCCell::new(self)))
     }
 }
 

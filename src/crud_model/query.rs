@@ -66,18 +66,18 @@ impl<const FAN_OUT: usize,
             LockingStrategy::OLC(OLCVariant::Bounded { .. })
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_mut(),
-            LockingStrategy::OLC(OLCVariant::Pinned { .. })
-            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-                root.block.borrow_pin(),
+            // LockingStrategy::OLC(OLCVariant::Pinned { .. })
+            // if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+            //     root.block.borrow_pin(),
             LockingStrategy::OLC(..) => root.block.borrow_read(),
             LockingStrategy::RWLockCoupling(..)
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_mut(),
             LockingStrategy::RWLockCoupling(..) =>
                 root.block.borrow_read(),
-            LockingStrategy::HybridLocking(..)
-            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-                root.block.borrow_mut(),
+            // LockingStrategy::HybridLocking(..)
+            // if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+            //     root.block.borrow_mut(),
             LockingStrategy::HybridLocking(..) =>
                 root.block.borrow_read()
         };

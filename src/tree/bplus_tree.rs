@@ -71,11 +71,6 @@ impl<const FAN_OUT: usize,
             self.root.block.unsafe_borrow_mut(),
             new_root,
         ));
-
-        if let SmartFlavor::HybridCell(opt, ..) = self.root.block.0.as_ref() {
-            let load = 1 + opt.load_version() & !OBSOLETE_FLAG_VERSION;
-            opt.cell_version.store(load, Release);
-        }
     }
 
     fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,

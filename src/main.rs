@@ -136,9 +136,9 @@ fn experiment() {
     //     LevelVariant::new_height_lock(1 as _),
     //     4));
     // //
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(0.8 as _),
-    //     2));
+    strategies.push(LockingStrategy::RWLockCoupling(
+        LevelVariant::new_height_lock(0.8 as _),
+        2));
 
     // strategies.push(LockingStrategy::OLC(OLCVariant::WriterLimit {
     //     attempts: 4,
@@ -147,7 +147,7 @@ fn experiment() {
 
 
     strategies.push(LockingStrategy::OLC(OLCVariant::Free));
-    strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 2));
+    strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
     strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
         attempts: 0,
         level: LevelVariant::default()

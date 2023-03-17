@@ -153,7 +153,7 @@ impl LockingStrategy {
     }
 
     #[inline(always)]
-    pub fn is_lock(
+    fn is_lock(
         &self,
         curr_level: Level,
         max_level: Level,
@@ -161,29 +161,30 @@ impl LockingStrategy {
         height: Level,
     ) -> bool {
         match self {
-            Self::MonoWriter => false,
+            // Self::MonoWriter => false,
             Self::LockCoupling => true,
             Self::RWLockCoupling(lock_level, attempts) =>
                 curr_level >= height
                     || curr_level >= max_level
                     || attempt >= *attempts
                     || lock_level.is_lock(curr_level, height),
-            Self::OLC(OLCVariant::Free) => false,
+            // Self::OLC(OLCVariant::Free) => false,
             Self::OLC(OLCVariant::Bounded { attempts, level }) =>
                 curr_level >= height
                     || curr_level >= max_level
                     || attempt >= *attempts
                     || level.is_lock(curr_level, height),
-            LockingStrategy::OLC(OLCVariant::Pinned { attempts, level }) =>
-                curr_level >= height
-                    || curr_level >= max_level
-                    || attempt >= *attempts
-                    || level.is_lock(curr_level, height),
+            // LockingStrategy::OLC(OLCVariant::Pinned { attempts, level }) =>
+            //     curr_level >= height
+            //         || curr_level >= max_level
+            //         || attempt >= *attempts
+            //         || level.is_lock(curr_level, height),
             LockingStrategy::HybridLocking(level, attempts) =>
                 curr_level >= height
                 || curr_level >= max_level
                 || attempt >= *attempts
                 || level.is_lock(curr_level, height),
+            _ => false
         }
     }
 }

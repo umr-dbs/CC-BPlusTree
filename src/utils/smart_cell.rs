@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
-use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
+use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock, RwLockUpgradableReadGuard};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::record_model::{AtomicVersion, Version};
 use crate::utils::safe_cell::SafeCell;
@@ -350,8 +350,8 @@ pub enum SmartGuard<'a, E: Default> {
     OLCReader(Option<(SmartCell<E>, LatchVersion)>),
     OLCWriter(SmartCell<E>, LatchVersion),
     OLCReaderPin(SmartCell<E>, LatchVersion),
-    HybridReader(RwLockReadGuard<'a, RawRwLock, ()>, *const E),
-    HybridWriter(RwLockWriteGuard<'a, RawRwLock, ()>, &'a mut OptCell<E>, LatchVersion)
+    HybridReader(RwLockReadGuard<'a, RawRwLock, ()>, SmartCell<E>, LatchVersion),
+    HybridWriter(RwLockWriteGuard<'a, RawRwLock, ()>, &'a OptCell<E>, LatchVersion)
 }
 
 impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
@@ -364,10 +364,11 @@ impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
                 RwLockReadGuard::rwlock(guard)
                     .read(),
                 *ptr),
-            HybridReader(guard, ptr)
+            HybridReader(guard, cell, latch_version)
             => HybridReader(
                 RwLockReadGuard::rwlock(guard).read(),
-                *ptr,
+                cell.clone(),
+                *latch_version
             ),
             LockFree(ptr) => LockFree(*ptr),
             _ => OLCReader(None)
@@ -422,6 +423,42 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                 }
 
                 false
+            }
+            HybridReader(rw, cell, latch_version) => unsafe {
+                if let OLCCell(opt) = cell.0.deref() {
+                    match opt.write_lock_strong(*latch_version) {
+                        None => {
+                            let rw_lock
+                                = RwLockReadGuard::rwlock(rw);
+
+                            let upgradable
+                                = rw_lock.upgradable_read();
+
+                            rw_lock.force_unlock_read(); // drop rw of this hybrid reader
+
+                            let writer = RwWriter(
+                                RwLockUpgradableReadGuard::upgrade(upgradable),
+                                opt.cell.get_mut());
+
+                            mem::drop(mem::replace(self, writer));
+
+                            true
+                        }
+                        Some(write_latch) => {
+                            RwLockReadGuard::rwlock(rw)
+                                .force_unlock_read();
+
+                            let writer = OLCWriter(transmute_copy(cell),
+                                                   write_latch);
+
+                            ptr::write(self, writer);
+                            true
+                        }
+                    }
+                }
+                else {
+                    false
+                }
             }
             HybridWriter(..) => true,
             _ => false
@@ -502,7 +539,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                 Some(cell.0.as_ref()),
             OLCReaderPin(cell, ..) =>
                 Some(cell.0.as_ref()),
-            HybridReader(.., ptr) => unsafe { ptr.as_ref() },
+            HybridReader(.., cell, _) => Some(cell.0.as_ref()),
             HybridWriter(.., opt, _) => Some(opt.cell.as_ref()),
             _ => None
         }
@@ -518,7 +555,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
             OLCWriter(cell, ..) => Some(cell.0.as_ref()),
             OLCReaderPin(cell, ..) => Some(cell.0.as_ref()),
-            HybridReader(.., ptr) => unsafe { ptr.as_ref() },
+            HybridReader(.., cell, _) => Some(cell.0.as_ref()),
             HybridWriter(.., opt, _) => Some(opt.cell.as_ref()),
             _ => None
         }
@@ -583,12 +620,14 @@ impl<E: Default> SmartCell<E> {
                         = rw.read();
 
                     if read_version != opt.cell_version.load(SeqCst) {
+                        mem::drop(reader);
                         OLCReader(None)
                     }
                     else {
                         transmute(HybridReader(
                             reader,
-                            opt.cell.as_ref()))
+                            self.clone(),
+                            read_version))
                     }
                 }
 
@@ -657,8 +696,7 @@ impl<E: Default> SmartCell<E> {
             },
             HybridCell(opt, rw) => unsafe {
                 let read_version
-                    = opt.cell_version.load(SeqCst);
-
+                    = opt.load_version();
 
                 if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
                     OLCReader(None)
@@ -670,7 +708,7 @@ impl<E: Default> SmartCell<E> {
                     if let Some(write_latch) = opt.write_lock_strong(read_version) {
                         transmute(HybridWriter(
                             writer,
-                            &mut *(opt as *const OptCell<E> as *mut OptCell<E>),
+                            opt,
                             write_latch))
                     } else {
                         mem::drop(writer);
@@ -700,7 +738,7 @@ impl<'a, E: Default> Drop for SmartGuard<'a, E> {
                     opt.write_unpin(*pin_version)
                 }
             HybridWriter(.., opt, write_latch) => {
-                opt.cell_version.store((1 + *write_latch) ^ WRITE_FLAG_VERSION, Release);
+                opt.cell_version.store((1 + *write_latch) & !WRITE_FLAG_VERSION, Release);
             },
             _ => {}
         }

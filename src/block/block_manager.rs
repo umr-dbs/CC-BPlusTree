@@ -11,7 +11,7 @@ use crate::page_model::node::Node;
 use crate::utils::smart_cell::{SmartCell, SmartFlavor};
 // use crate::tree::settings::BlockSettings;
 
-const ENABLE_SMALL_BLOCK: bool = true;
+const ENABLE_SMALL_BLOCK: bool = false;
 const MAX_ZEROS_PER_BLOCK: usize = 3964; // = data region in a block
 
 /// Default starting numerical value for a valid BlockID.

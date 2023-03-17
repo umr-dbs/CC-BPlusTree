@@ -184,9 +184,11 @@ impl<const FAN_OUT: usize,
             LockingStrategy::OLC(OLCVariant::Bounded { attempts, level })
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut(),
-            LockingStrategy::OLC(OLCVariant::Pinned { attempts, level })
-            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
-                block_cc.borrow_pin(),
+            LockingStrategy::OLC(OLCVariant::Pinned { .. }) =>
+                block_cc.borrow_read(),
+            // LockingStrategy::OLC(OLCVariant::Pinned { attempts, level })
+            // if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
+            //     block_cc.borrow_pin(),
             LockingStrategy::OLC(..) =>
                 block_cc.borrow_read(),
             LockingStrategy::HybridLocking(lock_level, attempts)

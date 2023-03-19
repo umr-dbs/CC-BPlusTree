@@ -1,13 +1,11 @@
 use std::hash::Hash;
 use std::mem;
-use std::sync::atomic::Ordering::{Release, SeqCst};
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::block::block::{Block, BlockGuard};
 use crate::test::{dec_key, inc_key};
-use crate::utils::smart_cell::{OBSOLETE_FLAG_VERSION, SmartFlavor};
 use crate::utils::un_cell::UnCell;
 
 pub type LockLevel = ObjectCount;

@@ -112,8 +112,10 @@ impl<const FAN_OUT: usize,
         let root_ref
             = root_guard.deref_mut().unwrap();
 
+        root_guard.mark_obsolete();
+
         let latch_type
-            = root_guard.mark_obsolete();
+            = self.locking_strategy.latch_type();
 
         let n_height
             = root.height() + 1;
@@ -214,10 +216,12 @@ impl<const FAN_OUT: usize,
         child_pos: usize,
         from_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
     {
-        let latch_type
-            = from_guard.mark_obsolete();
+        from_guard.mark_obsolete();
 
-        match from_guard.deref_mut().unwrap().as_mut() {
+        let latch_type
+            = self.locking_strategy.latch_type();
+
+            match from_guard.deref_mut().unwrap().as_mut() {
             Node::Index(index_page) => unsafe {
                 let keys
                     = index_page.keys();

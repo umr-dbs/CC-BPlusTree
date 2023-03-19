@@ -104,8 +104,8 @@ fn experiment() {
         // 100,
         // 1_000,
         10_000,
-        // 100_000,
-        // 1_000_000,
+        100_000,
+        1_000_000,
         // 2_000_000,
         // 5_000_000,
         10_000_000,
@@ -148,7 +148,7 @@ fn experiment() {
     // strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 2));
     // strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 3));
 
-    // strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
+    strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
     strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
         attempts: 0,
         level: LevelVariant::default()

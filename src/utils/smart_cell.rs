@@ -350,7 +350,7 @@ pub enum SmartGuard<'a, E: Default> {
     OLCReader(Option<(SmartCell<E>, LatchVersion)>),
     OLCWriter(SmartCell<E>, LatchVersion),
     OLCReaderPin(SmartCell<E>, LatchVersion),
-    HybridWriter(RwLockWriteGuard<'a, RawRwLock, ()>, &'a OptCell<E>, LatchVersion)
+    HybridWriter(RwLockWriteGuard<'a, RawRwLock, ()>, &'a OptCell<E>, LatchVersion),
 }
 
 impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
@@ -559,23 +559,16 @@ impl<E: Default> SmartCell<E> {
     pub fn borrow_read_hybrid(&self) -> SmartGuard<'static, E> {
         match self.0.deref() {
             HybridCell(opt, rw) => unsafe {
-                let (read, read_version)
-                    = opt.read_lock();
+                let reader
+                    = rw.read();
 
-                if !read {
+                if opt.cell_version.load(SeqCst) & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+                    mem::drop(reader);
                     OLCReader(None)
                 } else {
-                    let reader
-                        = rw.read();
-
-                    if read_version != opt.cell_version.load(SeqCst) {
-                        mem::drop(reader);
-                        OLCReader(None)
-                    } else {
-                        transmute(RwReader(
-                            reader,
-                            opt.cell.as_ref()))
-                    }
+                    transmute(RwReader(
+                        reader,
+                        opt.cell.as_ref()))
                 }
             }
             _ => unreachable!()
@@ -655,11 +648,13 @@ impl<E: Default> SmartCell<E> {
                     = rw.write();
 
                 let version
-                    = opt.cell_version.load(SeqCst);
+                    = opt.load_version();
 
-                match version == read_version {
-                   true => transmute(
-                        HybridWriter(writer, opt, read_version)),
+                match version & WRITE_OBSOLETE_FLAG_VERSION == 0 {
+                    true if opt.write_lock_strong(version).is_some() => transmute(
+                        HybridWriter(writer,
+                                     opt,
+                                     version | WRITE_FLAG_VERSION)),
                     _ => {
                         mem::drop(writer);
 
@@ -684,10 +679,15 @@ impl<'a, E: Default> Drop for SmartGuard<'a, E> {
                 if let OLCCell(opt) = cell.0.as_ref() {
                     opt.write_unlock(*write_version)
                 }
+                else if let HybridCell(opt, ..) = cell.0.as_ref() {
+                    opt.write_unlock(*write_version)
+                }
             OLCReaderPin(cell, pin_version) =>
                 if let OLCCell(opt) = cell.0.as_ref() {
                     opt.write_unpin(*pin_version)
                 }
+            HybridWriter(.., opt, latch) =>
+                opt.write_unlock(*latch),
             _ => {}
         }
     }

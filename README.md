@@ -1,6 +1,6 @@
 # Experimental Concurrency Control CRUD B+Tree Implementation
-    Build:             - 19.03.2023
-    Version:           - 0.0.69 (Experimental)
+    Build:             - 20.03.2023
+    Version:           - 0.0.70 (Experimental)
 ### Platform
     - Architecture:  x86, ARM
     - OS:            Linux, Windows
@@ -12,6 +12,7 @@
     - Optimistic Readers-Writer Lock-Coupling
     - Optimistic Lock-Coupling
     - Bounded Optimistic Lock-Coupling 
+    - Hybrid Locking
     - Lightweight Hybrid Locking (OLC Pinned)
 
 # Querying Support

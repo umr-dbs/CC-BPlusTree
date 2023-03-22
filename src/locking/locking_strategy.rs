@@ -55,7 +55,7 @@ pub enum LockingStrategy {
     #[default]
     MonoWriter,
     LockCoupling,
-    RWLockCoupling(LevelVariant, Attempts),
+    ORWC(LevelVariant, Attempts),
     OLC(OLCVariant),
     HybridLocking(LevelVariant, Attempts)
 }
@@ -65,15 +65,15 @@ impl Display for LockingStrategy {
         match self {
             Self::MonoWriter => write!(f, "MonoWriter"),
             Self::LockCoupling => write!(f, "LockCoupling"),
-            Self::RWLockCoupling(level, attempts) =>
-                write!(f, "RWLockCoupling(Attempts={};Level={})", attempts, level),
-            Self::OLC(OLCVariant::Free) => write!(f, "OLC-Free"),
+            Self::ORWC(level, attempts) =>
+                write!(f, "ORWC(Attempts={};Level={})", attempts, level),
+            Self::OLC(OLCVariant::Free) => write!(f, "OLC"),
             Self::OLC(OLCVariant::Pinned { attempts, level }) =>
-                write!(f, "OLC-Pinned(Attempts={};Level={})", attempts, level),
+                write!(f, "Lightweight-HybridLock(Attempts={};Level={})", attempts, level),
             Self::OLC(OLCVariant::Bounded { attempts, level }) =>
-                write!(f, "OLC-Pessimistic(Attempts={};Level={})", attempts, level),
+                write!(f, "OLC-Bounded(Attempts={};Level={})", attempts, level),
             LockingStrategy::HybridLocking(level, attempts) =>
-                write!(f, "HybridLocking(Attempts={};Level={})", attempts, level),
+                write!(f, "HybridLock(Attempts={};Level={})", attempts, level),
         }
     }
 }
@@ -95,7 +95,7 @@ impl LockingStrategy {
         match self {
             LockingStrategy::MonoWriter => LatchType::None,
             LockingStrategy::LockCoupling => LatchType::Exclusive,
-            LockingStrategy::RWLockCoupling(..) => LatchType::ReadersWriter,
+            LockingStrategy::ORWC(..) => LatchType::ReadersWriter,
             LockingStrategy::OLC(..) => LatchType::Optimistic,
             LockingStrategy::HybridLocking(..) => LatchType::Hybrid
         }
@@ -121,7 +121,7 @@ impl LockingStrategy {
     #[inline(always)]
     pub(crate) const fn is_read_write_lock(&self) -> bool {
         match self {
-            Self::RWLockCoupling(..) => true,
+            Self::ORWC(..) => true,
             _ => false
         }
     }
@@ -163,7 +163,7 @@ impl LockingStrategy {
         match self {
             // Self::MonoWriter => false,
             Self::LockCoupling => true,
-            Self::RWLockCoupling(lock_level, attempts) =>
+            Self::ORWC(lock_level, attempts) =>
                 curr_level >= height
                     || curr_level >= max_level
                     || attempt >= *attempts

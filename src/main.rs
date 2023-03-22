@@ -74,13 +74,13 @@ fn make_splash() {
 
 fn experiment() {
     let mut threads_cpu = vec![
-        // 1,
-        // 2,
-        // 3,
-        // 4,
-        // 8,
-        // 10,
-        // 12,
+        1,
+        2,
+        3,
+        4,
+        8,
+        10,
+        12,
         16,
         24,
         32,
@@ -103,9 +103,9 @@ fn experiment() {
         // 10,
         // 100,
         // 1_000,
-        10_000,
-        100_000,
-        1_000_000,
+        // 10_000,
+        // 100_000,
+        // 1_000_000,
         // 2_000_000,
         // 5_000_000,
         10_000_000,
@@ -117,47 +117,27 @@ fn experiment() {
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::LockCoupling);
-    //
-    // strategies.push(LockingStrategy::optimistic_custom(
-    //     LevelVariant::new_height_lock(1_f32), 1));
-    // strategies.push(LockingStrategy::optimistic_custom(
-    //     LevelVariant::new_height_lock(1_f32), 3));
-    // strategies.push(LockingStrategy::optimistic_custom(
-    //     LevelVariant::new_height_lock(1_f32), 10));
+    strategies.push(LockingStrategy::MonoWriter);
+    strategies.push(LockingStrategy::LockCoupling);
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(0.8 as _),
+        2));
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(0.8 as _),
+        4));
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(1 as _),
+        2));
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(1 as _),
+        4));
 
-    // strategies.push(LockingStrategy::OLC(
-    //     LevelConstraints::OptimisticLimit { attempts: 1, level: LevelVariant::new_height_lock(1_f32) }));
-    //
-    // strategies.push(LockingStrategy::OLC(
-    //     LevelConstraints::OptimisticLimit { attempts: 3, level: LevelVariant::new_height_lock(1_f32) }));
-    //
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     4));
-    // //
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(0.8 as _),
-    //     2));
-
-    // strategies.push(LockingStrategy::OLC(OLCVariant::WriterLimit {
-    //     attempts: 4,
-    //     level: LevelVariant::default(),
-    // }));
-
-    // strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 2));
-    // strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 3));
-
+    strategies.push(LockingStrategy::OLC(OLCVariant::Free));
     strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
     strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
         attempts: 0,
         level: LevelVariant::default()
     }));
-    // strategies.push(LockingStrategy::OLC(OLCVariant::Free));
-
-    // strategies.push(LockingStrategy::RWLockCoupling(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     1_00));
 
     insertions.iter().enumerate().for_each(|(i, insertion)| {
         log_debug_ln(format!("# {}\n\t\
@@ -168,17 +148,12 @@ fn experiment() {
                              threads_cpu.iter().join(",")));
 
         log_debug(format!("\t- Strategy:"));
-        if threads_cpu.contains(&1) {
-            println!("\t\t{}", LockingStrategy::MonoWriter);
-            strategies
-                .iter()
-                .for_each(|st| log_debug_ln(format!("\t\t\t\t{}", st)))
-        } else {
+
             println!("\t\t{}", strategies[0]);
             (&strategies[1..])
                 .iter()
                 .for_each(|st| log_debug_ln(format!("\t\t\t\t{}", st)))
-        }
+
     });
 
 
@@ -197,7 +172,7 @@ fn experiment() {
     mem::drop(strategies);
 
     // thread::sleep(Duration::from_secs(4));
-    println!("Number Insertions,Number Threads,Locking Strategy,Height,Time,Fan Out,Leaf Records,Block Size");
+    println!("Number Insertions,Number Threads,Locking Strategy,Time,Fan Out,Leaf Records,Block Size");
 
     cases.into_iter().for_each(|(t1s, strats)|
         for num_threads in threads_cpu.iter() {
@@ -206,29 +181,29 @@ fn experiment() {
                 log_debug_ln(format!("WARNING: Skipping Transactions = {}, Threads = {}!", t1s.len(), num_threads));
                 continue;
             }
-            if *num_threads == 1 {
-                if EXE_LOOK_UPS {
-                    log_debug_ln(format!("Warning: Look-up queries enabled!"))
-                }
-                if EXE_RANGE_LOOK_UPS {
-                    log_debug_ln(format!("Warning: Range queries enabled!"))
-                }
-
-                print!("{}", t1s.len());
-                print!(",{}", *num_threads);
-
-                let index = MAKE_INDEX(LockingStrategy::MonoWriter);
-
-                let time = beast_test(
-                    1,
-                    index,
-                    t1s.as_slice());
-
-                print!(",{}", time);
-                print!(",{}", FAN_OUT);
-                print!(",{}", NUM_RECORDS);
-                println!(",{}", BSZ_BASE);
-            }
+            // if *num_threads == 1 {
+            //     if EXE_LOOK_UPS {
+            //         log_debug_ln(format!("Warning: Look-up queries enabled!"))
+            //     }
+            //     if EXE_RANGE_LOOK_UPS {
+            //         log_debug_ln(format!("Warning: Range queries enabled!"))
+            //     }
+            //
+            //     print!("{}", t1s.len());
+            //     print!(",{}", *num_threads);
+            //
+            //     let index = MAKE_INDEX(LockingStrategy::MonoWriter);
+            //
+            //     let time = beast_test(
+            //         1,
+            //         index,
+            //         t1s.as_slice());
+            //
+            //     print!(",{}", time);
+            //     print!(",{}", FAN_OUT);
+            //     print!(",{}", NUM_RECORDS);
+            //     println!(",{}", BSZ_BASE);
+            // }
 
             for ls in strats.iter() {
                 if EXE_LOOK_UPS {

@@ -1,6 +1,6 @@
 # Experimental Concurrency Control CRUD B+Tree Implementation
-    Build:             - 20.03.2023
-    Version:           - 0.0.70 (Experimental)
+    Build:             - 22.03.2023
+    Version:           - 0.0.71 (Experimental)
 ### Platform
     - Architecture:  x86, ARM
     - OS:            Linux, Windows

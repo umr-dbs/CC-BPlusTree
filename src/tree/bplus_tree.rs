@@ -172,10 +172,10 @@ impl<const FAN_OUT: usize,
                 block_cc.borrow_free(),
             LockingStrategy::LockCoupling =>
                 block_cc.borrow_mut(),
-            LockingStrategy::RWLockCoupling(lock_level, attempts)
+            LockingStrategy::ORWC(lock_level, attempts)
             if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
                 block_cc.borrow_mut(),
-            LockingStrategy::RWLockCoupling(..) =>
+            LockingStrategy::ORWC(..) =>
                 block_cc.borrow_read(),
             LockingStrategy::OLC(OLCVariant::Free) =>
                 block_cc.borrow_read(),

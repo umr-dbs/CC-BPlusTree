@@ -4,6 +4,7 @@ use std::hash::Hash;
 use std::mem;
 use crate::page_model::{Attempts, Height, Level};
 use crate::block::block::BlockGuard;
+use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPoint;
 use crate::record_model::unsafe_clone::UnsafeClone;
@@ -68,7 +69,7 @@ impl<const FAN_OUT: usize,
                         mem::drop(all_results);
 
                         *path = Vec::with_capacity(0);
-                        return self.execute(CRUDOperation::Range(org_key_interval))
+                        return self.dispatch(CRUDOperation::Range(org_key_interval))
                     }
                     _ => {}
                 };

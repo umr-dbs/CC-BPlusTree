@@ -67,10 +67,10 @@ impl<const FAN_OUT: usize,
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_mut(),
             LockingStrategy::OLC(..) => root.block.borrow_read(),
-            LockingStrategy::RWLockCoupling(..)
+            LockingStrategy::ORWC(..)
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
                 root.block.borrow_mut(),
-            LockingStrategy::RWLockCoupling(..) =>
+            LockingStrategy::ORWC(..) =>
                 root.block.borrow_read(),
             LockingStrategy::HybridLocking(..)
             if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>

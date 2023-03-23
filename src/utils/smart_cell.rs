@@ -402,34 +402,15 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                 unreachable!()
             }
             OLCReader(Some((cell, latch))) => unsafe {
-                match cell.0.as_ref() {
-                    OLCCell(opt) => if let Some(write_latch) = opt.write_lock(*latch) {
+                if let OLCCell(opt) = cell.0.as_ref() {
+                    if let Some(write_latch) = opt.write_lock(*latch) {
                         let writer = OLCWriter(transmute_copy(cell), write_latch);
                         ptr::write(self, writer);
-                        true
-                    } else {
-                        false
+                        return true;
                     }
-                    HybridCell(opt, rw) => {
-                        let writer
-                            = rw.try_write();
-
-                        if writer.is_none() {
-                            return false
-                        }
-
-                        if let Some(write_latch) = opt.write_lock_strong(*latch) {
-                            let hybrid = transmute(HybridWriter(
-                                writer.unwrap(), opt, write_latch));
-
-                            *self = hybrid;
-
-                            return true
-                        }
-                        false
-                    }
-                    _ => false
                 }
+
+                false
             }
             HybridWriter(..) => true,
             _ => false

@@ -39,7 +39,7 @@ impl<const FAN_OUT: usize,
 > InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn new() -> Self {
-        debug_assert!(mem::size_of::<Key>() >= mem::size_of::<ObjectCount>(), "KEY_SIZE can't be under ObjectCount bytes!");
+        assert!(mem::size_of::<Key>() >= mem::size_of::<ObjectCount>(), "KEY_SIZE can't be under ObjectCount bytes!");
 
         unsafe {
             let mut page = InternalPage {

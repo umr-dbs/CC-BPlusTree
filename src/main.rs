@@ -117,23 +117,23 @@ fn experiment() {
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::MonoWriter);
-    // strategies.push(LockingStrategy::LockCoupling);
-    // strategies.push(LockingStrategy::ORWC(
-    //     LevelVariant::new_height_lock(0.8 as _),
-    //     2));
-    // strategies.push(LockingStrategy::ORWC(
-    //     LevelVariant::new_height_lock(0.8 as _),
-    //     4));
-    // strategies.push(LockingStrategy::ORWC(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     2));
-    // strategies.push(LockingStrategy::ORWC(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     4));
+    strategies.push(LockingStrategy::MonoWriter);
+    strategies.push(LockingStrategy::LockCoupling);
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(0.8 as _),
+        2));
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(0.8 as _),
+        4));
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(1 as _),
+        2));
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(1 as _),
+        4));
 
-    // strategies.push(LockingStrategy::OLC(OLCVariant::Free));
-    // strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
+    strategies.push(LockingStrategy::OLC(OLCVariant::Free));
+    strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
     strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
         attempts: 0,
         level: LevelVariant::default()

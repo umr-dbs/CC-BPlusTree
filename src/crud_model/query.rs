@@ -1,11 +1,10 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
-use std::{mem, ptr};
+use std::mem;
 use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
-use crate::page_model::{Attempts, BlockID, BlockRef, Height, Level};
+use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::block::block::BlockGuard;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
-use crate::page_model::node::Node::Index;
 use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::utils::interval::Interval;
 
@@ -113,6 +112,8 @@ impl<const FAN_OUT: usize,
         let root_ref
             = root_guard.deref_mut().unwrap();
 
+        root_guard.mark_obsolete();
+
         let latch_type
             = self.locking_strategy.latch_type();
 
@@ -127,51 +128,42 @@ impl<const FAN_OUT: usize,
                 let keys_mid = keys.len() / 2;
                 let k3 = *keys.get_unchecked(keys_mid);
 
+                let index_block
+                    = self.block_manager.new_empty_index_block();
+
                 let new_node_right =
                     self.block_manager.new_empty_index_block();
 
                 let new_root_left
                     = self.block_manager.new_empty_index_block();
 
-                children
-                    .as_ptr()
-                    .add(keys_mid + 1)
-                    .copy_to_nonoverlapping(new_node_right.children_mut().as_mut_ptr(),
-                                            children.get_unchecked(keys_mid + 1..).len());
+                new_node_right
+                    .children_mut()
+                    .extend_from_slice(children.get_unchecked(keys_mid + 1..));
 
-                children
-                    .as_ptr()
-                    .copy_to_nonoverlapping(new_root_left.children_mut().as_mut_ptr(),
-                                            children.get_unchecked(..=keys_mid).len());
+                new_node_right
+                    .keys_mut()
+                    .extend_from_slice(keys.get_unchecked(keys_mid + 1..));
 
-                keys.as_ptr()
-                    .copy_to_nonoverlapping(new_root_left.keys_mut().as_mut_ptr(),
-                                            keys.get_unchecked(..keys_mid).len());
+                new_root_left
+                    .children_mut()
+                    .extend_from_slice(children.get_unchecked(..=keys_mid));
 
-                keys.as_ptr()
-                    .add(keys_mid + 1)
-                    .copy_to_nonoverlapping(new_node_right.keys_mut().as_mut_ptr(),
-                                            keys.get_unchecked(keys_mid + 1..).len());
+                new_root_left
+                    .keys_mut()
+                    .extend_from_slice(keys.get_unchecked(..keys_mid));
 
-                new_root_left.keys_mut().set_len(keys.get_unchecked(..keys_mid).len());
-                new_node_right.keys_mut().set_len(keys.get_unchecked(keys_mid + 1..).len());
+                index_block.children_mut().extend([
+                    new_root_left.into_cell(latch_type),
+                    new_node_right.into_cell(latch_type)
+                ]);
 
-                root_ref.children_mut()
-                    .as_mut_ptr()
-                    .write(new_root_left.into_cell(latch_type));
+                index_block.keys_mut()
+                    .push(k3);
 
-                root_ref.children_mut()
-                    .as_mut_ptr()
-                    .add(1)
-                    .write(new_node_right.into_cell(latch_type));
-
-                root_ref.keys_mut()
-                    .as_mut_ptr()
-                    .write(k3);
-
-                root_ref.keys_mut().set_len(1);
-
-                self.root.get_mut().height = n_height;
+                self.set_new_root(
+                    index_block,
+                    n_height);
             }
             Node::Leaf(records) => unsafe {
                 let records
@@ -190,47 +182,28 @@ impl<const FAN_OUT: usize,
                 let new_node_left
                     = self.block_manager.new_empty_leaf_single_version_block();
 
-                records
-                    .as_ptr()
-                    .copy_to_nonoverlapping(new_node_left.records_mut().as_mut_ptr(), records_mid - 1);
-
-                records
-                    .as_ptr()
-                    .add(records_mid)
-                    .copy_to_nonoverlapping(new_node_right.records_mut().as_mut_ptr(), records.len() - records_mid);
+                let new_root
+                    = self.block_manager.new_empty_index_block();
 
                 new_node_right
                     .records_mut()
-                    .set_len(records.len() - records_mid);
+                    .extend_from_slice(records.get_unchecked(records_mid..));
 
                 new_node_left
                     .records_mut()
-                    .set_len(records_mid);
+                    .extend_from_slice(records.get_unchecked(..records_mid));
 
-                ptr::write((root_ref as *mut _ as *mut usize)
-                               .add(mem::size_of::<BlockID>() / mem::size_of::<usize>()),
-                           0usize);
+                new_root.children_mut().extend([
+                    new_node_left.into_cell(latch_type),
+                    new_node_right.into_cell(latch_type)
+                ]);
 
-                root_ref
-                    .children_mut()
-                    .as_mut_ptr()
-                    .write(new_node_left.into_cell(latch_type));
-                root_ref
-                    .children_mut()
-                    .as_mut_ptr()
-                    .add(1)
-                    .write(new_node_right.into_cell(latch_type));
+                new_root.keys_mut()
+                    .push(k3);
 
-                root_ref
-                    .keys_mut()
-                    .as_mut_ptr()
-                    .write(k3);
-
-                root_ref
-                    .keys_mut()
-                    .set_len(1);
-
-                self.root.get_mut().height = n_height;
+                self.set_new_root(
+                    new_root,
+                    n_height);
             }
         }
 

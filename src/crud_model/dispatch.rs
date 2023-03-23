@@ -4,7 +4,7 @@ use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::page_model::node::Node;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::tree::bplus_tree::BPlusTree;
+use crate::tree::bplus_tree::{BPlusTree, MAX_TREE_HEIGHT};
 use crate::utils::interval::Interval;
 
 impl<const FAN_OUT: usize,
@@ -81,17 +81,10 @@ impl<const FAN_OUT: usize,
                     _ => CRUDOperationResult::Error
             },
             CRUDOperation::Range(key_interval) if olc => {
-                let mut path = vec![
-                    (Interval::new(self.min_key, self.max_key),
-                     self.lock_reader_olc(
-                         &self.root.block,
-                         0,
-                         0,
-                         self.height()))
-                ];
+                let mut path = vec![];
 
                 self.next_leaf_page(path.as_mut(),
-                                    0,
+                                    MAX_TREE_HEIGHT as _,
                                     key_interval.lower);
 
                 self.range_query_olc(path.as_mut(), key_interval)

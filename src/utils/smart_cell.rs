@@ -7,11 +7,10 @@ use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock, RwLockUpgradableReadGuard};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::Unexpected::Seq;
 use crate::record_model::{AtomicVersion, Version};
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::SmartFlavor::{ExclusiveCell, FreeCell, HybridCell, OLCCell, ReadersWriterCell};
-use crate::utils::smart_cell::SmartGuard::{HybridWriter, LockFree, MutExclusive, OLCReader, OLCReaderPin, OLCWriter, RwReader, RwWriter};
+use crate::utils::smart_cell::SmartGuard::{LockFree, MutExclusive, OLCReader, OLCReaderPin, OLCWriter, RwReader, RwWriter};
 
 pub const CPU_THREADS: bool = true;
 pub const ENABLE_YIELD: bool = !CPU_THREADS;
@@ -350,7 +349,6 @@ pub enum SmartGuard<'a, E: Default> {
     OLCReader(Option<(SmartCell<E>, LatchVersion)>),
     OLCWriter(SmartCell<E>, LatchVersion),
     OLCReaderPin(SmartCell<E>, LatchVersion),
-    HybridWriter(RwLockWriteGuard<'a, RawRwLock, ()>, &'a OptCell<E>, LatchVersion),
 }
 
 impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
@@ -377,7 +375,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                 OLCCell(opt) | HybridCell(opt, ..) => opt.write_obsolete(*latch),
                 _ => {}
             }
-            HybridWriter(.., opt, latch) => opt.write_obsolete(*latch),
             _ => {}
         }
     }
@@ -412,7 +409,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
 
                 false
             }
-            HybridWriter(..) => true,
             _ => false
         }
     }
@@ -423,7 +419,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             RwWriter(..) => true,
             MutExclusive(..) => true,
             OLCWriter(..) => true,
-            HybridWriter(..) => true,
             _ => false
         }
     }
@@ -491,7 +486,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                 Some(cell.0.as_ref()),
             OLCReaderPin(cell, ..) =>
                 Some(cell.0.as_ref()),
-            HybridWriter(.., opt, _) => Some(opt.cell.as_ref()),
             _ => None
         }
     }
@@ -506,7 +500,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
             OLCWriter(cell, ..) => Some(cell.0.as_ref()),
             OLCReaderPin(cell, ..) => Some(cell.0.as_ref()),
-            HybridWriter(.., opt, _) => Some(opt.cell.as_ref()),
             _ => None
         }
     }
@@ -518,7 +511,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             RwWriter(.., ptr) => unsafe { ptr.as_mut() },
             MutExclusive(.., ptr) => unsafe { ptr.as_mut() },
             OLCWriter(cell, ..) => Some(cell.0.as_mut()),
-            HybridWriter(.., opt, _) => Some(opt.cell.get_mut()),
             _ => None
         }
     }
@@ -562,7 +554,7 @@ impl<E: Default> SmartCell<E> {
                 let reader
                     = rw.read();
 
-                if opt.cell_version.load(SeqCst) & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+                if opt.load_version() & WRITE_OBSOLETE_FLAG_VERSION != 0 {
                     mem::drop(reader);
                     OLCReader(None)
                 } else {
@@ -578,11 +570,18 @@ impl<E: Default> SmartCell<E> {
     #[inline(always)]
     pub fn borrow_read(&self) -> SmartGuard<'static, E> {
         match self.0.deref() {
-            OLCCell(opt) | HybridCell(opt, ..) => {
+            OLCCell(opt)  => {
                 let (success, read)
                     = opt.read_lock();
 
                 OLCReader(success.then(|| (self.clone(), read)))
+            }
+            HybridCell(opt, rw) => match rw.try_read() {
+                Some(shared) if opt.is_read_not_obsolete() => unsafe {
+                    RwReader(transmute(shared),
+                             opt.deref().cell.as_ref())
+                }
+                _ => OLCReader(None)
             }
             ExclusiveCell(mutex, ptr) => unsafe {
                 MutExclusive(transmute(mutex.lock()),
@@ -631,37 +630,21 @@ impl<E: Default> SmartCell<E> {
                     OLCReader(None)
                 }
             }
-            HybridCell(opt, rw) => unsafe {
-                let (read, read_version)
-                    = opt.read_lock();
+            HybridCell(opt, rw) => match rw.try_write() {
+                None => OLCReader(None),
+                Some(..) => {
+                    let read_version
+                        = opt.load_version();
 
-                match read {
-                    true => match opt.write_lock_strong(read_version) {
-                        Some(write_version) => return transmute(
-                            OLCWriter(self.clone(), write_version)),
-                        _ => {}
-                    }
-                    _ => {}
-                };
-
-                let writer
-                    = rw.write();
-
-                let version
-                    = opt.load_version();
-
-                match version & WRITE_OBSOLETE_FLAG_VERSION == 0 {
-                    true if opt.write_lock_strong(version).is_some() => transmute(
-                        HybridWriter(writer,
-                                     opt,
-                                     version | WRITE_FLAG_VERSION)),
-                    _ => {
-                        mem::drop(writer);
-
+                    if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+                        OLCReader(None)
+                    } else if let Some(latched) = opt.write_lock_strong(read_version) {
+                        OLCWriter(self.clone(), latched)
+                    } else {
                         OLCReader(None)
                     }
                 }
-            },
+            }
             ExclusiveCell(mutex, ptr) => unsafe {
                 transmute(MutExclusive(
                     transmute(mutex.lock()),
@@ -678,16 +661,13 @@ impl<'a, E: Default> Drop for SmartGuard<'a, E> {
             OLCWriter(cell, write_version) =>
                 if let OLCCell(opt) = cell.0.as_ref() {
                     opt.write_unlock(*write_version)
-                }
-                else if let HybridCell(opt, ..) = cell.0.as_ref() {
+                } else if let HybridCell(opt, ..) = cell.0.as_ref() {
                     opt.write_unlock(*write_version)
                 }
             OLCReaderPin(cell, pin_version) =>
                 if let OLCCell(opt) = cell.0.as_ref() {
                     opt.write_unpin(*pin_version)
                 }
-            HybridWriter(.., opt, latch) =>
-                opt.write_unlock(*latch),
             _ => {}
         }
     }

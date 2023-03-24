@@ -177,10 +177,10 @@ impl<const FAN_OUT: usize,
                     .key;
 
                 let new_node_right
-                    = self.block_manager.new_empty_leaf_single_version_block();
+                    = self.block_manager.new_empty_leaf();
 
                 let new_node_left
-                    = self.block_manager.new_empty_leaf_single_version_block();
+                    = self.block_manager.new_empty_leaf();
 
                 let new_root
                     = self.block_manager.new_empty_index_block();
@@ -282,10 +282,10 @@ impl<const FAN_OUT: usize,
                     .key;
 
                 let new_node
-                    = self.block_manager.new_empty_leaf_single_version_block();
+                    = self.block_manager.new_empty_leaf();
 
                 let new_node_from
-                    = self.block_manager.new_empty_leaf_single_version_block();
+                    = self.block_manager.new_empty_leaf();
 
                 new_node
                     .records_mut()

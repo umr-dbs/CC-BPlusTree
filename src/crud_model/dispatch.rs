@@ -5,7 +5,6 @@ use crate::page_model::node::Node;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::tree::bplus_tree::BPlusTree;
-use crate::utils::interval::Interval;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -60,10 +59,11 @@ impl<const FAN_OUT: usize,
                 .update_record_point(key, payload)
                 .map(|old| CRUDOperationResult::Updated(key, old))
                 .unwrap_or_default(),
-            CRUDOperation::Point(key) if olc => match self.dispatch(CRUDOperation::Range((key..=key).into())) {
-                CRUDOperationResult::MatchedRecords(mut records) if records.len() <= 1 =>
-                    records.pop()
-                        .into(),
+            CRUDOperation::Point(key) if olc => match self.dispatch(
+                CRUDOperation::Range((key..=key).into()))
+            {
+                CRUDOperationResult::MatchedRecords(mut records)
+                if records.len() <= 1 => records.pop().into(),
                 _ => CRUDOperationResult::Error
             },
             CRUDOperation::Point(key) => match self
@@ -81,15 +81,7 @@ impl<const FAN_OUT: usize,
                     _ => CRUDOperationResult::Error
             },
             CRUDOperation::Range(key_interval) if olc => {
-                let mut path = vec![
-                    (Interval::new(self.min_key, self.max_key),
-                     self.lock_reader_olc(
-                         &self.root.block,
-                         0,
-                         0,
-                         self.height()))
-                ];
-
+                let mut path = vec![];
                 self.next_leaf_page(path.as_mut(),
                                     0,
                                     key_interval.lower);

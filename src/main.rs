@@ -74,11 +74,11 @@ fn make_splash() {
 
 fn experiment() {
     let mut threads_cpu = vec![
-        1,
-        2,
-        3,
-        4,
-        8,
+        // 1,
+        // 2,
+        // 3,
+        // 4,
+        // 8,
         10,
         12,
         16,
@@ -108,10 +108,10 @@ fn experiment() {
         // 1_000_000,
         // 2_000_000,
         // 5_000_000,
-        10_000_000,
+        // 10_000_000,
         // 20_000_000,
         // 50_000_000,
-        // 100_000_000,
+        100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
@@ -121,18 +121,12 @@ fn experiment() {
     strategies.push(LockingStrategy::LockCoupling);
     strategies.push(LockingStrategy::ORWC(
         LevelVariant::new_height_lock(0.8 as _),
-        2));
-    strategies.push(LockingStrategy::ORWC(
-        LevelVariant::new_height_lock(0.8 as _),
         4));
-    strategies.push(LockingStrategy::ORWC(
-        LevelVariant::new_height_lock(1 as _),
-        2));
     strategies.push(LockingStrategy::ORWC(
         LevelVariant::new_height_lock(1 as _),
         4));
 
-    strategies.push(LockingStrategy::OLC(OLCVariant::Free));
+    // strategies.push(LockingStrategy::OLC(OLCVariant::Free));
     strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
     strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
         attempts: 0,

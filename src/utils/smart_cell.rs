@@ -3,9 +3,9 @@ use std::{hint, mem, ptr};
 use std::mem::{transmute, transmute_copy};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
-use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::record_model::{AtomicVersion, Version};
 use crate::utils::safe_cell::SafeCell;
@@ -22,6 +22,49 @@ const PIN_FLAG_VERSION: LatchVersion = 0x2_000000000000000;
 const WRITE_OBSOLETE_FLAG_VERSION: LatchVersion = 0xC_000000000000000;
 const WRITE_PIN_FLAG_VERSION: LatchVersion = 0x6_000000000000000;
 const WRITE_PIN_OBSOLETE_FLAG_VERSION: LatchVersion = 0xE_000000000000000;
+
+#[cfg(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64")))]
+pub trait AtomicElisionExt {
+    fn elision_compare_exchange_acquire(
+        &self,
+        current: Version,
+        new: Version,
+    ) -> Result<Version, Version>;
+}
+
+#[cfg(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64")))]
+impl AtomicElisionExt for AtomicVersion {
+    #[inline(always)]
+    fn elision_compare_exchange_acquire(&self, current: Version, new: Version) -> Result<Version, Version> {
+        unsafe {
+            use core::arch::asm;
+            let prev: Version;
+            #[cfg(target_pointer_width = "32")]
+            asm!(
+            "xacquire",
+            "lock",
+            "cmpxchg [{:e}], {:e}",
+            in(reg) self,
+            in(reg) new,
+            inout("eax") current => prev,
+            );
+            #[cfg(target_pointer_width = "64")]
+            asm!(
+            "xacquire",
+            "lock",
+            "cmpxchg [{}], {}",
+            in(reg) self,
+            in(reg) new,
+            inout("rax") current => prev,
+            );
+            if prev == current {
+                Ok(prev)
+            } else {
+                Err(prev)
+            }
+        }
+    }
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
@@ -111,6 +154,30 @@ impl<E: Default> OptCell<E> {
         (read_version & WRITE_OBSOLETE_FLAG_VERSION == 0, read_version & !PIN_FLAG_VERSION)
     }
 
+    #[cfg(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[inline(always)]
+    pub fn pin_lock(&self) -> Result<LatchVersion, (IsRead, LatchVersion)> {
+        let read_version
+            = self.load_version();
+
+        if read_version & PIN_FLAG_VERSION != 0 {
+            return Err((true, read_version & !PIN_FLAG_VERSION));
+        }
+
+        if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+            return Err((false, read_version));
+        }
+
+        match self.cell_version.elision_compare_exchange_acquire(
+            read_version,
+            read_version | PIN_FLAG_VERSION)
+        {
+            Ok(_) => Ok(read_version | PIN_FLAG_VERSION),
+            Err(_) => Err((true, read_version))
+        }
+    }
+
+    #[cfg(not(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64"))))]
     #[inline(always)]
     pub fn pin_lock(&self) -> Result<LatchVersion, (IsRead, LatchVersion)> {
         let read_version
@@ -161,6 +228,7 @@ impl<E: Default> OptCell<E> {
         pin_write
     }
 
+    #[cfg(not(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64"))))]
     #[inline(always)]
     pub fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
         match self.cell_version.compare_exchange_weak(
@@ -168,6 +236,18 @@ impl<E: Default> OptCell<E> {
             WRITE_FLAG_VERSION | read_version,
             AcqRel,
             Relaxed)
+        {
+            Ok(..) => Some(WRITE_FLAG_VERSION | read_version),
+            Err(..) => None
+        }
+    }
+
+    #[cfg(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[inline(always)]
+    pub fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
+        match self.cell_version.elision_compare_exchange_acquire(
+            read_version,
+            WRITE_FLAG_VERSION | read_version)
         {
             Ok(..) => Some(WRITE_FLAG_VERSION | read_version),
             Err(..) => None

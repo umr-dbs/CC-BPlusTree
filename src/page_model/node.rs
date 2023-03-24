@@ -91,21 +91,21 @@ impl<const FAN_OUT: usize,
     Payload: Default + Clone
 > Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub const fn is_overflow(&self, allocation: usize) -> bool {
+    pub fn is_overflow(&self, allocation: usize) -> bool {
         debug_assert!(allocation >= self.len());
 
         self.len() >= allocation
     }
 
     #[inline(always)]
-    pub const fn is_underflow(&self, allocation: usize) -> bool {
+    pub fn is_underflow(&self, allocation: usize) -> bool {
         debug_assert!(allocation > 0 && allocation >= self.len());
 
         self.len() < allocation / 2
     }
 
     #[inline(always)]
-    pub const fn unsafe_degree(&self, allocation: usize) -> NodeUnsafeDegree {
+    pub fn unsafe_degree(&self, allocation: usize) -> NodeUnsafeDegree {
         let len = self.len();
 
         if len >= allocation {
@@ -276,7 +276,7 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline(always)]
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             Node::Index(index_page) => index_page.keys_len(),
             Node::Leaf(records_page) => records_page.len(),

@@ -22,8 +22,8 @@ pub type Attempts = usize;
 pub type BlockRef<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
-    Payload: Default + Clone
+    Key,
+    Payload
 > = SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 impl<const FAN_OUT: usize,

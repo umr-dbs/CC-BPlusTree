@@ -1,7 +1,7 @@
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
-use crate::locking::locking_strategy::LockingStrategy;
+
 use crate::page_model::{BlockID, BlockRef};
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
@@ -118,8 +118,8 @@ pub type BlockGuard<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
-    Payload: Default + Clone
+    Key,
+    Payload
 > = SmartGuard<'a, Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 impl<'a,

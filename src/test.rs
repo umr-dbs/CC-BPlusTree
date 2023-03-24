@@ -2,7 +2,6 @@ use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
 use std::fmt::Display;
 use std::hash::Hash;
-use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::time::SystemTime;
 use itertools::Itertools;
@@ -64,7 +63,7 @@ pub fn simple_test() {
     const UPDATE: fn(u64) -> CRUDOperation<Key, Payload> = |k: Key|
         CRUDOperation::Update(k, k as _);
 
-    let keys_insert_org = vec![
+    let _keys_insert_org = vec![
         1, 5, 6, 7, 3, 4, 10, 30, 11, 12, 14, 17, 18, 13, 16, 15, 36, 20, 21, 22, 23, 37, 2, 0,
     ];
 

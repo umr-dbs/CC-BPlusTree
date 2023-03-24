@@ -1,6 +1,4 @@
 use std::cell::UnsafeCell;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::ops::{Deref, DerefMut};
 
 /**

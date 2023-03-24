@@ -1,6 +1,8 @@
 # Experimental Concurrency Control CRUD B+Tree Implementation
     Build:             - 24.03.2023
-    Version:           - 0.0.73 (Experimental)
+    Version:           - 0.0.74 (Experimental)
+    HLE:                cargo build --features hardware-lock-elision
+
 ### Platform
     - Architecture:  x86, ARM
     - OS:            Linux, Windows

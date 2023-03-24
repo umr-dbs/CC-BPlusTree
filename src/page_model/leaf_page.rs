@@ -4,6 +4,7 @@ use std::mem;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use crate::page_model::ObjectCount;
 use crate::record_model::record_point::RecordPoint;
+use crate::utils::safe_cell::SafeCell;
 use crate::utils::shadow_vec::ShadowVec;
 
 pub struct LeafPage<
@@ -11,7 +12,7 @@ pub struct LeafPage<
     Key: Hash + Ord + Copy + Default,
     Payload: Clone + Default,
 > {
-    pub(crate) records_len: ObjectCount,
+    pub(crate) records_len: SafeCell<ObjectCount>,
     pub(crate) record_data: [MaybeUninit<RecordPoint<Key, Payload>>; NUM_RECORDS],
     _marker: PhantomData<(Key, Payload)>,
 }
@@ -42,32 +43,32 @@ impl<const NUM_RECORDS: usize,
     #[inline(always)]
     pub fn new() -> Self {
         Self {
-            records_len: 0,
+            records_len: SafeCell::new(0),
             record_data: unsafe { mem::MaybeUninit::uninit().assume_init() }, // <[MaybeUninit<Entry>; NUM_RECORDS]>::
             _marker: PhantomData,
         }
     }
 
     #[inline(always)]
-    pub const fn as_records(&self) -> &[RecordPoint<Key, Payload>] {
+    pub fn as_records(&self) -> &[RecordPoint<Key, Payload>] {
         unsafe {
             std::slice::from_raw_parts(self.record_data.as_ptr() as *const RecordPoint<Key, Payload>,
-                                       self.records_len as _)
+                                       *self.records_len.get_mut() as _)
         }
     }
 
     #[inline(always)]
-    pub const fn len(&self) -> usize {
-        self.records_len as _
+    pub fn len(&self) -> usize {
+        *self.records_len.get_mut() as _
     }
 
     #[inline(always)]
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     #[inline(always)]
-    pub const fn is_full(&self) -> bool {
+    pub fn is_full(&self) -> bool {
         self.len() == NUM_RECORDS
     }
 
@@ -77,9 +78,9 @@ impl<const NUM_RECORDS: usize,
             ShadowVec {
                 unreal_vec: ManuallyDrop::new(Vec::from_raw_parts(
                     self.record_data.as_ptr() as *mut RecordPoint<Key, Payload>,
-                    self.records_len as _,
+                    *self.records_len.get_mut() as _,
                     NUM_RECORDS)),
-                obj_cnt: (&self.records_len) as *const _ as *mut _,
+                obj_cnt: self.records_len.get_mut(),
                 update_len: true,
             }
         }

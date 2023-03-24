@@ -5,9 +5,8 @@ use crate::block::block_manager::bsz_alignment;
 use crate::tree::bplus_tree;
 use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
 use block::block::Block;
-use crate::page_model::LevelVariant;
-use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, simple_test};
-use crate::utils::smart_cell::{CPU_THREADS, SmartFlavor};
+use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload};
+use crate::utils::smart_cell::{CPU_THREADS};
 
 mod block;
 mod crud_model;
@@ -44,6 +43,20 @@ fn show_alignment_bsz() {
     );
 }
 
+fn hle() -> &'static str {
+    if cfg!(feature = "hardware-lock-elision") {
+        if cfg!(not(any(arch_type = "x86", arch_type = "x86_64"))) {
+            "ON    "
+        }
+        else {
+            "NO HTL"
+        }
+    }
+    else {
+        "OFF   "
+    }
+}
+
 /// Essential function.
 fn make_splash() {
     let datetime: DateTime<Local> = fs::metadata(std::env::current_exe().unwrap())
@@ -57,6 +70,7 @@ fn make_splash() {
     println!(" |               ----------------------------------                      |");
     println!(" |               # Build:   {}                          |", datetime.format("%d-%m-%Y %T"));
     println!(" |               # Current version: {}                               |", env!("CARGO_PKG_VERSION"));
+    println!(" |               # HLE: {}                                           |", hle());
     println!(" |               ----------------------------------                      |");
     println!(" |                                                                       |");
     println!(" |               Written by: Amir El-Shaikh                              |");
@@ -109,29 +123,29 @@ fn experiment() {
         // 2_000_000,
         // 5_000_000,
         // 10_000_000,
-        // 20_000_000,
+        20_000_000,
         // 50_000_000,
-        100_000_000,
+        // 100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    strategies.push(LockingStrategy::MonoWriter);
-    strategies.push(LockingStrategy::LockCoupling);
-    strategies.push(LockingStrategy::ORWC(
-        LevelVariant::new_height_lock(0.8 as _),
-        4));
-    strategies.push(LockingStrategy::ORWC(
-        LevelVariant::new_height_lock(1 as _),
-        4));
-
-    // strategies.push(LockingStrategy::OLC(OLCVariant::Free));
-    strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
-    strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
-        attempts: 0,
-        level: LevelVariant::default()
-    }));
+    // strategies.push(LockingStrategy::MonoWriter);
+    // strategies.push(LockingStrategy::LockCoupling);
+    // strategies.push(LockingStrategy::ORWC(
+    //     LevelVariant::new_height_lock(0.8 as _),
+    //     4));
+    // strategies.push(LockingStrategy::ORWC(
+    //     LevelVariant::new_height_lock(1 as _),
+    //     4));
+    //
+    strategies.push(LockingStrategy::OLC(OLCVariant::Free));
+    // strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
+    // strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
+    //     attempts: 0,
+    //     level: LevelVariant::default()
+    // }));
 
     insertions.iter().enumerate().for_each(|(i, insertion)| {
         log_debug_ln(format!("# {}\n\t\

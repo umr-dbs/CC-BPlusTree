@@ -5,8 +5,9 @@ use crate::block::block_manager::bsz_alignment;
 use crate::tree::bplus_tree;
 use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
 use block::block::Block;
+use crate::page_model::LevelVariant;
 use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertsions, gen_rand_data, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload};
-use crate::utils::smart_cell::{CPU_THREADS};
+use crate::utils::smart_cell::{CPU_THREADS, ENABLE_YIELD};
 
 mod block;
 mod crud_model;
@@ -67,15 +68,21 @@ fn make_splash() {
     println!("                /                                         \\");
     println!(" +-------------+                                           +-------------+");
     println!(" |                                                                       |");
-    println!(" |               ----------------------------------                      |");
+    println!(" |               ------------------------------                          |");
     println!(" |               # Build:   {}                          |", datetime.format("%d-%m-%Y %T"));
     println!(" |               # Current version: {}                               |", env!("CARGO_PKG_VERSION"));
-    println!(" |               # HLE: {}                                           |", hle());
-    println!(" |               ----------------------------------                      |");
+    println!(" |               -------------------------                               |");
+    println!(" |               # OLC-HLE:   {}                                     |", hle());
+    println!(" |               # RW-HLE:    AUTO                                       |");
+    println!(" |               # SYS-YIELD: {}                                       |",
+             if ENABLE_YIELD { "ON  " } else { "OFF " });
+    println!(" |               -----------------                                       |");
     println!(" |                                                                       |");
-    println!(" |               Written by: Amir El-Shaikh                              |");
-    println!(" |               E-Mail: elshaikh@mathematik.uni-marburg.de              |");
-    println!(" |               First released: 03-08-2022                              |");
+    println!(" |               --------------------------------------------            |");
+    println!(" |               # E-Mail: elshaikh@mathematik.uni-marburg.de            |");
+    println!(" |               # Written by: Amir El-Shaikh                            |");
+    println!(" |               # First released: 03-08-2022                            |");
+    println!(" |               ----------------------------                            |");
     println!(" |                                                                       |");
     println!(" |               ...CC-B+Tree Application Launching...                   |");
     println!(" +-------------+                                           +-------------+");
@@ -88,11 +95,11 @@ fn make_splash() {
 
 fn experiment() {
     let mut threads_cpu = vec![
-        // 1,
-        // 2,
-        // 3,
-        // 4,
-        // 8,
+        1,
+        2,
+        3,
+        4,
+        8,
         10,
         12,
         16,
@@ -123,25 +130,27 @@ fn experiment() {
         // 2_000_000,
         // 5_000_000,
         // 10_000_000,
-        20_000_000,
+        // 20_000_000,
         // 50_000_000,
-        // 100_000_000,
+        100_000_000,
     ];
 
     log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
 
     let mut strategies = vec![];
-    // strategies.push(LockingStrategy::MonoWriter);
-    // strategies.push(LockingStrategy::LockCoupling);
+    strategies.push(LockingStrategy::MonoWriter);
+    strategies.push(LockingStrategy::LockCoupling);
+
     // strategies.push(LockingStrategy::ORWC(
     //     LevelVariant::new_height_lock(0.8 as _),
     //     4));
-    // strategies.push(LockingStrategy::ORWC(
-    //     LevelVariant::new_height_lock(1 as _),
-    //     4));
-    //
+
+    strategies.push(LockingStrategy::ORWC(
+        LevelVariant::new_height_lock(1 as _),
+        4));
+
+    strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
     strategies.push(LockingStrategy::OLC(OLCVariant::Free));
-    // strategies.push(LockingStrategy::HybridLocking(LevelVariant::default(), 1));
     // strategies.push(LockingStrategy::OLC(OLCVariant::Pinned {
     //     attempts: 0,
     //     level: LevelVariant::default()

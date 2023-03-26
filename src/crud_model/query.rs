@@ -334,8 +334,8 @@ impl<const FAN_OUT: usize,
                     let (child_pos, next_node)
                         = match index_page.keys().binary_search(&key)
                     {
-                        Ok(pos) => (pos, index_page.get_child_unsafe(pos)),
-                        Err(pos) => (pos, index_page.get_child_unsafe(pos))
+                        Ok(pos) => (pos, index_page.get_child_unsafe_cloned(pos)),
+                        Err(pos) => (pos, index_page.get_child_unsafe_cloned(pos))
                     };
 
                     curr_level += 1;
@@ -345,7 +345,7 @@ impl<const FAN_OUT: usize,
                         lock_level,
                         attempt,
                         height,
-                        next_node);
+                        &next_node);
 
                     let next_guard_result
                         = next_guard.deref();

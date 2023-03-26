@@ -18,6 +18,7 @@ pub const ENABLE_YIELD: bool = !CPU_THREADS;
 pub(crate) const OBSOLETE_FLAG_VERSION: LatchVersion = 0x8_000000000000000;
 const WRITE_FLAG_VERSION: LatchVersion = 0x4_000000000000000;
 const PIN_FLAG_VERSION: LatchVersion = 0x2_000000000000000;
+const ZEROED_FLAG_VERSION: LatchVersion = 0x0;
 
 const WRITE_OBSOLETE_FLAG_VERSION: LatchVersion = 0xC_000000000000000;
 const WRITE_PIN_FLAG_VERSION: LatchVersion = 0x6_000000000000000;
@@ -207,7 +208,7 @@ impl<E: Default> OptCell<E> {
         debug_assert!(pin_lock & PIN_FLAG_VERSION == PIN_FLAG_VERSION &&
             pin_lock & WRITE_OBSOLETE_FLAG_VERSION == 0);
 
-        self.cell_version.store(pin_lock ^ PIN_FLAG_VERSION, Release)
+        self.cell_version.store(pin_lock ^ PIN_FLAG_VERSION, Relaxed)
     }
 
     #[inline(always)]
@@ -271,25 +272,19 @@ impl<E: Default> OptCell<E> {
     pub fn write_unlock(&self, write_version: LatchVersion) {
         debug_assert!(write_version & WRITE_PIN_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release)
+        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Relaxed)
     }
 
     #[inline(always)]
-    pub fn write_obsolete(&self, write_version: LatchVersion) {
+    pub fn write_obsolete(&self) {
         // debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store(OBSOLETE_FLAG_VERSION | write_version, Release)
+        self.cell_version.store(OBSOLETE_FLAG_VERSION, Relaxed)
     }
 
     #[inline(always)]
     pub fn is_obsolete(&self) -> bool {
-        self.load_version() & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
-    }
-
-    #[inline(always)]
-    pub fn is_read_obsolete(&self) -> bool {
-        let load = self.load_version();
-        load & WRITE_FLAG_VERSION == 0 && load & OBSOLETE_FLAG_VERSION == OBSOLETE_FLAG_VERSION
+        self.load_version() == OBSOLETE_FLAG_VERSION
     }
 
     #[inline(always)]
@@ -353,15 +348,6 @@ impl<E: Default> SmartFlavor<E> {
     }
 
     #[inline(always)]
-    fn is_obsolete(&self) -> bool {
-        match self {
-            OLCCell(opt) => opt.is_obsolete(),
-            HybridCell(opt, ..) => opt.is_obsolete(),
-            _ => false
-        }
-    }
-
-    #[inline(always)]
     fn is_read_not_obsolete(&self) -> bool {
         match self {
             OLCCell(opt) => opt.is_read_not_obsolete(),
@@ -378,17 +364,6 @@ impl<E: Default> SmartFlavor<E> {
             HybridCell(opt, rw) =>
                 (rw.try_read().is_some(), opt.load_version()),
             _ => (true, LatchVersion::MIN)
-        }
-    }
-
-    #[inline(always)]
-    pub fn as_mut(&self) -> &mut E {
-        match self {
-            ExclusiveCell(.., ptr) => ptr.get_mut(),
-            OLCCell(opt) => opt.cell.get_mut(),
-            HybridCell(opt, ..) => opt.cell.get_mut(),
-            FreeCell(ptr) => ptr.get_mut(),
-            ReadersWriterCell(.., ptr) => ptr.get_mut()
         }
     }
 }
@@ -449,10 +424,13 @@ impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
 
 impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
-    pub fn mark_obsolete(&self) {
+    pub(crate) fn mark_obsolete(&mut self) {
         match self {
             OLCWriter(cell, latch) => match cell.0.as_ref() {
-                OLCCell(opt) | HybridCell(opt, ..) => opt.write_obsolete(*latch),
+                OLCCell(opt) | HybridCell(opt, ..) => {
+                    opt.write_obsolete();
+                    *latch = ZEROED_FLAG_VERSION
+                },
                 _ => {}
             }
             _ => {}
@@ -519,15 +497,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     }
 
     #[inline(always)]
-    pub fn is_obsolete(&self) -> bool {
-        match self {
-            OLCReader(Some((cell, ..))) => cell.0.is_obsolete(),
-            OLCReader(None) => true,
-            _ => false
-        }
-    }
-
-    #[inline(always)]
     pub fn is_read_not_obsolete(&self) -> bool {
         match self {
             OLCReader(Some((cell, ..))) => cell.0.is_read_not_obsolete(),
@@ -590,7 +559,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             LockFree(ptr) => unsafe { ptr.as_mut() },
             RwWriter(.., ptr) => unsafe { ptr.as_mut() },
             MutExclusive(.., ptr) => unsafe { ptr.as_mut() },
-            OLCWriter(cell, ..) => Some(cell.0.as_mut()),
+            OLCWriter(cell, ..) => Some(cell.unsafe_borrow_mut()),
             _ => None
         }
     }
@@ -650,7 +619,7 @@ impl<E: Default> SmartCell<E> {
     #[inline(always)]
     pub fn borrow_read(&self) -> SmartGuard<'static, E> {
         match self.0.deref() {
-            OLCCell(opt)  => {
+            OLCCell(opt) => {
                 let (success, read)
                     = opt.read_lock();
 
@@ -738,7 +707,7 @@ impl<E: Default> SmartCell<E> {
 impl<'a, E: Default> Drop for SmartGuard<'a, E> {
     fn drop(&mut self) {
         match self {
-            OLCWriter(cell, write_version) =>
+            OLCWriter(cell, write_version) if *write_version != ZEROED_FLAG_VERSION =>
                 if let OLCCell(opt) = cell.0.as_ref() {
                     opt.write_unlock(*write_version)
                 } else if let HybridCell(opt, ..) = cell.0.as_ref() {

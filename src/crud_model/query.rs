@@ -112,8 +112,6 @@ impl<const FAN_OUT: usize,
         let root_ref
             = root_guard.deref_mut().unwrap();
 
-        root_guard.mark_obsolete();
-
         let latch_type
             = self.locking_strategy.latch_type();
 
@@ -214,7 +212,7 @@ impl<const FAN_OUT: usize,
         &self,
         parent_guard: &mut BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         child_pos: usize,
-        from_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
+        mut from_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
     {
         from_guard.mark_obsolete();
 

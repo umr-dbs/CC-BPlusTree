@@ -5,6 +5,25 @@ use crate::page_model::{Attempts, Level, LevelVariant};
 use crate::tree::root::LEVEL_ROOT;
 use crate::utils::smart_cell::LatchType;
 
+pub const fn olc() -> LockingStrategy {
+    LockingStrategy::OLC(OLCVariant::Free)
+}
+
+pub const fn hybrid_lock() -> LockingStrategy {
+    LockingStrategy::HybridLocking(LevelVariant::Height(1f32), 4)
+}
+
+pub const fn lightweight_hybrid_lock() -> LockingStrategy {
+    LockingStrategy::OLC(OLCVariant::Pinned {
+        attempts: 0,
+        level: LevelVariant::Height(1f32)
+    })
+}
+
+pub const fn orwc() -> LockingStrategy {
+    LockingStrategy::ORWC(LevelVariant::Height(1f32), 4)
+}
+
 #[repr(u8)]
 #[derive(Serialize, Deserialize, Clone)]
 pub enum OLCVariant {
@@ -59,6 +78,8 @@ pub enum LockingStrategy {
     OLC(OLCVariant),
     HybridLocking(LevelVariant, Attempts)
 }
+
+pub type CRUDProtocol = LockingStrategy;
 
 impl Display for LockingStrategy {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

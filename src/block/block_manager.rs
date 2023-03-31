@@ -50,7 +50,6 @@ pub struct BlockManager<
     Payload: Default + Clone,
 > {
     block_id_counter: AtomicBlockID,
-    pub(crate) is_multi_version: bool,
     _marker: PhantomData<(Key, Payload)>
 }
 
@@ -62,7 +61,6 @@ impl<const FAN_OUT: usize,
     fn clone(&self) -> Self {
         Self {
             block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            is_multi_version: self.is_multi_version,
             _marker: PhantomData,
         }
     }
@@ -75,7 +73,7 @@ impl<const FAN_OUT: usize,
     Payload: Default + Clone,
 > Default for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
-        BlockManager::new(false)
+        BlockManager::new()
     }
 }
 
@@ -104,10 +102,9 @@ impl<const FAN_OUT: usize,
 
     /// Main Constructor requiring supplied BlockSettings.
     #[inline(always)]
-    pub(crate) fn new(is_multi_version: bool) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            is_multi_version,
             _marker: PhantomData,
         }
     }

@@ -99,13 +99,9 @@ impl<const FAN_OUT: usize,
                     min_key: Key,
                     max_key: Key,
                     inc_key: fn(Key) -> Key,
-                    dec_key: fn(Key) -> Key) -> Self {
-        let mut block_manager
-            = BlockManager::default();
-
-        block_manager.is_multi_version = false;
-
-        Self::make(block_manager, locking_strategy, min_key, max_key, inc_key, dec_key)
+                    dec_key: fn(Key) -> Key) -> Self
+    {
+        Self::make(BlockManager::default(), locking_strategy, min_key, max_key, inc_key, dec_key)
     }
 
     #[inline(always)]

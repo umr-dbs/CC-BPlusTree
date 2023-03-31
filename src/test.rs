@@ -2,20 +2,23 @@ use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
 use std::fmt::Display;
 use std::hash::Hash;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::SystemTime;
 use itertools::Itertools;
 use parking_lot::Mutex;
 use rand::RngCore;
+use sysinfo::{DiskExt, System, UserExt};
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::crud_model::crud_api::CRUDDispatcher;
-use crate::locking::locking_strategy::LockingStrategy;
+use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, LockingStrategy, olc, orwc};
 use crate::page_model::BlockRef;
 use crate::page_model::node::Node;
 use crate::show_alignment_bsz;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
+use crate::locking::locking_strategy::LockingStrategy::{LockCoupling, MonoWriter};
 use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 
@@ -27,10 +30,6 @@ pub const BSZ: usize = BSZ_BASE - bsz_alignment::<Key, Payload>();
 pub const FAN_OUT: usize = BSZ / 8 / 2;
 pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
 
-// const FAN_OUT: usize        = BSZ / (8 + 8) - 8;
-// const NUM_RECORDS: usize    = BSZ / 16;
-// const FAN_OUT: usize        = 3*256;
-// const NUM_RECORDS: usize    = 256;
 
 pub type Key = u64;
 pub type Payload = f64;
@@ -90,12 +89,6 @@ pub fn simple_test() {
             INSERT(*key)
         }).collect::<Vec<_>>();
 
-    // let keys_insert = vec![ // k = 1
-    //     8, 11, 19, 33, 24, 36, 34, 25, 12, 37, 14, 10, 45, 31, 18,
-    //     3, 9, 5, 2, 13, 40, 38, 41, 27
-    // ];
-
-    // let mut keys_insert = gen_rand_data(10_000_000);
 
     let tree = MAKE_INDEX(
         LockingStrategy::MonoWriter);
@@ -121,7 +114,6 @@ pub fn simple_test() {
         let search = vec![
             CRUDOperation::Point(key),
             CRUDOperation::Point(key),
-            // Transaction::RangeSearch((key..=key).into(), version),
         ];
 
         search_queries.push(search.clone());
@@ -217,7 +209,7 @@ pub fn gen_rand_data(n: usize) -> Vec<Key> {
     nums.into_iter().collect::<Vec<_>>()
 }
 
-struct SyncIndex(Mutex<INDEX>);
+pub struct SyncIndex(pub Mutex<Arc<INDEX>>);
 
 impl CRUDDispatcher<Key, Payload> for SyncIndex {
     fn dispatch(&self, next_query: CRUDOperation<Key, Payload>) -> CRUDOperationResult<Key, Payload> {
@@ -271,7 +263,7 @@ fn beast_dispatch(index: &impl CRUDDispatcher<u64, f64>, next_query: CRUDOperati
     };
 }
 
-pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
+pub fn beast_test(num_thread: usize, index: Arc<INDEX>, t1s: &[u64]) -> u128 {
     let query_buff = t1s
         .iter()
         .map(|key| CRUDOperation::Insert(*key, Payload::default()))
@@ -307,7 +299,7 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64]) -> u128 {
         }
     } else {
         let index: &'static INDEX
-            = unsafe { mem::transmute(&index) };
+            = unsafe { mem::transmute(index.deref()) };
 
         start = SystemTime::now();
 
@@ -368,86 +360,6 @@ pub fn level_order<
     }
 }
 
-// pub fn beast_test2<
-//     const FAN_OUT: usize,
-//     const NUM_RECORDS: usize,
-//     Key: Display + Default + Ord + Copy + Hash + Sync,
-//     Payload: Display + Default + Clone + Sync + Default
-// >(num_thread: usize, tree: BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, t1s: &[Key])
-//     -> (u128, CCCell<BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>>)
-// {
-//     let index_o
-//         = CCCell::new(tree);
-//
-//     let mut handles = vec![];
-//
-//     let query_buff = Mutex::new(VecDeque::from_iter(
-//         t1s.iter().map(|key| Transaction::Insert(*key, Payload::default())))
-//     );
-//
-//     let query_buff_t: &'static Mutex<VecDeque<Transaction<Key, Payload>>>
-//         = unsafe { mem::transmute(query_buff.borrow()) };
-//
-//     let tree = index_o.unsafe_borrow_mut_static();
-//     let start = SystemTime::now();
-//
-//     for _ in 1..=num_thread {
-//         handles.push(thread::spawn(|| loop {
-//             let mut buff = query_buff_t.lock();
-//             let next_query = buff.pop_front();
-//             mem::drop(buff);
-//
-//             match next_query {
-//                 Some(query) => match tree.execute(query) { // tree.execute(operation),
-//                     TransactionResult::Inserted(key) |
-//                     TransactionResult::Updated(key, ..) => if EXE_LOOK_UPS
-//                     {
-//                         match tree.execute(Transaction::Point(key)) {
-//                             TransactionResult::MatchedRecord(Some(record))
-//                             if record.key == key =>
-//                                 {}
-//                             joe => {
-//                                 log_debug_ln(format!("\nERROR Search -> Transaction::{}",
-//                                                      Transaction::<Key, Payload>::Point(key)));
-//                                 log_debug_ln(format!("\n****ERROR: {}, {}", tree.locking_strategy, joe));
-//                                 panic!()
-//                             }
-//                         };
-//
-//                         // match tree.execute(RangeSearch((key..=key).into(), version)) {
-//                         //     TransactionResult::MatchedRecords(records)
-//                         //     if records.len() != 1 =>
-//                         //         panic!("Sleepy Joe => len = {} - {}",
-//                         //                records.len(),
-//                         //                records.iter().join("\n")),
-//                         //     TransactionResult::MatchedRecords(ref records)
-//                         //     if records[0].key() != key || !records[0].insertion_version() == version =>
-//                         //         panic!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
-//                         //     _ => {}
-//                         // };
-//                     },
-//                     joey => {
-//                         log_debug_ln(format!("\n####ERROR: {}, {}", tree.locking_strategy, joey));
-//                         panic!()
-//                     }
-//                 }
-//                 None => break
-//             };
-//         }));
-//     }
-//
-//     handles
-//         .into_iter()
-//         .for_each(|handle| handle
-//             .join()
-//             .unwrap());
-//
-//     let time = SystemTime::now().duration_since(start).unwrap().as_millis();
-//     print!(",{},{}", index_o.locking_strategy(), index_o.height());
-//
-//     (time, index_o)
-// }
-
 pub fn simple_test2() {
     let singled_versioned_index = MAKE_INDEX(LockingStrategy::MonoWriter);
 
@@ -460,37 +372,49 @@ pub fn simple_test2() {
     log_debug_ln(format!(""));
 }
 
-// fn experiment2() {
-//     println!("> Preparing data, hold on..");
-//
-//     let threads_cpu = 24;
-//     let insertions: Key = 1_000_000;
-//     let data = gen_rand_data(insertions as usize);
-//
-//     println!("Number Insertions,Number Threads,Locking Strategy,Height,Time");
-//     print!("{}", insertions);
-//     print!(",{}", threads_cpu);
-//
-//     let tree
-//         = MAKE_INDEX(LockingStrategy::LockCoupling);
-//
-//     let (time, index_o) = beast_test2(
-//         threads_cpu,
-//         tree,
-//         data.as_slice());
-//
-//     println!(",{}", time);
-//
-//     let tree = index_o.unsafe_borrow();
-//     for key in data {
-//         match tree.execute(Transaction::Point(key)) {
-//             TransactionResult::MatchedRecord(Some(..)) => {}
-//             joe => println!("ERROR: {}", joe)
-//         }
-//     }
-// }
+pub(crate) static S_THREADS_CPU: [usize; 15] = [
+    1,
+    2,
+    3,
+    4,
+    8,
+    10,
+    12,
+    16,
+    24,
+    32,
+    64,
+    128,
+    256,
+    512,
+    1024,
+];
 
-pub fn format_insertsions(i: Key) -> String {
+pub(crate) static S_INSERTIONS: [Key; 1] = [
+    // 10,
+    // 100,
+    // 1_000,
+    // 10_000,
+    // 100_000,
+    // 1_000_000,
+    // 2_000_000,
+    // 5_000_000,
+    // 10_000_000,
+    // 20_000_000,
+    // 50_000_000,
+    100_000_000,
+];
+
+pub(crate) static S_STRATEGIES: [CRUDProtocol; 6] = [
+    MonoWriter,
+    LockCoupling,
+    orwc(),
+    olc(),
+    hybrid_lock(),
+    lightweight_hybrid_lock()
+];
+
+pub fn format_insertions(i: Key) -> String {
     if i == 100_000_000 {
         "100 Mio".to_string()
     } else if i == 10_000_000 {
@@ -506,4 +430,452 @@ pub fn format_insertsions(i: Key) -> String {
     } else {
         i.to_string()
     }
+}
+
+pub trait ToGigs {
+    fn gigs(self) -> u64;
+}
+
+/// Implements the converter method.
+impl ToGigs for u64 {
+    fn gigs(self) -> u64 {
+        self / 1024 / 1024 / 1024
+    }
+}
+
+pub fn get_system_info() -> String {
+    use sysinfo::{NetworkExt, NetworksExt, ProcessExt, SystemExt};
+
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let mut system_info = String::new();
+    system_info.push_str("# Components temperature:\n");
+    let components = sys.components();
+    if components.is_empty() {
+        system_info.push_str("\t- Error: Couldn't retrieve components information!\n");
+    }
+
+    for component in components {
+        system_info.push_str(format!("\t- {:?}\n", component).as_str());
+    }
+
+    system_info.push_str("\n# System information\n");
+    let boot_time = sys.boot_time();
+    system_info.push_str(format!("\t- System booted at {} seconds\n", boot_time).as_str());
+    let up_time = sys.uptime();
+    system_info.push_str(format!("\t- System running since {} seconds\n", up_time).as_str());
+
+    let load_avg = sys.load_average();
+    system_info.push_str(format!("\t- System load_avg one minute = {}\n", load_avg.one).as_str());
+    system_info.push_str(format!("\t- System load_avg five minutes = {}\n", load_avg.five).as_str());
+    system_info.push_str(format!("\t- System load_avg fifteen minutes = {}\n", load_avg.fifteen).as_str());
+
+    system_info.push_str(format!("\t- System name = {:?}\n", sys.name().unwrap_or_default()).as_str());
+    system_info.push_str(format!("\t- System kernel version = {:?}\n", sys.kernel_version().unwrap_or_default()).as_str());
+    system_info.push_str(format!("\t- System OS version = {:?}\n", sys.os_version().unwrap_or_default()).as_str());
+    system_info.push_str(format!("\t- System host name = {:?}\n", sys.host_name().unwrap_or_default()).as_str());
+
+    for user in sys.users() {
+        system_info.push_str(format!("\t- User name = {}, groups = {:?}\n", user.name(), user.groups()).as_str());
+    }
+
+    let cpuid = raw_cpuid::CpuId::new();
+    system_info.push_str("\n# CPU information:\n");
+    system_info.push_str(
+        format!("\t- Vendor: {}\n",
+                cpuid.get_vendor_info()
+                    .as_ref()
+                    .map_or_else(|| "\t- unknown", |vf| vf.as_str())
+        ).as_str());
+
+    system_info.push_str(
+        format!("\t- Cores/threads: {}/{}\n", num_cpus::get_physical(), num_cpus::get()).as_str());
+    system_info.push_str(
+        format!("\t- APIC ID: {}\n",
+                cpuid.get_feature_info()
+                    .as_ref()
+                    .map_or_else(|| String::from("\t- n/a"), |finfo|
+                        format!("{}", finfo.initial_local_apic_id()))
+        ).as_str());
+
+    // 10.12.8.1 Consistency of APIC IDs and CPUID:
+    // "Initial APIC ID (CPUID.01H:EBX[31:24]) is always equal to CPUID.0BH:EDX[7:0]."
+    system_info.push_str(
+        format!("\t- x2APIC ID: {}\n",
+                cpuid.get_extended_topology_info()
+                    .map_or_else(|| String::from("n/a"), |mut topiter|
+                        format!("{}", match topiter.next() {
+                            None => "n/a".to_string(),
+                            Some(ref etl) => etl.x2apic_id().to_string()
+                        }),
+                    )
+        ).as_str());
+
+    system_info.push_str(cpuid.get_feature_info().as_ref().map_or_else(
+        || format!("\t- Family: {}\n\t- Extended Family: {}\n\t- Model: {}\n\t- Extended Model: {}\n\t- Stepping: {}\n\t- Brand Index: {}\n", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a"),
+        |finfo|
+            format!("\t- Family: {}\n\t- Extended Family: {}\n\t- Model: {}\n\t- Extended Model: {}\n\t- Stepping: {}\n\t- Brand Index: {}\n",
+                    finfo.family_id(),
+                    finfo.extended_family_id(),
+                    finfo.model_id(),
+                    finfo.extended_model_id(),
+                    finfo.stepping_id(),
+                    finfo.brand_index()),
+    ).as_str());
+
+    system_info.push_str(format!(
+        "\t- Serial#: {}\n",
+        cpuid.get_processor_serial().as_ref().map_or_else(
+            || String::from("n/a"),
+            |serial_info| format!("{}", serial_info.serial()),
+        )
+    ).as_str());
+
+    let mut features = Vec::with_capacity(80);
+    cpuid.get_feature_info().map(|finfo| {
+        if finfo.has_sse3() {
+            features.push("sse3")
+        }
+        if finfo.has_pclmulqdq() {
+            features.push("pclmulqdq")
+        }
+        if finfo.has_ds_area() {
+            features.push("ds_area")
+        }
+        if finfo.has_monitor_mwait() {
+            features.push("monitor_mwait")
+        }
+        if finfo.has_cpl() {
+            features.push("cpl")
+        }
+        if finfo.has_vmx() {
+            features.push("vmx")
+        }
+        if finfo.has_smx() {
+            features.push("smx")
+        }
+        if finfo.has_eist() {
+            features.push("eist")
+        }
+        if finfo.has_tm2() {
+            features.push("tm2")
+        }
+        if finfo.has_ssse3() {
+            features.push("ssse3")
+        }
+        if finfo.has_cnxtid() {
+            features.push("cnxtid")
+        }
+        if finfo.has_fma() {
+            features.push("fma")
+        }
+        if finfo.has_cmpxchg16b() {
+            features.push("cmpxchg16b")
+        }
+        if finfo.has_pdcm() {
+            features.push("pdcm")
+        }
+        if finfo.has_pcid() {
+            features.push("pcid")
+        }
+        if finfo.has_dca() {
+            features.push("dca")
+        }
+        if finfo.has_sse41() {
+            features.push("sse41")
+        }
+        if finfo.has_sse42() {
+            features.push("sse42")
+        }
+        if finfo.has_x2apic() {
+            features.push("x2apic")
+        }
+        if finfo.has_movbe() {
+            features.push("movbe")
+        }
+        if finfo.has_popcnt() {
+            features.push("popcnt")
+        }
+        if finfo.has_tsc_deadline() {
+            features.push("tsc_deadline")
+        }
+        if finfo.has_aesni() {
+            features.push("aesni")
+        }
+        if finfo.has_xsave() {
+            features.push("xsave")
+        }
+        if finfo.has_oxsave() {
+            features.push("oxsave")
+        }
+        if finfo.has_avx() {
+            features.push("avx")
+        }
+        if finfo.has_f16c() {
+            features.push("f16c")
+        }
+        if finfo.has_rdrand() {
+            features.push("rdrand")
+        }
+        if finfo.has_fpu() {
+            features.push("fpu")
+        }
+        if finfo.has_vme() {
+            features.push("vme")
+        }
+        if finfo.has_de() {
+            features.push("de")
+        }
+        if finfo.has_pse() {
+            features.push("pse")
+        }
+        if finfo.has_tsc() {
+            features.push("tsc")
+        }
+        if finfo.has_msr() {
+            features.push("msr")
+        }
+        if finfo.has_pae() {
+            features.push("pae")
+        }
+        if finfo.has_mce() {
+            features.push("mce")
+        }
+        if finfo.has_cmpxchg8b() {
+            features.push("cmpxchg8b")
+        }
+        if finfo.has_apic() {
+            features.push("apic")
+        }
+        if finfo.has_sysenter_sysexit() {
+            features.push("sysenter_sysexit")
+        }
+        if finfo.has_mtrr() {
+            features.push("mtrr")
+        }
+        if finfo.has_pge() {
+            features.push("pge")
+        }
+        if finfo.has_mca() {
+            features.push("mca")
+        }
+        if finfo.has_cmov() {
+            features.push("cmov")
+        }
+        if finfo.has_pat() {
+            features.push("pat")
+        }
+        if finfo.has_pse36() {
+            features.push("pse36")
+        }
+        if finfo.has_psn() {
+            features.push("psn")
+        }
+        if finfo.has_clflush() {
+            features.push("clflush")
+        }
+        if finfo.has_ds() {
+            features.push("ds")
+        }
+        if finfo.has_acpi() {
+            features.push("acpi")
+        }
+        if finfo.has_mmx() {
+            features.push("mmx")
+        }
+        if finfo.has_fxsave_fxstor() {
+            features.push("fxsave_fxstor")
+        }
+        if finfo.has_sse() {
+            features.push("sse")
+        }
+        if finfo.has_sse2() {
+            features.push("sse2")
+        }
+        if finfo.has_ss() {
+            features.push("ss")
+        }
+        if finfo.has_htt() {
+            features.push("htt")
+        }
+        if finfo.has_tm() {
+            features.push("tm")
+        }
+        if finfo.has_pbe() {
+            features.push("pbe")
+        }
+    });
+    cpuid.get_extended_feature_info().map(|finfo| {
+        if finfo.has_bmi1() {
+            features.push("bmi1")
+        }
+        if finfo.has_hle() {
+            features.push("hle")
+        }
+        if finfo.has_avx2() {
+            features.push("avx2")
+        }
+        if finfo.has_fdp() {
+            features.push("fdp")
+        }
+        if finfo.has_smep() {
+            features.push("smep")
+        }
+        if finfo.has_bmi2() {
+            features.push("bmi2")
+        }
+        if finfo.has_rep_movsb_stosb() {
+            features.push("rep_movsb_stosb")
+        }
+        if finfo.has_invpcid() {
+            features.push("invpcid")
+        }
+        if finfo.has_rtm() {
+            features.push("rtm")
+        }
+        if finfo.has_rdtm() {
+            features.push("rdtm")
+        }
+        if finfo.has_fpu_cs_ds_deprecated() {
+            features.push("fpu_cs_ds_deprecated")
+        }
+        if finfo.has_mpx() {
+            features.push("mpx")
+        }
+        if finfo.has_rdta() {
+            features.push("rdta")
+        }
+        if finfo.has_rdseed() {
+            features.push("rdseed")
+        }
+        if finfo.has_adx() {
+            features.push("adx")
+        }
+        if finfo.has_smap() {
+            features.push("smap")
+        }
+        if finfo.has_clflushopt() {
+            features.push("clflushopt")
+        }
+        if finfo.has_processor_trace() {
+            features.push("processor_trace")
+        }
+        if finfo.has_sha() {
+            features.push("sha")
+        }
+        if finfo.has_sgx() {
+            features.push("sgx")
+        }
+        if finfo.has_avx512f() {
+            features.push("avx512f")
+        }
+        if finfo.has_avx512dq() {
+            features.push("avx512dq")
+        }
+        if finfo.has_avx512_ifma() {
+            features.push("avx512_ifma")
+        }
+        if finfo.has_avx512pf() {
+            features.push("avx512pf")
+        }
+        if finfo.has_avx512er() {
+            features.push("avx512er")
+        }
+        if finfo.has_avx512cd() {
+            features.push("avx512cd")
+        }
+        if finfo.has_avx512bw() {
+            features.push("avx512bw")
+        }
+        if finfo.has_avx512vl() {
+            features.push("avx512vl")
+        }
+        if finfo.has_clwb() {
+            features.push("clwb")
+        }
+        if finfo.has_prefetchwt1() {
+            features.push("prefetchwt1")
+        }
+        if finfo.has_umip() {
+            features.push("umip")
+        }
+        if finfo.has_pku() {
+            features.push("pku")
+        }
+        if finfo.has_ospke() {
+            features.push("ospke")
+        }
+        if finfo.has_rdpid() {
+            features.push("rdpid")
+        }
+        if finfo.has_sgx_lc() {
+            features.push("sgx_lc")
+        }
+    });
+    system_info.push_str("\t- ");
+    system_info.push_str(features.join(" ").as_str());
+    system_info.push_str("\n");
+
+    system_info.push_str("\n# System memory:\n");
+    system_info.push_str(format!("\t- Used memory : {} KB\n", sys.used_memory()).as_str());
+    system_info.push_str(format!("\t- Total memory: {} KB\n", sys.total_memory()).as_str());
+    system_info.push_str(format!("\t- Used swap   : {} KB\n", sys.used_swap()).as_str());
+    system_info.push_str(format!("\t- Total swap  : {} KB\n", sys.total_swap()).as_str());
+
+    let mut disks = sys.disks();
+
+    system_info.push_str(format!("\n# System Disks: {} disks installed\n", disks.len()).as_str());
+    for (index, disk) in disks.iter().enumerate() {
+        system_info.push_str(format!("# [{}] - Disk name: {:?}\n\t\
+        - type = {:?}\n\t\
+        - file system = {}\n\t\
+        - total space = {} GB\n\t\
+        - free space = {} GB\n\t\
+        - mount point = {:?}\n\t\
+        - removable = {}\n",
+                                     index,
+                                     disk.name(),
+                                     disk.type_(),
+                                     disk.file_system().into_iter().map(|b| char::from(*b)).collect::<String>(),
+                                     disk.total_space().gigs(),
+                                     disk.available_space().gigs(),
+                                     disk.mount_point().as_os_str(),
+                                     disk.is_removable()
+        ).as_str());
+    }
+
+    let networks = sys.networks();
+    system_info.push_str(format!("\n# System Networks: {} networks installed\n", networks.iter().count()).as_str());
+    for (index, (interface_name, data)) in networks.iter().enumerate() {
+        system_info.push_str(format!("# [{}] - Interface name: {}\n\t\
+        - received = {}\n\t\
+        - errors_on_received = {}\n\t\
+        - total_received = {}\n\t\
+        - packets_received = {}\n\t\
+        - total_packets_received = {}\n\t\
+        - total_errors_on_received = {}\n\t\
+        - transmitted = {}\n\t\
+        - errors_on_transmitted = {}\n\t\
+        - total_transmitted = {}\n\t\
+        - packets_transmitted = {}\n\t\
+        - total_packets_transmitted = {}\n\t\
+        - total_errors_on_transmitted = {}\n",
+                                     index,
+                                     interface_name,
+                                     data.received(),
+                                     data.errors_on_received(),
+                                     data.total_received(),
+                                     data.packets_received(),
+                                     data.total_packets_received(),
+                                     data.total_errors_on_received(),
+                                     data.transmitted(),
+                                     data.errors_on_transmitted(),
+                                     data.total_transmitted(),
+                                     data.packets_transmitted(),
+                                     data.total_packets_transmitted(),
+                                     data.total_errors_on_transmitted()).as_str());
+    }
+
+    system_info
 }

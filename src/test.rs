@@ -12,7 +12,7 @@ use sysinfo::{DiskExt, System, UserExt};
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::crud_model::crud_api::CRUDDispatcher;
-use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, LockingStrategy, olc, orwc};
+use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, LockingStrategy, olc, olc_limited, orwc};
 use crate::page_model::BlockRef;
 use crate::page_model::node::Node;
 use crate::show_alignment_bsz;
@@ -263,7 +263,7 @@ fn beast_dispatch(index: &impl CRUDDispatcher<u64, f64>, next_query: CRUDOperati
     };
 }
 
-pub fn beast_test(num_thread: usize, index: Arc<INDEX>, t1s: &[u64]) -> u128 {
+pub fn beast_test(num_thread: usize, index: Arc<INDEX>, t1s: &[u64], log: bool) -> u128 {
     let query_buff = t1s
         .iter()
         .map(|key| CRUDOperation::Insert(*key, Payload::default()))
@@ -321,7 +321,9 @@ pub fn beast_test(num_thread: usize, index: Arc<INDEX>, t1s: &[u64]) -> u128 {
             .unwrap());
 
     let time = SystemTime::now().duration_since(start).unwrap().as_millis();
-    print!(",{}", ls);
+    if log {
+        print!(",{}", ls);
+    }
 
     time
 }
@@ -405,11 +407,12 @@ pub(crate) static S_INSERTIONS: [Key; 1] = [
     100_000_000,
 ];
 
-pub(crate) static S_STRATEGIES: [CRUDProtocol; 6] = [
+pub(crate) static S_STRATEGIES: [CRUDProtocol; 7] = [
     MonoWriter,
     LockCoupling,
     orwc(),
     olc(),
+    olc_limited(),
     hybrid_lock(),
     lightweight_hybrid_lock()
 ];

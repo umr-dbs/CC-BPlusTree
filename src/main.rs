@@ -192,72 +192,82 @@ fn do_tests() {
 
                     log_debug_ln("Creating index...".to_string());
                     let create_time = if crud.is_mono_writer() {
-                        beast_test(1, index.clone(), create_data.as_slice())
+                        beast_test(1, index.clone(), create_data.as_slice(), false)
                     }
                     else {
-                        beast_test(4, index.clone(), create_data.as_slice())
+                        beast_test(4, index.clone(), create_data.as_slice(), false)
                     };
 
                     log_debug_ln(format!("Created index in `{}` ms", create_time));
 
                     let read_data: &'static [_] = unsafe { mem::transmute(read_data.as_slice()) };
-                    let start = SystemTime::now();
 
-                    let handles = threads.iter().flat_map(|_| {
-                        if crud.is_mono_writer() {
-                            let index = Arc::new(SyncIndex(Mutex::new(index.clone())));
-                            let index2 = index.clone();
-                            vec![thread::spawn(move || {
-                                read_data
-                                    .iter()
-                                    .for_each(|read_key| if let CRUDOperationResult::Error =
-                                        index.dispatch(CRUDOperation::Point(*read_key))
-                                    {
-                                        println!("Error reading key = {}", read_key);
-                                    });
-                            }), thread::spawn(move || {
-                                read_data
-                                    .iter()
-                                    .for_each(|read_key| if let CRUDOperationResult::Error
-                                        = index2.dispatch(
-                                        CRUDOperation::Update(*read_key, Payload::default()))
-                                    {
-                                        println!("Error updating key = {}", read_key);
-                                    });
-                            })]
-                        }
-                        else {
-                            let index = index.clone();
-                            let index2 = index.clone();
-                            let read_data = read_data.clone();
-                            let read_data2 = read_data.clone();
-                            vec![thread::spawn(move|| {
-                                read_data
-                                    .iter()
-                                    .for_each(|read_key| if let CRUDOperationResult::Error =
-                                        index.dispatch(CRUDOperation::Point(*read_key))
-                                    {
-                                        println!("Error reading key = {}", read_key);
-                                    });
-                            }), thread::spawn(move|| {
-                                read_data2
-                                    .iter()
-                                    .for_each(|read_key| if let CRUDOperationResult::Error
-                                        = index2.dispatch(
-                                        CRUDOperation::Update(*read_key, Payload::default()))
-                                    {
-                                        println!("Error updating key = {}", read_key);
-                                    });
-                            })]
-                        }
-                    }).collect::<Vec<_>>();
+                    log_debug_ln("UPDATE + READ BENCHMARK; Each Thread = [Updater Thread + Reader Thread]".to_string());
+                    println!("Locking Strategy,Threads,Time");
+                    threads.iter().for_each(|spawns| {
+                            if crud.is_mono_writer() {
+                                let index = Arc::new(SyncIndex(Mutex::new(index.clone())));
+                                let start = SystemTime::now();
+                                (0..=*spawns).map(|_| {
+                                    let i1 = index.clone();
+                                    let i2 = index.clone();
+                                    [thread::spawn(move || {
+                                        read_data
+                                            .iter()
+                                            .for_each(|read_key| if let CRUDOperationResult::Error =
+                                                i1.dispatch(CRUDOperation::Point(*read_key))
+                                            {
+                                                log_debug_ln(format!("Error reading key = {}", read_key));
+                                            });
+                                    }), thread::spawn(move || {
+                                        read_data
+                                            .iter()
+                                            .for_each(|read_key| if let CRUDOperationResult::Error
+                                                = i2.dispatch(
+                                                CRUDOperation::Update(*read_key, Payload::default()))
+                                            {
+                                                log_debug_ln(format!("Error reading key = {}", read_key));
+                                            });
+                                    })]
+                                }).collect::<Vec<_>>()
+                                    .into_iter()
+                                    .for_each(|h| h.into_iter().for_each(|sh| sh.join().unwrap()));
 
-                    handles
-                        .into_iter()
-                        .for_each(|handle| handle.join().unwrap());
+                                println!("{},{},{}", crud, *spawns,
+                                         SystemTime::now().duration_since(start).unwrap().as_millis());
+                            }
+                            else {
+                                let read_data = read_data.clone();
+                                let start = SystemTime::now();
+                                (0..=*spawns).map(|_| {
+                                    let index1 = index.clone();
+                                    let index2 = index.clone();
+                                    [thread::spawn(move || {
+                                        read_data
+                                            .iter()
+                                            .for_each(|read_key| if let CRUDOperationResult::Error =
+                                                index1.dispatch(CRUDOperation::Point(*read_key))
+                                            {
+                                                log_debug_ln(format!("Error reading key = {}", read_key));
+                                            });
+                                    }), thread::spawn(move || {
+                                        read_data
+                                            .iter()
+                                            .for_each(|read_key| if let CRUDOperationResult::Error
+                                                = index2.dispatch(
+                                                CRUDOperation::Update(*read_key, Payload::default()))
+                                            {
+                                                log_debug_ln(format!("Error reading key = {}", read_key));
+                                            });
+                                    })]
+                                }).collect::<Vec<_>>()
+                                    .into_iter()
+                                    .for_each(|h| h.into_iter().for_each(|sh| sh.join().unwrap()));
 
-                    println!("Update + Read time = `{}` ms",
-                             SystemTime::now().duration_since(start).unwrap().as_millis())
+                                println!("{},{},{}", crud, *spawns,
+                                         SystemTime::now().duration_since(start).unwrap().as_millis());
+                            }
+                    });
                 });
             }
             "generate" | "gen" => fs::write(
@@ -422,7 +432,7 @@ fn experiment(mut threads_cpu: Vec<usize>,
                 let time = beast_test(
                     *num_threads,
                     Arc::new(MAKE_INDEX(ls.clone())),
-                    t1s.as_slice());
+                    t1s.as_slice(), true);
 
                 print!(",{}", time);
                 print!(",{}", FAN_OUT);

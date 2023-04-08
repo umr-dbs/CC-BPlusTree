@@ -9,6 +9,10 @@ pub const fn olc() -> LockingStrategy {
     LockingStrategy::OLC(OLCVariant::Free)
 }
 
+pub const fn olc_limited() -> LockingStrategy {
+    LockingStrategy::OLC(OLCVariant::Bounded { attempts: 4, level: LevelVariant::Height(1f32) })
+}
+
 pub const fn hybrid_lock() -> LockingStrategy {
     LockingStrategy::HybridLocking(LevelVariant::Height(1f32), 4)
 }

@@ -2,7 +2,7 @@ use std::{env, fs, mem, path, thread};
 use std::ops::{Deref, Not};
 use std::ptr::null;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -10,13 +10,13 @@ use rand::prelude::SliceRandom;
 use serde::{Deserialize, Serialize};
 use crate::block::block_manager::bsz_alignment;
 use crate::tree::bplus_tree;
-use crate::locking::locking_strategy::{CRUDProtocol, LockingStrategy};
+use crate::locking::locking_strategy::{CRUDProtocol, LockingStrategy, olc};
 use block::block::Block;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::locking::locking_strategy::LockingStrategy::{LockCoupling, MonoWriter};
-use crate::test::{beast_test, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertions, gen_rand_data, get_system_info, INDEX, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, simple_test, SyncIndex};
+use crate::test::{beast_test, beast_test2, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertions, gen_rand_data, get_system_info, INDEX, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, simple_test, SyncIndex};
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::{CPU_THREADS, ENABLE_YIELD};
 
@@ -29,13 +29,47 @@ mod tree;
 mod utils;
 mod test;
 
+const TERMINAL: bool = false;
+
 fn main() {
     // println!("size = {}", mem::size_of::<SmartFlavor<()>>());
     // make_splash();
     // show_alignment_bsz();
-    do_tests();
+    // do_tests();
     // simple_test();
-    // experiment();
+    if TERMINAL {
+        do_tests()
+    }
+    else {
+        experiment(S_THREADS_CPU.to_vec(),
+                   S_INSERTIONS.as_slice(),
+                   S_STRATEGIES.as_slice())
+    }
+}
+
+fn create_filter_params(params: &str) -> (Vec<usize>, Vec<Key>, Vec<CRUDProtocol>){
+    let mut p = params.split("+");
+    let inserts = serde_json::from_str::<Vec<Key>>(p.next().unwrap_or(""))
+        .unwrap_or(S_INSERTIONS.to_vec());
+
+    let mut crud_str
+        = p.next().unwrap_or_default().to_string();
+
+    if crud_str.contains("MonoWriter") && !crud_str.contains("\"MonoWriter\"") {
+        crud_str = crud_str.replace("MonoWriter", "\"MonoWriter\"");
+    }
+    if crud_str.contains("LockCoupling") && !crud_str.contains("\"LockCoupling\"") {
+        crud_str = crud_str.replace("LockCoupling", "\"LockCoupling\"");
+    }
+
+    let threads
+        = serde_json::from_str::<Vec<usize>>(p.next().unwrap_or_default())
+        .unwrap_or(S_THREADS_CPU.to_vec());
+
+    let crud = serde_json::from_str::<Vec<CRUDProtocol>>(crud_str.as_str())
+        .unwrap_or(S_STRATEGIES.to_vec());
+
+    (threads, inserts, crud)
 }
 
 fn do_tests() {
@@ -57,6 +91,13 @@ fn do_tests() {
         };
 
         match command {
+            "all" => experiment(S_THREADS_CPU.to_vec(),
+                                S_INSERTIONS.as_slice(),
+                                S_STRATEGIES.as_slice()),
+            "t1" => println!("Time = {}ms",
+                beast_test(24, MAKE_INDEX(MonoWriter), gen_rand_data(200_000).as_slice(), true).0),
+            "t2" => println!("Time = {}ms",
+                beast_test(24, MAKE_INDEX(olc()), gen_rand_data(20_000_000).as_slice(), true).0),
             "crud_protocol" | "crud_protocols" | "crud" | "cruds" | "protocol" | "protocols" =>
                 println!("{}", S_STRATEGIES
                     .as_slice()
@@ -75,30 +116,12 @@ fn do_tests() {
             "simple_test" | "st" =>
                 simple_test(),
             "create" | "c" => {
-                let mut p = params.split("+");
-                let inserts = serde_json::from_str::<Vec<Key>>(p.next().unwrap_or(""))
-                    .unwrap_or(S_INSERTIONS.to_vec());
-
-                let mut crud_str
-                    = p.next().unwrap_or_default().to_string();
-
-                if crud_str.contains("MonoWriter") && !crud_str.contains("\"MonoWriter\"") {
-                    crud_str = crud_str.replace("MonoWriter", "\"MonoWriter\"");
-                }
-                if crud_str.contains("LockCoupling") && !crud_str.contains("\"LockCoupling\"") {
-                    crud_str = crud_str.replace("LockCoupling", "\"LockCoupling\"");
-                }
-
-                let threads
-                    = serde_json::from_str::<Vec<usize>>(p.next().unwrap_or_default())
-                    .unwrap_or(S_THREADS_CPU.to_vec());
-
-                let crud = serde_json::from_str::<Vec<CRUDProtocol>>(crud_str.as_str())
-                    .unwrap_or(S_STRATEGIES.to_vec());
+               let (threads, inserts, crud)
+                   = create_filter_params(params);
 
                 experiment(threads,
-                           inserts,
-                           crud, )
+                           inserts.as_slice(),
+                           crud.as_slice())
             },
             "update_read" | "ur" => { //update=
                 // tree_records+
@@ -187,15 +210,13 @@ fn do_tests() {
                     (c_data, read_data)
                 };
 
-                crud.into_iter().for_each(|crud| {
-                    let index = Arc::new(MAKE_INDEX(crud.clone()));
-
+                crud.into_iter().for_each(|crud| unsafe {
                     log_debug_ln("Creating index...".to_string());
-                    let create_time = if crud.is_mono_writer() {
-                        beast_test(1, index.clone(), create_data.as_slice(), false)
+                    let (create_time, index) = if crud.is_mono_writer() {
+                        beast_test(1, MAKE_INDEX(crud.clone()), create_data.as_slice(), false)
                     }
                     else {
-                        beast_test(4, index.clone(), create_data.as_slice(), false)
+                        beast_test(4, MAKE_INDEX(crud.clone()), create_data.as_slice(), false)
                     };
 
                     log_debug_ln(format!("Created index in `{}` ms", create_time));
@@ -204,9 +225,10 @@ fn do_tests() {
 
                     log_debug_ln("UPDATE + READ BENCHMARK; Each Thread = [Updater Thread + Reader Thread]".to_string());
                     println!("Locking Strategy,Threads,Time");
-                    threads.iter().for_each(|spawns| {
+                    threads.iter().for_each(|spawns| unsafe {
                             if crud.is_mono_writer() {
-                                let index = Arc::new(SyncIndex(Mutex::new(index.clone())));
+                                let index_r: &'static INDEX = mem::transmute(&index);
+                                let index = Arc::new(SyncIndex(Mutex::new(index_r)));
                                 let start = SystemTime::now();
                                 (0..=*spawns).map(|_| {
                                     let i1 = index.clone();
@@ -238,15 +260,14 @@ fn do_tests() {
                             }
                             else {
                                 let read_data = read_data.clone();
+                                let index_r: &'static INDEX = mem::transmute(&index);
                                 let start = SystemTime::now();
                                 (0..=*spawns).map(|_| {
-                                    let index1 = index.clone();
-                                    let index2 = index.clone();
                                     [thread::spawn(move || {
                                         read_data
                                             .iter()
                                             .for_each(|read_key| if let CRUDOperationResult::Error =
-                                                index1.dispatch(CRUDOperation::Point(*read_key))
+                                                index_r.dispatch(CRUDOperation::Point(*read_key))
                                             {
                                                 log_debug_ln(format!("Error reading key = {}", read_key));
                                             });
@@ -254,7 +275,7 @@ fn do_tests() {
                                         read_data
                                             .iter()
                                             .for_each(|read_key| if let CRUDOperationResult::Error
-                                                = index2.dispatch(
+                                                = index_r.dispatch(
                                                 CRUDOperation::Update(*read_key, Payload::default()))
                                             {
                                                 log_debug_ln(format!("Error reading key = {}", read_key));
@@ -365,79 +386,42 @@ fn make_splash() {
     println!("--> System Log:");
 }
 
-fn experiment(mut threads_cpu: Vec<usize>,
-              insertions: Vec<Key>,
-              strategies: Vec<LockingStrategy>)
+fn experiment(threads_cpu: Vec<usize>,
+              insertions: &[Key],
+              strategies: &[LockingStrategy])
 {
-    if CPU_THREADS {
-        let cpu = num_cpus::get();
-        threads_cpu = threads_cpu
-            .into_iter()
-            .take_while(|t| cpu >= *t)
-            .collect();
-    }
+    // if CPU_THREADS {
+    //     let cpu = num_cpus::get();
+    //     threads_cpu = threads_cpu
+    //         .into_iter()
+    //         .take_while(|t| cpu >= *t)
+    //         .collect();
+    // }
 
-    log_debug_ln(format!("Preparing {} Experiments, hold on..", insertions.len()));
-
-    insertions.iter().enumerate().for_each(|(i, insertion)| {
-        log_debug_ln(format!("# {}\n\t\
-        - Records: \t\t{}\n\t\
-        - Threads: \t\t{}", i + 1, format_insertions(*insertion), threads_cpu.iter().join(",")));
-
-        log_debug(format!("\t- Strategy:"));
-
-            println!("\t\t{}", strategies[0]);
-            (&strategies[1..])
-                .iter()
-                .for_each(|st| log_debug_ln(format!("\t\t\t\t{}", st)))
-
-    });
-
-    log_debug_ln(format!("Preparing data, hold on.."));
-    let cases = insertions
-        .into_iter()
-        .map(|n| {
-            println!("> Preparing n = {} data, hold on..", n);
-
-            let data = gen_rand_data(n as usize);
-            println!("> Completed n = {} data", n);
-
-            (data, strategies.clone())
-        }).collect::<Vec<_>>();
-
-    mem::drop(strategies);
-
-    // thread::sleep(Duration::from_secs(4));
     println!("Number Insertions,Number Threads,Locking Strategy,Time,Fan Out,Leaf Records,Block Size");
 
-    cases.into_iter().for_each(|(t1s, strats)|
+    for insertion_n in insertions {
+        let t1s = gen_rand_data(*insertion_n as usize);
         for num_threads in threads_cpu.iter() {
-            if *num_threads > t1s.len() {
-                log_debug_ln("WARNING: Number of threads larger than number of operations!".to_string());
-                log_debug_ln(format!("WARNING: Skipping operations = {}, threads = {}!", t1s.len(), num_threads));
-                continue;
-            }
+            // if *num_threads > t1s.len() {
+            //     continue;
+            // }
 
-            for ls in strats.iter() {
-                if EXE_LOOK_UPS {
-                    log_debug_ln(format!("Warning: Look-up queries enabled!"))
-                }
-                if EXE_RANGE_LOOK_UPS {
-                    log_debug_ln(format!("Warning: Range queries enabled!"))
-                }
-
+            for ls in strategies {
                 print!("{}", t1s.len());
                 print!(",{}", *num_threads);
 
-                let time = beast_test(
+                let time = beast_test2(
                     *num_threads,
-                    Arc::new(MAKE_INDEX(ls.clone())),
-                    t1s.as_slice(), true);
+                    MAKE_INDEX(ls.clone()),
+                    t1s.as_slice());
 
                 print!(",{}", time);
                 print!(",{}", FAN_OUT);
                 print!(",{}", NUM_RECORDS);
                 println!(",{}", BSZ_BASE);
             }
-        });
+        }
+    }
+
 }

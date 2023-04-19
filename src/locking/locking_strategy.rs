@@ -5,18 +5,22 @@ use crate::page_model::{Attempts, Level, LevelVariant};
 use crate::tree::root::LEVEL_ROOT;
 use crate::utils::smart_cell::LatchType;
 
+#[inline(always)]
 pub const fn olc() -> LockingStrategy {
     LockingStrategy::OLC(OLCVariant::Free)
 }
 
+#[inline(always)]
 pub const fn olc_limited() -> LockingStrategy {
     LockingStrategy::OLC(OLCVariant::Bounded { attempts: 4, level: LevelVariant::Height(1f32) })
 }
 
+#[inline(always)]
 pub const fn hybrid_lock() -> LockingStrategy {
     LockingStrategy::HybridLocking(LevelVariant::Height(1f32), 4)
 }
 
+#[inline(always)]
 pub const fn lightweight_hybrid_lock() -> LockingStrategy {
     LockingStrategy::OLC(OLCVariant::Pinned {
         attempts: 0,
@@ -24,6 +28,7 @@ pub const fn lightweight_hybrid_lock() -> LockingStrategy {
     })
 }
 
+#[inline(always)]
 pub const fn orwc() -> LockingStrategy {
     LockingStrategy::ORWC(LevelVariant::Height(1f32), 4)
 }

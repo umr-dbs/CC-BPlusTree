@@ -17,7 +17,7 @@ pub const fn olc_limited() -> LockingStrategy {
 
 #[inline(always)]
 pub const fn hybrid_lock() -> LockingStrategy {
-    LockingStrategy::HybridLocking(LevelVariant::Height(1f32), 4)
+    LockingStrategy::HybridLocking(LevelVariant::Height(1f32), 1)
 }
 
 #[inline(always)]

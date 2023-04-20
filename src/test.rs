@@ -432,19 +432,19 @@ pub fn simple_test2() {
     log_debug_ln(format!(""));
 }
 
-pub(crate) const S_THREADS_CPU: [usize; 12] = [
-    1,
-    2,
-    3,
-    4,
-    8,
-    10,
-    12,
-    16,
+pub(crate) const S_THREADS_CPU: [usize; 1] = [
+    // 1,
+    // 2,
+    // 3,
+    // 4,
+    // 8,
+    // 10,
+    // 12,
+    // 16,
     24,
-    32,
-    64,
-    128,
+    // 32,
+    // 64,
+    // 128,
     // 256,
     // 512,
     // 1024,
@@ -459,20 +459,20 @@ pub(crate) const S_INSERTIONS: [Key; 1] = [
     // 1_000_000,
     // 2_000_000,
     // 5_000_000,
-    // 10_000_000,
+    10_000_000,
     // 20_000_000,
     // 50_000_000,
-    100_000_000,
+    // 100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 7] = [
-    MonoWriter,
-    LockCoupling,
-    orwc(),
-    olc(),
-    olc_limited(),
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 1] = [
+    // MonoWriter,
+    // LockCoupling,
+    // orwc(),
+    // olc(),
+    // olc_limited(),
     hybrid_lock(),
-    lightweight_hybrid_lock()
+    // lightweight_hybrid_lock()
 ];
 
 pub fn format_insertions(i: Key) -> String {

@@ -619,19 +619,19 @@ impl<E: Default> SmartCell<E> {
     #[inline(always)]
     pub fn borrow_read(&self) -> SmartGuard<'static, E> {
         match self.0.deref() {
-            OLCCell(opt) => {
+            OLCCell(opt) | HybridCell(opt, ..) => {
                 let (success, read)
                     = opt.read_lock();
 
                 OLCReader(success.then(|| (self.clone(), read)))
             }
-            HybridCell(opt, rw) => match rw.try_read() {
-                Some(shared) if opt.is_read_not_obsolete() => unsafe {
-                    RwReader(transmute(shared),
-                             opt.deref().cell.as_ref())
-                }
-                _ => OLCReader(None)
-            }
+            // HybridCell(opt, rw) => match rw.try_read() {
+            //     Some(shared) if opt.is_read_not_obsolete() => unsafe {
+            //         RwReader(transmute(shared),
+            //                  opt.deref().cell.as_ref())
+            //     }
+            //     _ => OLCReader(None)
+            // }
             ExclusiveCell(mutex, ptr) => unsafe {
                 MutExclusive(transmute(mutex.lock()),
                              ptr.get_mut())
@@ -679,21 +679,36 @@ impl<E: Default> SmartCell<E> {
                     OLCReader(None)
                 }
             }
-            HybridCell(opt, rw) => match rw.try_write() {
-                None => OLCReader(None),
-                Some(..) => {
-                    let read_version
-                        = opt.load_version();
+            HybridCell(opt, rw) => {
+                let read_version
+                    = opt.load_version();
 
-                    if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
-                        OLCReader(None)
-                    } else if let Some(latched) = opt.write_lock_strong(read_version) {
-                        OLCWriter(self.clone(), latched)
-                    } else {
-                        OLCReader(None)
+                if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+                    return OLCReader(None)
+                }
+                else if let Some(_writer) = rw.try_write() {
+                    if let Some(latched) = opt.write_lock_strong(read_version) {
+                        return OLCWriter(self.clone(), latched)
                     }
                 }
+
+                OLCReader(None)
             }
+            // HybridCell(opt, rw) => match rw.try_write() {
+            //     None => OLCReader(None),
+            //     Some(..) => {
+            //         let read_version
+            //             = opt.load_version();
+            //
+            //         if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+            //             OLCReader(None)
+            //         } else if let Some(latched) = opt.write_lock_strong(read_version) {
+            //             OLCWriter(self.clone(), latched)
+            //         } else {
+            //             OLCReader(None)
+            //         }
+            //     }
+            // }
             ExclusiveCell(mutex, ptr) => unsafe {
                 transmute(MutExclusive(
                     transmute(mutex.lock()),

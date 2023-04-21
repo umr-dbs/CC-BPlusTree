@@ -2,8 +2,6 @@ use std::collections::{HashSet, VecDeque};
 use std::{mem, thread};
 use std::fmt::Display;
 use std::hash::Hash;
-use std::ops::Deref;
-use std::sync::Arc;
 use std::time::SystemTime;
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -43,6 +41,49 @@ pub fn dec_key(k: Key) -> Key {
 }
 
 pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
+
+pub(crate) const S_THREADS_CPU: [usize; 12] = [
+    1,
+    2,
+    3,
+    4,
+    8,
+    10,
+    12,
+    16,
+    24,
+    32,
+    64,
+    128,
+    // 256,
+    // 512,
+    // 1024,
+];
+
+pub(crate) const S_INSERTIONS: [Key; 1] = [
+    // 10,
+    // 100,
+    // 1_000,
+    // 10_000,
+    // 100_000,
+    // 1_000_000,
+    // 2_000_000,
+    // 5_000_000,
+    // 10_000_000,
+    // 20_000_000,
+    // 50_000_000,
+    100_000_000,
+];
+
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 7] = [
+    MonoWriter,
+    LockCoupling,
+    orwc(),
+    olc(),
+    olc_limited(),
+    hybrid_lock(),
+    lightweight_hybrid_lock()
+];
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, Key::MIN, Key::MAX, inc_key, dec_key);
@@ -432,52 +473,9 @@ pub fn simple_test2() {
     log_debug_ln(format!(""));
 }
 
-pub(crate) const S_THREADS_CPU: [usize; 1] = [
-    // 1,
-    // 2,
-    // 3,
-    // 4,
-    // 8,
-    // 10,
-    // 12,
-    // 16,
-    24,
-    // 32,
-    // 64,
-    // 128,
-    // 256,
-    // 512,
-    // 1024,
-];
-
-pub(crate) const S_INSERTIONS: [Key; 1] = [
-    // 10,
-    // 100,
-    // 1_000,
-    // 10_000,
-    // 100_000,
-    // 1_000_000,
-    // 2_000_000,
-    // 5_000_000,
-    10_000_000,
-    // 20_000_000,
-    // 50_000_000,
-    // 100_000_000,
-];
-
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 1] = [
-    // MonoWriter,
-    // LockCoupling,
-    // orwc(),
-    // olc(),
-    // olc_limited(),
-    hybrid_lock(),
-    // lightweight_hybrid_lock()
-];
-
 pub fn format_insertions(i: Key) -> String {
     if i >= 1_000_000_000 {
-        format!("{} B", i / 1_000_000)
+        format!("{} B", i / 1_000_000_000)
     }
     else  if i >= 1_000_000 {
         format!("{} Mio", i / 1_000_000)

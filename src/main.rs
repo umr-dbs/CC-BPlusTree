@@ -39,15 +39,14 @@ fn main() {
     // simple_test();
     if TERMINAL {
         do_tests()
-    }
-    else {
+    } else {
         experiment(S_THREADS_CPU.to_vec(),
                    S_INSERTIONS.as_slice(),
                    S_STRATEGIES.as_slice())
     }
 }
 
-fn create_filter_params(params: &str) -> (Vec<usize>, Vec<Key>, Vec<CRUDProtocol>){
+fn create_filter_params(params: &str) -> (Vec<usize>, Vec<Key>, Vec<CRUDProtocol>) {
     let mut p = params.split("+");
     let inserts = serde_json::from_str::<Vec<Key>>(p.next().unwrap_or(""))
         .unwrap_or(S_INSERTIONS.to_vec());
@@ -95,9 +94,9 @@ fn do_tests() {
                                 S_INSERTIONS.as_slice(),
                                 S_STRATEGIES.as_slice()),
             "t1" => println!("Time = {}ms",
-                beast_test(24, MAKE_INDEX(MonoWriter), gen_rand_data(200_000).as_slice(), true).0),
+                             beast_test(24, MAKE_INDEX(MonoWriter), gen_rand_data(200_000).as_slice(), true).0),
             "t2" => println!("Time = {}ms",
-                beast_test(24, MAKE_INDEX(olc()), gen_rand_data(20_000_000).as_slice(), true).0),
+                             beast_test(24, MAKE_INDEX(olc()), gen_rand_data(20_000_000).as_slice(), true).0),
             "crud_protocol" | "crud_protocols" | "crud" | "cruds" | "protocol" | "protocols" =>
                 println!("{}", S_STRATEGIES
                     .as_slice()
@@ -116,13 +115,13 @@ fn do_tests() {
             "simple_test" | "st" =>
                 simple_test(),
             "create" | "c" => {
-               let (threads, inserts, crud)
-                   = create_filter_params(params);
+                let (threads, inserts, crud)
+                    = create_filter_params(params);
 
                 experiment(threads,
                            inserts.as_slice(),
                            crud.as_slice())
-            },
+            }
             "update_read" | "ur" => { //update=
                 // tree_records+
                 // update_records+
@@ -214,8 +213,7 @@ fn do_tests() {
                     log_debug_ln("Creating index...".to_string());
                     let (create_time, index) = if crud.is_mono_writer() {
                         beast_test(1, MAKE_INDEX(crud.clone()), create_data.as_slice(), false)
-                    }
-                    else {
+                    } else {
                         beast_test(4, MAKE_INDEX(crud.clone()), create_data.as_slice(), false)
                     };
 
@@ -226,75 +224,74 @@ fn do_tests() {
                     log_debug_ln("UPDATE + READ BENCHMARK; Each Thread = [Updater Thread + Reader Thread]".to_string());
                     println!("Locking Strategy,Threads,Time");
                     threads.iter().for_each(|spawns| unsafe {
-                            if crud.is_mono_writer() {
-                                let index_r: &'static INDEX = mem::transmute(&index);
-                                let index = Arc::new(SyncIndex(Mutex::new(index_r)));
-                                let start = SystemTime::now();
-                                (0..=*spawns).map(|_| {
-                                    let i1 = index.clone();
-                                    let i2 = index.clone();
-                                    [thread::spawn(move || {
-                                        read_data
-                                            .iter()
-                                            .for_each(|read_key| if let CRUDOperationResult::Error =
-                                                i1.dispatch(CRUDOperation::Point(*read_key))
-                                            {
-                                                log_debug_ln(format!("Error reading key = {}", read_key));
-                                            });
-                                    }), thread::spawn(move || {
-                                        read_data
-                                            .iter()
-                                            .for_each(|read_key| if let CRUDOperationResult::Error
-                                                = i2.dispatch(
-                                                CRUDOperation::Update(*read_key, Payload::default()))
-                                            {
-                                                log_debug_ln(format!("Error reading key = {}", read_key));
-                                            });
-                                    })]
-                                }).collect::<Vec<_>>()
-                                    .into_iter()
-                                    .for_each(|h| h.into_iter().for_each(|sh| sh.join().unwrap()));
+                        if crud.is_mono_writer() {
+                            let index_r: &'static INDEX = mem::transmute(&index);
+                            let index = Arc::new(SyncIndex(Mutex::new(index_r)));
+                            let start = SystemTime::now();
+                            (0..=*spawns).map(|_| {
+                                let i1 = index.clone();
+                                let i2 = index.clone();
+                                [thread::spawn(move || {
+                                    read_data
+                                        .iter()
+                                        .for_each(|read_key| if let CRUDOperationResult::Error =
+                                            i1.dispatch(CRUDOperation::Point(*read_key))
+                                        {
+                                            log_debug_ln(format!("Error reading key = {}", read_key));
+                                        });
+                                }), thread::spawn(move || {
+                                    read_data
+                                        .iter()
+                                        .for_each(|read_key| if let CRUDOperationResult::Error
+                                            = i2.dispatch(
+                                            CRUDOperation::Update(*read_key, Payload::default()))
+                                        {
+                                            log_debug_ln(format!("Error reading key = {}", read_key));
+                                        });
+                                })]
+                            }).collect::<Vec<_>>()
+                                .into_iter()
+                                .for_each(|h| h.into_iter().for_each(|sh| sh.join().unwrap()));
 
-                                println!("{},{},{}", crud, *spawns,
-                                         SystemTime::now().duration_since(start).unwrap().as_millis());
-                            }
-                            else {
-                                let read_data = read_data.clone();
-                                let index_r: &'static INDEX = mem::transmute(&index);
-                                let start = SystemTime::now();
-                                (0..=*spawns).map(|_| {
-                                    [thread::spawn(move || {
-                                        read_data
-                                            .iter()
-                                            .for_each(|read_key| if let CRUDOperationResult::Error =
-                                                index_r.dispatch(CRUDOperation::Point(*read_key))
-                                            {
-                                                log_debug_ln(format!("Error reading key = {}", read_key));
-                                            });
-                                    }), thread::spawn(move || {
-                                        read_data
-                                            .iter()
-                                            .for_each(|read_key| if let CRUDOperationResult::Error
-                                                = index_r.dispatch(
-                                                CRUDOperation::Update(*read_key, Payload::default()))
-                                            {
-                                                log_debug_ln(format!("Error reading key = {}", read_key));
-                                            });
-                                    })]
-                                }).collect::<Vec<_>>()
-                                    .into_iter()
-                                    .for_each(|h| h.into_iter().for_each(|sh| sh.join().unwrap()));
+                            println!("{},{},{}", crud, *spawns,
+                                     SystemTime::now().duration_since(start).unwrap().as_millis());
+                        } else {
+                            let read_data = read_data.clone();
+                            let index_r: &'static INDEX = mem::transmute(&index);
+                            let start = SystemTime::now();
+                            (0..=*spawns).map(|_| {
+                                [thread::spawn(move || {
+                                    read_data
+                                        .iter()
+                                        .for_each(|read_key| if let CRUDOperationResult::Error =
+                                            index_r.dispatch(CRUDOperation::Point(*read_key))
+                                        {
+                                            log_debug_ln(format!("Error reading key = {}", read_key));
+                                        });
+                                }), thread::spawn(move || {
+                                    read_data
+                                        .iter()
+                                        .for_each(|read_key| if let CRUDOperationResult::Error
+                                            = index_r.dispatch(
+                                            CRUDOperation::Update(*read_key, Payload::default()))
+                                        {
+                                            log_debug_ln(format!("Error reading key = {}", read_key));
+                                        });
+                                })]
+                            }).collect::<Vec<_>>()
+                                .into_iter()
+                                .for_each(|h| h.into_iter().for_each(|sh| sh.join().unwrap()));
 
-                                println!("{},{},{}", crud, *spawns,
-                                         SystemTime::now().duration_since(start).unwrap().as_millis());
-                            }
+                            println!("{},{},{}", crud, *spawns,
+                                     SystemTime::now().duration_since(start).unwrap().as_millis());
+                        }
                     });
                 });
             }
             "generate" | "gen" => fs::write(
                 data_file_name(params.parse::<usize>().unwrap()),
                 serde_json::to_string(
-                    gen_rand_data(params.parse::<usize>().unwrap()).as_slice()).unwrap()
+                    gen_rand_data(params.parse::<usize>().unwrap()).as_slice()).unwrap(),
             ).unwrap(),
             "block_alignment" | "bsz_aln" | "alignment" | "aln" | "block" | "bsz" =>
                 show_alignment_bsz(),
@@ -304,8 +301,7 @@ fn do_tests() {
                 println!("x86_64 or x86: {}", cfg!(any(target_arch = "x86", target_arch = "x86_64"))),
             _ => make_splash(),
         }
-    }
-    else {
+    } else {
         make_splash()
     }
 }
@@ -341,12 +337,10 @@ fn hle() -> &'static str {
     if cfg!(feature = "hardware-lock-elision") {
         if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
             "ON    "
-        }
-        else {
+        } else {
             "NO HTL"
         }
-    }
-    else {
+    } else {
         "OFF   "
     }
 }
@@ -386,17 +380,19 @@ fn make_splash() {
     println!("--> System Log:");
 }
 
-fn experiment(threads_cpu: Vec<usize>,
+fn experiment(mut threads_cpu: Vec<usize>,
               insertions: &[Key],
               strategies: &[LockingStrategy])
 {
-    // if CPU_THREADS {
-    //     let cpu = num_cpus::get();
-    //     threads_cpu = threads_cpu
-    //         .into_iter()
-    //         .take_while(|t| cpu >= *t)
-    //         .collect();
-    // }
+    if CPU_THREADS {
+        let cpu = num_cpus::get();
+        threads_cpu.truncate(threads_cpu
+            .iter()
+            .enumerate()
+            .find(|(_, t)| **t > cpu)
+            .unwrap()
+            .0)
+    }
 
     println!("Number Insertions,Number Threads,Locking Strategy,Time,Fan Out,Leaf Records,Block Size");
 
@@ -423,5 +419,4 @@ fn experiment(threads_cpu: Vec<usize>,
             }
         }
     }
-
 }

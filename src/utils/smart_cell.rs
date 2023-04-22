@@ -224,7 +224,7 @@ impl<E: Default> OptCell<E> {
         let pin_write
             = WRITE_FLAG_VERSION | (read_version_pin & !PIN_FLAG_VERSION);
 
-        self.cell_version.store(pin_write, Release);
+        self.cell_version.store(pin_write, Relaxed);
 
         pin_write
     }
@@ -430,7 +430,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                 OLCCell(opt) | HybridCell(opt, ..) => {
                     opt.write_obsolete();
                     *latch = ZEROED_FLAG_VERSION
-                },
+                }
                 _ => {}
             }
             _ => {}
@@ -444,6 +444,21 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             RwWriter(..) => true,
             MutExclusive(..) => true,
             OLCWriter(..) => true,
+            RwReader(reader, ref ptr) => unsafe {
+                let rw = RwLockReadGuard::rwlock(reader);
+                rw.force_unlock_read();
+
+                if let Some(writer) = rw.try_write() {
+                    ptr::write(self as *const _ as *mut Self,
+                               RwWriter(writer, *ptr as *mut _));
+                    return true
+                }
+                else {
+                    ptr::write(self, OLCReader(None))
+                }
+
+                false
+            }
             OLCReaderPin(cell, pin_latch) => unsafe {
                 if let OLCCell(opt) = cell.0.as_ref() {
                     let writer = OLCWriter(
@@ -456,13 +471,32 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
 
                 unreachable!()
             }
-            OLCReader(Some((cell, latch))) => unsafe {
-                if let OLCCell(opt) = cell.0.as_ref() {
-                    if let Some(write_latch) = opt.write_lock(*latch) {
+            OLCReader(Some((ref cell, read_latch))) => unsafe {
+                match cell.0.as_ref() {
+                    OLCCell(opt) => if let Some(write_latch) = opt.write_lock(*read_latch) {
                         let writer = OLCWriter(transmute_copy(cell), write_latch);
                         ptr::write(self, writer);
                         return true;
+                    },
+                    HybridCell(opt, rw) =>
+                        if let Some(guard) = rw.try_write()
+                    {
+                        let read_latch
+                            = opt.load_version();
+
+                        if read_latch & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+                            return false;
+                        }
+
+                        if let Some(write_latch) = opt.write_lock_strong(read_latch) {
+                            mem::drop(guard);
+                            let writer = OLCWriter(transmute_copy(cell), write_latch);
+                            ptr::write(self as *const _ as *mut Self, writer);
+                            return true;
+                        }
                     }
+
+                    _ => {}
                 }
 
                 false
@@ -684,11 +718,11 @@ impl<E: Default> SmartCell<E> {
                     = opt.load_version();
 
                 if read_version & WRITE_OBSOLETE_FLAG_VERSION != 0 {
-                    return OLCReader(None)
-                }
-                else if let Some(_writer) = rw.try_write() {
+                    return OLCReader(None);
+                } else if let Some(writer) = rw.try_write() {
                     if let Some(latched) = opt.write_lock_strong(read_version) {
-                        return OLCWriter(self.clone(), latched)
+                        mem::drop(writer);
+                        return OLCWriter(self.clone(), latched);
                     }
                 }
 

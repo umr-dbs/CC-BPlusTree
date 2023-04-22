@@ -11,13 +11,23 @@ pub const fn olc() -> LockingStrategy {
 }
 
 #[inline(always)]
-pub const fn olc_limited() -> LockingStrategy {
+pub const fn olc_bounded() -> LockingStrategy {
     LockingStrategy::OLC(OLCVariant::Bounded { attempts: 4, level: LevelVariant::Height(1f32) })
+}
+
+#[inline(always)]
+pub const fn olc_bounded_attempts(attempts: Attempts) -> LockingStrategy {
+    LockingStrategy::OLC(OLCVariant::Bounded { attempts, level: LevelVariant::Height(1f32) })
 }
 
 #[inline(always)]
 pub const fn hybrid_lock() -> LockingStrategy {
     LockingStrategy::HybridLocking(LevelVariant::Height(1f32), 1)
+}
+
+#[inline(always)]
+pub const fn hybrid_lock_attempts(attempts: Attempts) -> LockingStrategy {
+    LockingStrategy::HybridLocking(LevelVariant::Height(1f32), attempts)
 }
 
 #[inline(always)]
@@ -29,8 +39,21 @@ pub const fn lightweight_hybrid_lock() -> LockingStrategy {
 }
 
 #[inline(always)]
+pub const fn lightweight_hybrid_lock_attempts(attempts: Attempts) -> LockingStrategy {
+    LockingStrategy::OLC(OLCVariant::Pinned {
+        attempts,
+        level: LevelVariant::Height(1f32)
+    })
+}
+
+#[inline(always)]
 pub const fn orwc() -> LockingStrategy {
     LockingStrategy::ORWC(LevelVariant::Height(1f32), 4)
+}
+
+#[inline(always)]
+pub const fn orwc_attempts(attempts: Attempts) -> LockingStrategy {
+    LockingStrategy::ORWC(LevelVariant::Height(1f32), attempts)
 }
 
 #[repr(u8)]

@@ -72,9 +72,9 @@ impl<const FAN_OUT: usize,
                 root.block.borrow_mut(),
             LockingStrategy::ORWC(..) =>
                 root.block.borrow_read(),
-            LockingStrategy::HybridLocking(..)
-            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-                root.block.borrow_mut(),
+            // LockingStrategy::HybridLocking(..)
+            // if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+            //     root.block.borrow_mut(),
             LockingStrategy::HybridLocking(..) =>
                 root.block.borrow_read()
         };

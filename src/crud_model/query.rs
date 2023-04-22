@@ -360,6 +360,14 @@ impl<const FAN_OUT: usize,
 
                             return Err((curr_level - 1, attempt + 1));
                         }
+                        else if self.locking_strategy.is_orwc() &&
+                            self.has_overflow(current_guard.deref_unsafe().unwrap())
+                        {
+                            mem::drop(next_guard);
+                            mem::drop(current_guard);
+
+                            return Err((curr_level - 2, attempt + 1));
+                        }
 
                         debug_assert!(self.locking_strategy.additional_lock_required() &&
                             current_guard.is_write_lock() && next_guard.is_write_lock() ||

@@ -444,19 +444,17 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             RwWriter(..) => true,
             MutExclusive(..) => true,
             OLCWriter(..) => true,
-            RwReader(reader, ref ptr) => unsafe {
+            RwReader(reader, ptr) => unsafe {
                 let rw = RwLockReadGuard::rwlock(reader);
                 rw.force_unlock_read();
 
                 if let Some(writer) = rw.try_write() {
-                    ptr::write(self as *const _ as *mut Self,
-                               RwWriter(writer, *ptr as *mut _));
+                    let ptr = (*ptr) as *mut _;
+                    ptr::write(self, RwWriter(writer, ptr));
                     return true
                 }
-                else {
-                    ptr::write(self, OLCReader(None))
-                }
 
+                ptr::write(self, OLCReader(None));
                 false
             }
             OLCReaderPin(cell, pin_latch) => unsafe {
@@ -518,6 +516,15 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub const fn is_reader_lock(&self) -> bool {
         !self.is_write_lock()
+    }
+
+    #[inline(always)]
+    pub const fn is_olc_lock(&self) -> bool {
+        match self {
+            OLCReader(..) => true,
+            OLCWriter(..) => true,
+            _ => false
+        }
     }
 
     #[inline(always)]

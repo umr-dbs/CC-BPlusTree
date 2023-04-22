@@ -185,9 +185,9 @@ impl<const FAN_OUT: usize,
             //     block_cc.borrow_pin(),
             LockingStrategy::OLC(..) =>
                 block_cc.borrow_read(),
-            LockingStrategy::HybridLocking(lock_level, attempts)
-            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut(),
+            // LockingStrategy::HybridLocking(lock_level, attempts)
+            // if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
+            //     block_cc.borrow_mut(),
             LockingStrategy::HybridLocking(..) => block_cc.borrow_read()
         }
     }

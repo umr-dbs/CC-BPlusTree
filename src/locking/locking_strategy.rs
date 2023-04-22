@@ -172,9 +172,17 @@ impl LockingStrategy {
     }
 
     #[inline(always)]
-    pub(crate) const fn is_read_write_lock(&self) -> bool {
+    pub(crate) const fn is_orwc(&self) -> bool {
         match self {
             Self::ORWC(..) => true,
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_hybrid_lock(&self) -> bool {
+        match self {
+            Self::HybridLocking(..) => true,
             _ => false
         }
     }

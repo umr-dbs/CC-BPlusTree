@@ -42,7 +42,7 @@ pub fn dec_key(k: Key) -> Key {
 
 pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
-pub(crate) const S_THREADS_CPU: [usize; 12] = [
+pub(crate) const S_THREADS_CPU: [usize; 16] = [
     1,
     2,
     3,
@@ -55,9 +55,10 @@ pub(crate) const S_THREADS_CPU: [usize; 12] = [
     32,
     64,
     128,
-    // 256,
-    // 512,
-    // 1024,
+    256,
+    512,
+    1024,
+    usize::MAX
 ];
 
 pub(crate) const S_INSERTIONS: [Key; 1] = [

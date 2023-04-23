@@ -51,6 +51,12 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub fn into_lightweight_hybrid(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        SmartCell(Arc::new(SmartFlavor::LightWeightHybridCell(
+            OptCell::new(self))))
+    }
+
+    #[inline(always)]
     pub fn into_exclusive(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         SmartCell(Arc::new(SmartFlavor::ExclusiveCell(
             Mutex::new(()),

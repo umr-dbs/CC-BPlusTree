@@ -146,7 +146,7 @@ impl<const FAN_OUT: usize,
                 node.borrow_pin(),
             LockingStrategy::OLC(OLCVariant::Bounded { attempts, level })
             if attempt >= *attempts  || level.is_lock(curr_level, height) =>
-                node.borrow_pin(),
+                node.borrow_mut(),
             LockingStrategy::HybridLocking(level, attempts)
             if attempt >= *attempts || level.is_lock(curr_level, height) =>
                 node.borrow_read_hybrid(),

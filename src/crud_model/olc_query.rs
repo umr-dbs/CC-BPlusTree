@@ -387,15 +387,7 @@ impl<const FAN_OUT: usize,
                         = self.has_overflow(next_guard_result.unwrap());
 
                     if has_overflow_next {
-                        if self.locking_strategy.is_hybrid_lock() &&
-                            (!current_guard.is_olc_lock() || !next_guard.is_olc_lock())
-                        {
-                            mem::drop(next_guard);
-                            mem::drop(current_guard);
-
-                            return Err((curr_level - 1, attempt + 1));
-                        }
-                        else if !current_guard.upgrade_write_lock() || !next_guard.upgrade_write_lock() {
+                        if !current_guard.upgrade_write_lock() || !next_guard.upgrade_write_lock() {
                             mem::drop(next_guard);
                             mem::drop(current_guard);
 

@@ -345,11 +345,8 @@ impl<const FAN_OUT: usize,
                         height,
                         &next_node);
 
-                    let next_guard_result
-                        = next_guard.deref();
-
                     let has_overflow_next
-                        = self.has_overflow(next_guard_result.unwrap());
+                        = self.has_overflow(next_guard.deref().unwrap());
 
                     if has_overflow_next {
                         if self.locking_strategy.additional_lock_required() &&
@@ -361,8 +358,9 @@ impl<const FAN_OUT: usize,
                             return Err((curr_level - 1, attempt + 1));
                         }
                         else if self.locking_strategy.is_orwc() &&
-                            self.has_overflow(current_guard.deref_unsafe().unwrap())
-                        {
+                            self.has_overflow(current_guard.deref().unwrap()) ||
+                            !self.has_overflow(next_guard.deref().unwrap())
+                        { // this maps the obsolete check within an is_valid/deref auto call
                             mem::drop(next_guard);
                             mem::drop(current_guard);
 

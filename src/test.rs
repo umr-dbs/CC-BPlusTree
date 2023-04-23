@@ -10,7 +10,7 @@ use sysinfo::{DiskExt, System, UserExt};
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::crud_model::crud_api::CRUDDispatcher;
-use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, hybrid_lock_attempts, lightweight_hybrid_lock, LockingStrategy, olc, olc_bounded, olc_bounded_attempts, orwc, orwc_attempts};
+use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, lightweight_hybrid_lock_attempts, LockingStrategy, olc, olc_bounded, olc_bounded_attempts, orwc, orwc_attempts};
 use crate::page_model::BlockRef;
 use crate::page_model::node::Node;
 use crate::show_alignment_bsz;
@@ -42,13 +42,13 @@ pub fn dec_key(k: Key) -> Key {
 
 pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
-pub(crate) const S_THREADS_CPU: [usize; 10] = [
-    // 1,
-    // 2,
-    // 3,
-    // 4,
-    // 8,
-    // 10,
+pub(crate) const S_THREADS_CPU: [usize; 16] = [
+    1,
+    2,
+    3,
+    4,
+    8,
+    10,
     12,
     16,
     24,
@@ -71,26 +71,22 @@ pub(crate) const S_INSERTIONS: [Key; 1] = [
     // 2_000_000,
     // 5_000_000,
     // 10_000_000,
-    20_000_000,
+    // 20_000_000,
     // 50_000_000,
-    // 100_000_000,
+    100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 2] = [
-    // MonoWriter,
-    // LockCoupling,
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 9] = [
+    MonoWriter,
+    LockCoupling,
     orwc_attempts(4),
-    // orwc_attempts(16),
-    // orwc_attempts(64),
-    // orwc_attempts(128),
-    //
-    // olc(),
-    // lightweight_hybrid_lock(),
-    //
-    // olc_bounded_attempts(4),
-    // olc_bounded_attempts(16),
-    // olc_bounded_attempts(64),
-    // olc_bounded_attempts(128),
+    orwc_attempts(16),
+
+    olc(),
+    lightweight_hybrid_lock_attempts(4),
+
+    olc_bounded_attempts(4),
+    olc_bounded_attempts(16),
 
     hybrid_lock()
 ];

@@ -1,6 +1,6 @@
 ## Concurrency Control CRUD B+Tree
-    Build:             - 22.04.2023
-    Version:           - 0.0.82 (Beta)
+    Build:             - 23.04.2023
+    Version:           - 0.0.83 (Beta)
     Enable OLC-HLE:    - cargo build --features hardware-lock-elision
     Architecture:      - x86, ARM (untested)
     OS:                - Linux, Windows
@@ -21,15 +21,15 @@
         Name:   `OLC`
         Object: `{"OLC":"Free"}`
 #### Bounded OLC
-    Name: 	`OLC-Bounded(Attempts=x;Level=<Height|Const>)`
+    Name: 	`OLC-Bounded(Attempts=<x>;Level=<Height|Const>)`
     Object: `{"OLC":{"Bounded":{"attempts":x_usize,"level":{"Height":y_f32}}}}`
     Object: `{"OLC":{"Bounded":{"attempts":x_usize,"level":{"Const":y_u16}}}}`
 #### Hybrid Locking
-    Name: 	`HybridLock(Attempts=x;Level=<Height|Const>)`
+    Name: 	`HybridLock(Attempts=<x>;Level=<Height|Const>)`
     Object: `{"HybridLocking":[{"Height":y_f32},x_usize]}`
     Object: `{"HybridLocking":[{"Const":y_u16},x_usize]}`
 #### Lightweight Hybrid Locking
-    Name: 	`Lightweight-HybridLock(Attempts=x;Level=1*height)`
+    Name: 	`Lightweight-HybridLock(Attempts=<x>;Level=1*height)`
     Object: `{"OLC":{"Pinned":{"attempts":x_usize,"level":{"Height":y_f32}}}}`
     Object: `{"OLC":{"Pinned":{"attempts":x_usize,"level":{"Const":y_u16}}}}`
 # CRUD

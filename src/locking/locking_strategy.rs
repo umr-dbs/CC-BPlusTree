@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
+use crate::locking::locking_strategy::OLCVariant::Pinned;
 use crate::page_model::{Attempts, Level, LevelVariant};
 use crate::tree::root::LEVEL_ROOT;
 use crate::utils::smart_cell::LatchType;
@@ -33,7 +34,7 @@ pub const fn hybrid_lock_attempts(attempts: Attempts) -> LockingStrategy {
 #[inline(always)]
 pub const fn lightweight_hybrid_lock() -> LockingStrategy {
     LockingStrategy::OLC(OLCVariant::Pinned {
-        attempts: 0,
+        attempts: 4,
         level: LevelVariant::Height(1f32)
     })
 }
@@ -149,7 +150,10 @@ impl LockingStrategy {
             LockingStrategy::MonoWriter => LatchType::None,
             LockingStrategy::LockCoupling => LatchType::Exclusive,
             LockingStrategy::ORWC(..) => LatchType::ReadersWriter,
-            LockingStrategy::OLC(..) => LatchType::Optimistic,
+            LockingStrategy::OLC(OLCVariant::Free) | LockingStrategy::OLC(OLCVariant::Bounded { .. }) =>
+                LatchType::Optimistic,
+            LockingStrategy::OLC(OLCVariant::Pinned { .. }) =>
+                LatchType::LightWeightHybrid,
             LockingStrategy::HybridLocking(..) => LatchType::Hybrid
         }
     }
@@ -183,6 +187,14 @@ impl LockingStrategy {
     pub(crate) const fn is_hybrid_lock(&self) -> bool {
         match self {
             Self::HybridLocking(..) => true,
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_lightweight_hybrid_lock(&self) -> bool {
+        match self {
+            Self::OLC(Pinned { .. }) => true,
             _ => false
         }
     }

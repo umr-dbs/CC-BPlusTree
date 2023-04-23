@@ -52,6 +52,7 @@ impl<const FAN_OUT: usize,
             LatchType::Optimistic => self.into_olc(),
             LatchType::Hybrid => self.into_hybrid(),
             LatchType::None => self.into_free(),
+            LatchType::LightWeightHybrid => self.into_lightweight_hybrid()
         }
     }
 }

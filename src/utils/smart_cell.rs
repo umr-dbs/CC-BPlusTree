@@ -3,6 +3,7 @@ use std::{hint, mem, ptr};
 use std::mem::{transmute, transmute_copy};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
@@ -521,6 +522,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                         if let Some(write_latch) = opt.write_lock(read_latch) {
                             let writer = OLCWriter(transmute_copy(cell), write_latch);
                             ptr::write(self, writer);
+                            fence(AcqRel);
                             return true;
                         }
                     }

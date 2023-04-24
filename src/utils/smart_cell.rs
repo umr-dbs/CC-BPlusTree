@@ -499,33 +499,33 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             }
             OLCReader(Some((ref cell, read_latch))) => unsafe {
                 match cell.0.as_ref() {
-                    OLCCell(opt) => if let Some(write_latch)
+                    OLCCell(opt) | LightWeightHybridCell(opt) => if let Some(write_latch)
                         = opt.write_lock(*read_latch)
                     {
                         let writer = OLCWriter(transmute_copy(cell), write_latch);
                         ptr::write(self, writer);
                         return true;
                     },
-                    LightWeightHybridCell(opt) => if let Some(write_latch)
-                        = opt.write_lock(*read_latch)
-                    {
-                        let writer = OLCWriter(transmute_copy(cell), write_latch);
-                        ptr::write(self, writer);
-                        return true;
-                    } else {
-                        let read_latch
-                            = opt.load_version();
-
-                        if read_latch & WRITE_PIN_OBSOLETE_FLAG_VERSION != 0 {
-                            return false;
-                        }
-                        if let Some(write_latch) = opt.write_lock(read_latch) {
-                            let writer = OLCWriter(transmute_copy(cell), write_latch);
-                            ptr::write(self, writer);
-                            fence(AcqRel);
-                            return true;
-                        }
-                    }
+                    // LightWeightHybridCell(opt) => if let Some(write_latch)
+                    //     = opt.write_lock(*read_latch)
+                    // {
+                    //     let writer = OLCWriter(transmute_copy(cell), write_latch);
+                    //     ptr::write(self, writer);
+                    //     return true;
+                    // } else {
+                    //     let read_latch
+                    //         = opt.load_version();
+                    //
+                    //     if read_latch & WRITE_PIN_OBSOLETE_FLAG_VERSION != 0 {
+                    //         return false;
+                    //     }
+                    //     if let Some(write_latch) = opt.write_lock(read_latch) {
+                    //         let writer = OLCWriter(transmute_copy(cell), write_latch);
+                    //         ptr::write(self, writer);
+                    //         fence(AcqRel);
+                    //         return true;
+                    //     }
+                    // }
                     HybridCell(opt, rw) => if let Some(guard)
                         = rw.try_write()
                     {

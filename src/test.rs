@@ -76,14 +76,14 @@ pub(crate) const S_INSERTIONS: [Key; 1] = [
     100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 9] = [
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 8] = [
     MonoWriter,
     LockCoupling,
     orwc_attempts(4),
     orwc_attempts(16),
 
     olc(),
-    lightweight_hybrid_lock_attempts(4),
+    // lightweight_hybrid_lock_attempts(4),
 
     olc_bounded_attempts(4),
     olc_bounded_attempts(16),

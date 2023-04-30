@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use crate::page_model::Attempts;
 use crate::record_model::{AtomicVersion, Version};
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::SmartFlavor::{ExclusiveCell, FreeCell, HybridCell, LightWeightHybridCell, OLCCell, ReadersWriterCell};
@@ -81,7 +82,7 @@ pub enum LatchType {
 
 #[inline(always)]
 #[cfg(target_os = "linux")]
-pub fn sched_yield(attempt: usize) {
+pub fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
         unsafe { libc::sched_yield(); }
     } else {
@@ -89,7 +90,7 @@ pub fn sched_yield(attempt: usize) {
     }
 }
 
-pub const FORCE_YIELD: usize = 4;
+pub const FORCE_YIELD: Attempts = 4;
 
 #[inline(always)]
 #[cfg(not(target_os = "linux"))]

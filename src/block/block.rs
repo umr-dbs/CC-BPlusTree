@@ -15,7 +15,7 @@ pub struct Block<
     Key: Default + Ord + Copy + Hash,
     Payload: Default + Clone,
 > {
-    pub block_id: BlockID,
+    // pub block_id: BlockID,
     pub node_data: Node<FAN_OUT, NUM_RECORDS, Key, Payload>,
 }
 
@@ -27,7 +27,7 @@ impl<const FAN_OUT: usize,
 {
     fn default() -> Self {
         Block {
-            block_id: 0,
+            // block_id: 0,
             node_data: Node::Leaf(LeafPage::new()),
         }
     }
@@ -41,7 +41,7 @@ impl<const FAN_OUT: usize,
 {
     #[inline(always)]
     pub const fn block_id(&self) -> BlockID {
-        self.block_id
+        0
     }
 
     #[inline(always)]

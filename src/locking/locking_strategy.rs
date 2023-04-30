@@ -1,115 +1,99 @@
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
-use crate::locking::locking_strategy::OLCVariant::Pinned;
-use crate::page_model::{Attempts, Level, LevelVariant};
+use crate::page_model::{Attempts, Height, Level};
 use crate::tree::root::LEVEL_ROOT;
 use crate::utils::smart_cell::LatchType;
 
 #[inline(always)]
 pub const fn olc() -> LockingStrategy {
-    LockingStrategy::OLC(OLCVariant::Free)
-}
-
-#[inline(always)]
-pub const fn olc_bounded() -> LockingStrategy {
-    LockingStrategy::OLC(OLCVariant::Bounded { attempts: 4, level: LevelVariant::Height(1f32) })
-}
-
-#[inline(always)]
-pub const fn olc_bounded_attempts(attempts: Attempts) -> LockingStrategy {
-    LockingStrategy::OLC(OLCVariant::Bounded { attempts, level: LevelVariant::Height(1f32) })
+    LockingStrategy::OLC
 }
 
 #[inline(always)]
 pub const fn hybrid_lock() -> LockingStrategy {
-    LockingStrategy::HybridLocking(LevelVariant::Height(1f32), 1)
+    hybrid_lock_attempts(1)
 }
 
 #[inline(always)]
 pub const fn hybrid_lock_attempts(attempts: Attempts) -> LockingStrategy {
-    LockingStrategy::HybridLocking(LevelVariant::Height(1f32), attempts)
+    LockingStrategy::HybridLocking { read_attempt: attempts }
 }
 
 #[inline(always)]
 pub const fn lightweight_hybrid_lock() -> LockingStrategy {
-    LockingStrategy::OLC(OLCVariant::Pinned {
-        attempts: 4,
-        level: LevelVariant::Height(1f32)
-    })
+    lightweight_hybrid_lock_read_attempts(4)
 }
 
 #[inline(always)]
-pub const fn lightweight_hybrid_lock_attempts(attempts: Attempts) -> LockingStrategy {
-    LockingStrategy::OLC(OLCVariant::Pinned {
-        attempts,
-        level: LevelVariant::Height(1f32)
-    })
+pub const fn lightweight_hybrid_lock_read_attempts(attempts: Attempts) -> LockingStrategy {
+    LockingStrategy::LightweightHybridLock {
+        read_level: 1_f32,
+        read_attempt: attempts,
+        write_level: f32::MAX,
+        write_attempt: Attempts::MAX,
+    }
+}
+
+#[inline(always)]
+pub const fn lightweight_hybrid_lock_write_attempts(attempts: Attempts) -> LockingStrategy {
+    LockingStrategy::LightweightHybridLock {
+        read_level: f32::MAX,
+        read_attempt: attempts,
+        write_level: 1f32,
+        write_attempt: Attempts::MAX,
+    }
+}
+
+#[inline(always)]
+pub const fn lightweight_hybrid_lock_unlimited() -> LockingStrategy {
+    LockingStrategy::LightweightHybridLock {
+        read_level: f32::MAX,
+        read_attempt: Attempts::MAX,
+        write_level: f32::MAX,
+        write_attempt: Attempts::MAX,
+    }
 }
 
 #[inline(always)]
 pub const fn orwc() -> LockingStrategy {
-    LockingStrategy::ORWC(LevelVariant::Height(1f32), 4)
+    orwc_attempts(4)
 }
 
 #[inline(always)]
 pub const fn orwc_attempts(attempts: Attempts) -> LockingStrategy {
-    LockingStrategy::ORWC(LevelVariant::Height(1f32), attempts)
+    LockingStrategy::ORWC { write_level: 1f32, write_attempt: attempts }
 }
 
-#[repr(u8)]
-#[derive(Serialize, Deserialize, Clone)]
-pub enum OLCVariant {
-    Free,
-    Pinned {
-        attempts: Attempts,
-        level: LevelVariant,
-    },
-    Bounded {
-        attempts: Attempts,
-        level: LevelVariant,
-    },
+pub trait LevelExtras {
+    fn is_lock(&self, height: Height, lock_from: f32) -> bool;
 }
 
-impl OLCVariant {
-    pub const fn attempts(&self) -> Attempts {
-        match self {
-            Self::Bounded {
-                attempts,
-                ..
-            } => *attempts,
-            Self::Pinned {
-                attempts,
-                ..
-            } => *attempts,
-            _ => Attempts::MAX,
-        }
-    }
-
-    pub fn level_variant(&self) -> LevelVariant {
-        match self {
-            Self::Bounded {
-                level,
-                ..
-            } => level.clone(),
-            Self::Pinned {
-                level,
-                ..
-            } => level.clone(),
-            _ => LevelVariant::Const(Level::MAX),
-        }
+impl LevelExtras for Level {
+    #[inline(always)]
+    fn is_lock(&self, height: Height, lock_from: f32) -> bool {
+        (lock_from * height as f32) as Self <= *self
     }
 }
 
-#[repr(u8)]
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub enum LockingStrategy {
     #[default]
     MonoWriter,
     LockCoupling,
-    ORWC(LevelVariant, Attempts),
-    OLC(OLCVariant),
-    HybridLocking(LevelVariant, Attempts)
+    ORWC {
+        write_level: f32,
+        write_attempt: Attempts,
+    },
+    OLC,
+    LightweightHybridLock {
+        read_level: f32,
+        read_attempt: Attempts,
+        write_level: f32,
+        write_attempt: Attempts,
+    },
+    HybridLocking {
+        read_attempt: Attempts,
+    },
 }
 
 pub type CRUDProtocol = LockingStrategy;
@@ -117,52 +101,67 @@ pub type CRUDProtocol = LockingStrategy;
 impl Display for LockingStrategy {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MonoWriter => write!(f, "MonoWriter"),
-            Self::LockCoupling => write!(f, "LockCoupling"),
-            Self::ORWC(level, attempts) =>
-                write!(f, "ORWC(Attempts={};Level={})", attempts, level),
-            Self::OLC(OLCVariant::Free) => write!(f, "OLC"),
-            Self::OLC(OLCVariant::Pinned { attempts, level }) =>
-                write!(f, "Lightweight-HybridLock(Attempts={};Level={})", attempts, level),
-            Self::OLC(OLCVariant::Bounded { attempts, level }) =>
-                write!(f, "OLC-Bounded(Attempts={};Level={})", attempts, level),
-            LockingStrategy::HybridLocking(level, attempts) =>
-                write!(f, "HybridLock(Attempts={};Level={})", attempts, level),
+            LockingStrategy::MonoWriter => write!(f, "MonoWriter"),
+            LockingStrategy::LockCoupling => write!(f, "LockCoupling"),
+            LockingStrategy::ORWC { write_level, write_attempt } =>
+                write!(f, "ORWC(Attempts={};Level={}*height)", write_attempt, write_level),
+            LockingStrategy::OLC => write!(f, "OLC"),
+            LockingStrategy::LightweightHybridLock {
+                write_level, read_level, ..
+            } if *write_level > 1f32 && *read_level > 1f32 => write!(f, "Lightweight-HybridLock(Unlimited)"),
+            LockingStrategy::LightweightHybridLock {
+                write_level, read_level, read_attempt, ..
+            } if *write_level > 1f32  => write!(f, "Lightweight-HybridLock(rAttempts={};rLevel={}*height)",
+                                                read_attempt, read_level),
+            LockingStrategy::LightweightHybridLock {
+                write_level, write_attempt, read_level, ..
+            } if *read_level > 1f32  => write!(f, "Lightweight-HybridLock(wAttempts={};wLevel={}*height)",
+                                               write_attempt, write_level),
+            LockingStrategy::LightweightHybridLock {
+                read_level, read_attempt,
+                write_level, write_attempt
+            } => write!(f, "Lightweight-HybridLock(wAttempts={};wLevel={}*height;rAttempts={};rLevel={}*height)",
+                        write_attempt, write_level,
+                        read_attempt, read_level),
+            LockingStrategy::HybridLocking { read_attempt } =>
+                write!(f, "HybridLocking(Attempts={})", read_attempt),
         }
     }
 }
 
 impl LockingStrategy {
-    const KEY_LOCKING_STRATEGY: &'static str = "lockingstrategy";
-
-    pub(crate) fn load(configs: &HashMap<String, String>) -> LockingStrategy {
-        match configs.get(Self::KEY_LOCKING_STRATEGY) {
-            None => LockingStrategy::default(),
-            Some(inner) => serde_json::from_str(inner)
-                .ok()
-                .unwrap_or(LockingStrategy::default())
-        }
-    }
+    // const KEY_LOCKING_STRATEGY: &'static str = "lockingstrategy";
+    //
+    // pub(crate) fn load(configs: &HashMap<String, String>) -> LockingStrategy {
+    //     match configs.get(Self::KEY_LOCKING_STRATEGY) {
+    //         None => LockingStrategy::default(),
+    //         Some(inner) => serde_json::from_str(inner)
+    //             .ok()
+    //             .unwrap_or(LockingStrategy::default())
+    //     }
+    // }
 
     #[inline(always)]
     pub const fn latch_type(&self) -> LatchType {
         match self {
             LockingStrategy::MonoWriter => LatchType::None,
             LockingStrategy::LockCoupling => LatchType::Exclusive,
-            LockingStrategy::ORWC(..) => LatchType::ReadersWriter,
-            LockingStrategy::OLC(OLCVariant::Free) | LockingStrategy::OLC(OLCVariant::Bounded { .. }) =>
+            LockingStrategy::ORWC { .. } => LatchType::ReadersWriter,
+            LockingStrategy::OLC =>
                 LatchType::Optimistic,
-            LockingStrategy::OLC(OLCVariant::Pinned { .. }) =>
+            LockingStrategy::LightweightHybridLock { .. } =>
                 LatchType::LightWeightHybrid,
-            LockingStrategy::HybridLocking(..) => LatchType::Hybrid
+            LockingStrategy::HybridLocking { .. } =>
+                LatchType::Hybrid
         }
     }
 
     #[inline(always)]
     pub(crate) const fn is_optimistic(&self) -> bool {
         match self {
-            Self::OLC(_) => true,
-            Self::HybridLocking(..) => true,
+            Self::OLC => true,
+            Self::HybridLocking { .. } => true,
+            Self::LightweightHybridLock { .. } => true,
             _ => false
         }
     }
@@ -178,7 +177,7 @@ impl LockingStrategy {
     #[inline(always)]
     pub(crate) const fn is_orwc(&self) -> bool {
         match self {
-            Self::ORWC(..) => true,
+            Self::ORWC { .. } => true,
             _ => false
         }
     }
@@ -186,7 +185,7 @@ impl LockingStrategy {
     #[inline(always)]
     pub(crate) const fn is_hybrid_lock(&self) -> bool {
         match self {
-            Self::HybridLocking(..) => true,
+            Self::HybridLocking { .. } => true,
             _ => false
         }
     }
@@ -194,16 +193,8 @@ impl LockingStrategy {
     #[inline(always)]
     pub(crate) const fn is_lightweight_hybrid_lock(&self) -> bool {
         match self {
-            Self::OLC(Pinned { .. }) => true,
+            Self::LightweightHybridLock { .. } => true,
             _ => false
-        }
-    }
-
-    pub(crate) const fn is_olc_limited(&self) -> Option<bool> {
-        match self {
-            Self::OLC(OLCVariant::Free) => Some(false),
-            Self::OLC(..) => Some(true),
-            _ => None
         }
     }
 
@@ -234,29 +225,17 @@ impl LockingStrategy {
         height: Level,
     ) -> bool {
         match self {
-            // Self::MonoWriter => false,
             Self::LockCoupling => true,
-            Self::ORWC(lock_level, attempts) =>
+            Self::ORWC { write_level, write_attempt } =>
                 curr_level >= height
                     || curr_level >= max_level
-                    || attempt >= *attempts
-                    || lock_level.is_lock(curr_level, height),
-            // Self::OLC(OLCVariant::Free) => false,
-            Self::OLC(OLCVariant::Bounded { attempts, level }) =>
+                    || attempt >= *write_attempt
+                    || curr_level.is_lock(height, *write_level),
+            Self::LightweightHybridLock { write_level, write_attempt, .. } if *write_level <= 1_f32 =>
                 curr_level >= height
                     || curr_level >= max_level
-                    || attempt >= *attempts
-                    || level.is_lock(curr_level, height),
-            // LockingStrategy::OLC(OLCVariant::Pinned { attempts, level }) =>
-            //     curr_level >= height
-            //         || curr_level >= max_level
-            //         || attempt >= *attempts
-            //         || level.is_lock(curr_level, height),
-            LockingStrategy::HybridLocking(level, attempts) =>
-                curr_level >= height
-                || curr_level >= max_level
-                || attempt >= *attempts
-                || level.is_lock(curr_level, height),
+                    || attempt >= *write_attempt
+                    || curr_level.is_lock(height, *write_level),
             _ => false
         }
     }

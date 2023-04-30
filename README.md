@@ -1,37 +1,18 @@
 ## Concurrency Control CRUD B+Tree
-    Build:             - 24.04.2023
-    Version:           - 0.0.85 (Beta)
+    Build:             - 30.04.2023
+    Version:           - 0.0.86 (Beta)
     Enable OLC-HLE:    - cargo build --features hardware-lock-elision
     Architecture:      - x86, ARM (untested)
     OS:                - Linux, Windows
     Rustc:             - >= 1.65.0 (2021 Edition)
 ## Locking Techniques
-#### Mono
-        Name:   `MonoWriter`
-        Object: `"MonoWriter"`
-
-#### Lock-Coupling
-        Name:   `LockCoupling`
-        Object: `"LockCoupling"`
-#### ORWC
-        Name:   `ORWC(Attempts=<x>;Level=<Height|Const>)`
-        Object: `{"ORWC":[{"Height":y_f32},x_usize]}`
-        Object: `{"ORWC":[{"Const":y_u16},x_usize]}`
-#### OLC
-        Name:   `OLC`
-        Object: `{"OLC":"Free"}`
-#### Bounded OLC
-    Name: 	`OLC-Bounded(Attempts=<x>;Level=<Height|Const>)`
-    Object: `{"OLC":{"Bounded":{"attempts":x_usize,"level":{"Height":y_f32}}}}`
-    Object: `{"OLC":{"Bounded":{"attempts":x_usize,"level":{"Const":y_u16}}}}`
-#### Hybrid Locking
-    Name: 	`HybridLock(Attempts=<x>;Level=<Height|Const>)`
-    Object: `{"HybridLocking":[{"Height":y_f32},x_usize]}`
-    Object: `{"HybridLocking":[{"Const":y_u16},x_usize]}`
-#### Lightweight Hybrid Locking
-    Name: 	`Lightweight-HybridLock(Attempts=<x>;Level=1*height)`
-    Object: `{"OLC":{"Pinned":{"attempts":x_usize,"level":{"Height":y_f32}}}}`
-    Object: `{"OLC":{"Pinned":{"attempts":x_usize,"level":{"Const":y_u16}}}}`
+    Use the terminal 'crud' command for object names and settings.
+    - MonoWriter
+    - LockCoupling
+    - Optimistic Readers-writer Coupling
+    - Optimistic Lock Coupling
+    - Lightweight Hybrid Lock
+    - Hybrid Lock
 # CRUD
     - (C) Create  - Insert a new key
     - (R) Read    - Read a single key or multiple keys

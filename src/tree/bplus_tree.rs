@@ -2,13 +2,14 @@ use std::hash::Hash;
 use std::mem;
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
-use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
+use crate::locking::locking_strategy::{LockingStrategy, LevelExtras};
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::block::block::{Block, BlockGuard};
 use crate::test::{dec_key, inc_key};
 use crate::utils::un_cell::UnCell;
 
 pub type LockLevel = ObjectCount;
+
 pub const INIT_TREE_HEIGHT: Height = 1;
 pub const MAX_TREE_HEIGHT: Height = Height::MAX;
 
@@ -72,14 +73,14 @@ impl<const FAN_OUT: usize,
     }
 
     fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
-                locking_strategy: LockingStrategy,
-                min_key: Key,
-                max_key: Key,
-                inc_key: fn(Key) -> Key,
-                dec_key: fn(Key) -> Key) -> Self
+            locking_strategy: LockingStrategy,
+            min_key: Key,
+            max_key: Key,
+            inc_key: fn(Key) -> Key,
+            dec_key: fn(Key) -> Key) -> Self
     {
         let empty_node
-            = block_manager.make_empty_root();
+            = block_manager.new_empty_leaf();
 
         Self {
             root: UnCell::new(Root::new(
@@ -91,7 +92,7 @@ impl<const FAN_OUT: usize,
             min_key,
             max_key,
             inc_key,
-            dec_key
+            dec_key,
         }
     }
 
@@ -121,7 +122,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub(crate) fn lock_reader(&self, node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
-        -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
+                              -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy {
             LockingStrategy::MonoWriter => node.borrow_free(),
@@ -135,20 +136,20 @@ impl<const FAN_OUT: usize,
                                   node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
                                   curr_level: Level,
                                   attempt: Attempts,
-                                  height: Height,)
+                                  height: Height, )
                                   -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy() {
             LockingStrategy::MonoWriter => node.borrow_free(),
             LockingStrategy::LockCoupling => node.borrow_mut(),
-            LockingStrategy::OLC(OLCVariant::Pinned { attempts, level })
-            if attempt >= *attempts || level.is_lock(curr_level, height) =>
-                node.borrow_pin(),
-            LockingStrategy::OLC(OLCVariant::Bounded { attempts, level })
-            if attempt >= *attempts  || level.is_lock(curr_level, height) =>
-                node.borrow_mut(),
-            LockingStrategy::HybridLocking(level, attempts)
-            if attempt >= *attempts || level.is_lock(curr_level, height) =>
+            LockingStrategy::LightweightHybridLock { read_level, read_attempt, .. } =>
+                if *read_level <= 1f32 && (attempt >= *read_attempt || curr_level.is_lock(height, *read_level)) {
+                    node.borrow_pin()
+                } else {
+                    node.borrow_read()
+                }
+            LockingStrategy::HybridLocking { read_attempt }
+            if attempt >= *read_attempt =>
                 node.borrow_read_hybrid(),
             _ => node.borrow_read(),
         }
@@ -156,11 +157,11 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn apply_for_ref(&self,
-                            curr_level: Level,
-                            max_level: Level,
-                            attempt: Attempts,
-                            height: Level,
-                            block_cc: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
+                                curr_level: Level,
+                                max_level: Level,
+                                attempt: Attempts,
+                                height: Level,
+                                block_cc: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
     ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy() {
@@ -168,27 +169,19 @@ impl<const FAN_OUT: usize,
                 block_cc.borrow_free(),
             LockingStrategy::LockCoupling =>
                 block_cc.borrow_mut(),
-            LockingStrategy::ORWC(lock_level, attempts)
-            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut(),
-            LockingStrategy::ORWC(..) =>
-                block_cc.borrow_read(),
-            LockingStrategy::OLC(OLCVariant::Free) =>
-                block_cc.borrow_read(),
-            LockingStrategy::OLC(OLCVariant::Bounded { attempts, level })
-            if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
-                block_cc.borrow_mut(),
-            LockingStrategy::OLC(OLCVariant::Pinned { .. }) =>
-                block_cc.borrow_read(),
-            // LockingStrategy::OLC(OLCVariant::Pinned { attempts, level })
-            // if curr_level >= height || curr_level >= max_level || attempt >= *attempts || level.is_lock(curr_level, height) =>
-            //     block_cc.borrow_pin(),
-            LockingStrategy::OLC(..) =>
-                block_cc.borrow_read(),
-            // LockingStrategy::HybridLocking(lock_level, attempts)
-            // if curr_level >= height || curr_level >= max_level || attempt >= *attempts || lock_level.is_lock(curr_level, height) =>
-            //     block_cc.borrow_mut(),
-            LockingStrategy::HybridLocking(..) => block_cc.borrow_read()
+            LockingStrategy::ORWC { write_level, write_attempt }
+            if curr_level >= height
+                || curr_level >= max_level
+                || attempt >= *write_attempt
+                || curr_level.is_lock(height, *write_level) => block_cc.borrow_mut(),
+            LockingStrategy::LightweightHybridLock { write_level, write_attempt, .. }
+            if *write_level <= 1f32 &&
+                (curr_level >= height
+                    || curr_level >= max_level
+                    || attempt >= *write_attempt
+                    || curr_level.is_lock(height, *write_level)
+                ) => block_cc.borrow_pin(),
+            _ => block_cc.borrow_read()
         }
     }
 }

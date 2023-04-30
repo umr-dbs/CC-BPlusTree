@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
-use crate::locking::locking_strategy::{OLCVariant, LockingStrategy};
+use crate::locking::locking_strategy::LockingStrategy;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::block::block::BlockGuard;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
@@ -38,7 +38,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
-                     -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
+                                -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
     {
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
@@ -54,30 +54,36 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn retrieve_root_internal(&self, lock_level: LockLevel, attempt: Attempts)
-    -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
+                                         -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
     {
         let root
             = self.root.get();
 
-        let mut root_guard = match self.locking_strategy {
-            LockingStrategy::MonoWriter => root.block.borrow_free(),
-            LockingStrategy::LockCoupling => root.block.borrow_mut(),
-            LockingStrategy::OLC(OLCVariant::Free) => root.block.borrow_read(),
-            LockingStrategy::OLC(OLCVariant::Bounded { .. })
-            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-                root.block.borrow_mut(),
-            LockingStrategy::OLC(..) => root.block.borrow_read(),
-            LockingStrategy::ORWC(..)
-            if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-                root.block.borrow_mut(),
-            LockingStrategy::ORWC(..) =>
-                root.block.borrow_read(),
-            // LockingStrategy::HybridLocking(..)
-            // if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-            //     root.block.borrow_mut(),
-            LockingStrategy::HybridLocking(..) =>
-                root.block.borrow_read()
-        };
+        let mut root_guard =
+            self.apply_for_ref(INIT_TREE_HEIGHT,
+                               lock_level,
+                               attempt,
+                               root.height(),
+                               &root.block);
+        // let mut root_guard = match self.locking_strategy {
+        //     LockingStrategy::MonoWriter => root.block.borrow_free(),
+        //     LockingStrategy::LockCoupling => root.block.borrow_mut(),
+        //     LockingStrategy::OLC(OLCVariant::Free) => root.block.borrow_read(),
+        //     LockingStrategy::OLC(OLCVariant::Bounded { .. })
+        //     if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+        //         root.block.borrow_mut(),
+        //     LockingStrategy::OLC(..) => root.block.borrow_read(),
+        //     LockingStrategy::ORWC(..)
+        //     if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+        //         root.block.borrow_mut(),
+        //     LockingStrategy::ORWC(..) =>
+        //         root.block.borrow_read(),
+        //     // LockingStrategy::HybridLocking(..)
+        //     // if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
+        //     //     root.block.borrow_mut(),
+        //     LockingStrategy::HybridLocking(..) =>
+        //         root.block.borrow_read()
+        // };
 
         let root_ref
             = root_guard.deref();
@@ -219,7 +225,7 @@ impl<const FAN_OUT: usize,
         let latch_type
             = self.locking_strategy.latch_type();
 
-            match from_guard.deref_mut().unwrap().as_mut() {
+        match from_guard.deref_mut().unwrap().as_mut() {
             Node::Index(index_page) => unsafe {
                 let keys
                     = index_page.keys();
@@ -315,7 +321,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
-                                    -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
+                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
     {
         let mut curr_level = INIT_TREE_HEIGHT;
 
@@ -356,8 +362,7 @@ impl<const FAN_OUT: usize,
                             mem::drop(current_guard);
 
                             return Err((curr_level - 1, attempt + 1));
-                        }
-                        else if self.locking_strategy.is_orwc() &&
+                        } else if self.locking_strategy.is_orwc() &&
                             self.has_overflow(current_guard.deref().unwrap()) ||
                             !self.has_overflow(next_guard.deref().unwrap())
                         { // this maps the obsolete check within an is_valid/deref auto call
@@ -447,7 +452,7 @@ impl<const FAN_OUT: usize,
     pub(crate) fn traversal_read_range(
         &self,
         current_range: &Interval<Key>)
-    -> Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>)>
+        -> Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>)>
     {
         let mut current_block
             = self.root.block();

@@ -1,13 +1,10 @@
 use std::{env, fs, mem, path, thread};
-use std::ops::{Deref, Not};
-use std::ptr::null;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use parking_lot::Mutex;
 use rand::prelude::SliceRandom;
-use serde::{Deserialize, Serialize};
 use crate::block::block_manager::bsz_alignment;
 use crate::tree::bplus_tree;
 use crate::locking::locking_strategy::{CRUDProtocol, LockingStrategy, olc};
@@ -15,9 +12,8 @@ use block::block::Block;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::locking::locking_strategy::LockingStrategy::{LockCoupling, MonoWriter};
-use crate::test::{beast_test, beast_test2, BSZ_BASE, EXE_LOOK_UPS, EXE_RANGE_LOOK_UPS, FAN_OUT, format_insertions, gen_rand_data, get_system_info, INDEX, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, simple_test, SyncIndex};
-use crate::utils::safe_cell::SafeCell;
+use crate::locking::locking_strategy::LockingStrategy::MonoWriter;
+use crate::test::{beast_test, beast_test2, BSZ_BASE, FAN_OUT, format_insertions, gen_rand_data, get_system_info, INDEX, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, simple_test, SyncIndex};
 use crate::utils::smart_cell::{CPU_THREADS, ENABLE_YIELD};
 
 mod block;
@@ -32,7 +28,11 @@ mod test;
 const TERMINAL: bool = false;
 
 fn main() {
-    // println!("size = {}", mem::size_of::<SmartFlavor<()>>());
+    // let o = MAKE_INDEX(MonoWriter);
+    // let r = o.root.block.0.as_ref();
+    // println!("size smartflavor = {}", mem::size_of_val(r));
+    //
+    // println!("block size = {}", mem::size_of::<Block<252, 252, Key, Payload>>());
     // make_splash();
     // show_alignment_bsz();
     // do_tests();
@@ -380,19 +380,19 @@ fn make_splash() {
     println!("--> System Log:");
 }
 
-fn experiment(mut threads_cpu: Vec<usize>,
+fn experiment(threads_cpu: Vec<usize>,
               insertions: &[Key],
               strategies: &[LockingStrategy])
 {
-    if CPU_THREADS {
-        let cpu = num_cpus::get();
-        threads_cpu.truncate(threads_cpu
-            .iter()
-            .enumerate()
-            .find(|(_, t)| **t > cpu)
-            .unwrap()
-            .0)
-    }
+    // if CPU_THREADS {
+    //     let cpu = num_cpus::get();
+    //     threads_cpu.truncate(threads_cpu
+    //         .iter()
+    //         .enumerate()
+    //         .find(|(_, t)| **t > cpu)
+    //         .unwrap()
+    //         .0)
+    // }
 
     println!("Number Insertions,Number Threads,Locking Strategy,Time,Fan Out,Leaf Records,Block Size");
 

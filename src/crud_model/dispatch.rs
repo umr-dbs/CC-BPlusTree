@@ -53,7 +53,7 @@ impl<const FAN_OUT: usize,
                 .map(|old| CRUDOperationResult::Updated(key, old))
                 .unwrap_or_default(),
             CRUDOperation::Update(key, payload) => self
-                .traversal_write_olc(key)
+                .traversal_write(key)
                 .deref_mut()
                 .unwrap()
                 .update_record_point(key, payload)

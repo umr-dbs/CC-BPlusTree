@@ -41,7 +41,7 @@ impl<const NUM_RECORDS: usize,
     Payload: Clone + Default,
 > LeafPage<NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             records_len: SafeCell::new(0),
             record_data: unsafe { mem::MaybeUninit::uninit().assume_init() }, // <[MaybeUninit<Entry>; NUM_RECORDS]>::

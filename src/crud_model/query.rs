@@ -113,8 +113,7 @@ impl<const FAN_OUT: usize,
         }
 
         if has_overflow_root && self.locking_strategy.is_orwc() &&
-           !self.has_overflow(root_guard.deref().unwrap()) &&
-           !root_guard.deref().unwrap().is_leaf()
+           !self.has_overflow(root_guard.deref().unwrap())
         { // Detect interferences
             if !root_guard.deref().unwrap().is_leaf() {
                 root_guard.downgrade(); // allow possible concurrency, instead of definitive lock

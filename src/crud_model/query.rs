@@ -116,7 +116,9 @@ impl<const FAN_OUT: usize,
            !self.has_overflow(root_guard.deref().unwrap()) &&
            !root_guard.deref().unwrap().is_leaf()
         { // Detect interferences
-            root_guard.downgrade(); // allow possible concurrency, instead of definitive lock
+            if !root_guard.deref().unwrap().is_leaf() {
+                root_guard.downgrade(); // allow possible concurrency, instead of definitive lock
+            }
             return Ok((root_guard, root.height()))
         }
 

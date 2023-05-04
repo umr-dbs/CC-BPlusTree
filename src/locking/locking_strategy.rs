@@ -207,36 +207,36 @@ impl LockingStrategy {
         }
     }
 
-    #[inline(always)]
-    pub fn is_lock_root(&self, lock_level: Level, attempt: Attempts, height: Level) -> bool {
-        self.is_lock(
-            LEVEL_ROOT,
-            lock_level,
-            attempt,
-            height)
-    }
-
-    #[inline(always)]
-    fn is_lock(
-        &self,
-        curr_level: Level,
-        max_level: Level,
-        attempt: Attempts,
-        height: Level,
-    ) -> bool {
-        match self {
-            Self::LockCoupling => true,
-            Self::ORWC { write_level, write_attempt } =>
-                curr_level >= height
-                    || curr_level >= max_level
-                    || attempt >= *write_attempt
-                    || curr_level.is_lock(height, *write_level),
-            Self::LightweightHybridLock { write_level, write_attempt, .. } if *write_level <= 1_f32 =>
-                curr_level >= height
-                    || curr_level >= max_level
-                    || attempt >= *write_attempt
-                    || curr_level.is_lock(height, *write_level),
-            _ => false
-        }
-    }
+    // #[inline(always)]
+    // pub fn is_lock_root(&self, lock_level: Level, attempt: Attempts, height: Level) -> bool {
+    //     self.is_lock(
+    //         LEVEL_ROOT,
+    //         lock_level,
+    //         attempt,
+    //         height)
+    // }
+    //
+    // #[inline(always)]
+    // fn is_lock(
+    //     &self,
+    //     curr_level: Level,
+    //     max_level: Level,
+    //     attempt: Attempts,
+    //     height: Level,
+    // ) -> bool {
+    //     match self {
+    //         Self::LockCoupling => true,
+    //         Self::ORWC { write_level, write_attempt } =>
+    //             curr_level >= height
+    //                 || curr_level >= max_level
+    //                 || attempt >= *write_attempt
+    //                 || curr_level.is_lock(height, *write_level),
+    //         Self::LightweightHybridLock { write_level, write_attempt, .. } if *write_level <= 1_f32 =>
+    //             curr_level >= height
+    //                 || curr_level >= max_level
+    //                 || attempt >= *write_attempt
+    //                 || curr_level.is_lock(height, *write_level),
+    //         _ => false
+    //     }
+    // }
 }

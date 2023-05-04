@@ -1,6 +1,6 @@
 ## Concurrency Control CRUD B+Tree
-    Build:             - 30.04.2023
-    Version:           - 0.0.86 (Beta)
+    Build:             - 04.05.2023
+    Version:           - 0.0.87 (Beta)
     Enable OLC-HLE:    - cargo build --features hardware-lock-elision
     Architecture:      - x86, ARM (untested)
     OS:                - Linux, Windows
@@ -17,7 +17,7 @@
     - (C) Create  - Insert a new key
     - (R) Read    - Read a single key or multiple keys
     - (U) Update  - Update an existing key
-    - (D) Delete  - NOT YET SUPPORTED
+    - (D) Delete  - Partially supported
 ---------------------------------------
 # Commands
     # Format: `command_name=<parameter0+parameter1+..>`

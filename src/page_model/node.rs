@@ -202,7 +202,7 @@ impl<const FAN_OUT: usize,
                     mem::replace(events_page
                     .as_records_mut()
                     .get_unchecked_mut(found)
-                    .payload_mut(),payload)
+                    .payload_mut(), payload)
                 })
                 .ok(),
             _ => None

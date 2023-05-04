@@ -42,7 +42,7 @@ pub fn dec_key(k: Key) -> Key {
 
 pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
-pub(crate) const S_THREADS_CPU: [usize; 11] = [
+pub(crate) const S_THREADS_CPU: [usize; 12] = [
     1,
     2,
     3,
@@ -54,7 +54,7 @@ pub(crate) const S_THREADS_CPU: [usize; 11] = [
     24,
     32,
     64,
-    // 128,
+    128,
     // 256,
     // 512,
     // 1024,
@@ -71,29 +71,26 @@ pub(crate) const S_INSERTIONS: [Key; 1] = [
     // 2_000_000,
     // 5_000_000,
     // 10_000_000,
-    // 20_000_000,
+    20_000_000,
     // 50_000_000,
-    100_000_000,
+    // 100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 13] = [
-    MonoWriter,
-    LockCoupling,
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 2] = [
+    // MonoWriter,
+    // LockCoupling,
 
-    orwc_attempts(4),
-    orwc_attempts(16),
-    orwc_attempts(64),
-    orwc_attempts(1024),
+    orwc_attempts(0),
+    orwc_attempts(1),
+    // orwc_attempts(4),
+    // orwc_attempts(16),
+    // orwc_attempts(64),
+    // orwc_attempts(1024),
 
-    lightweight_hybrid_lock_read_attempts(4),
-    lightweight_hybrid_lock_read_attempts(16),
-    lightweight_hybrid_lock_read_attempts(64),
-    lightweight_hybrid_lock_read_attempts(1024),
-
-    lightweight_hybrid_lock_unlimited(),
-    olc(),
-
-    hybrid_lock()
+    // lightweight_hybrid_lock_unlimited(),
+    // olc(),
+    //
+    // hybrid_lock()
 ];
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX

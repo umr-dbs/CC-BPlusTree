@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
+use std::ops::Deref;
 use crate::locking::locking_strategy::LockingStrategy;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::block::block::BlockGuard;
@@ -109,6 +110,12 @@ impl<const FAN_OUT: usize,
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
+        }
+
+        if has_overflow_root && self.locking_strategy.is_orwc() &&
+           !self.has_overflow(root_guard.deref().unwrap())
+        { // Detect interferences
+            return Ok((root_guard, root.height()))
         }
 
         if !has_overflow_root {
@@ -355,21 +362,23 @@ impl<const FAN_OUT: usize,
                         = self.has_overflow(next_guard.deref().unwrap());
 
                     if has_overflow_next {
+                        let current_exclusive
+                            = current_guard.is_write_lock();
+
                         if self.locking_strategy.additional_lock_required() &&
-                            (!current_guard.upgrade_write_lock() || !next_guard.upgrade_write_lock())
+                            (!next_guard.upgrade_write_lock() || !current_guard.upgrade_write_lock())
                         {
                             mem::drop(next_guard);
                             mem::drop(current_guard);
 
                             return Err((curr_level - 1, attempt + 1));
                         } else if self.locking_strategy.is_orwc() &&
-                            self.has_overflow(current_guard.deref().unwrap()) ||
-                            !self.has_overflow(next_guard.deref().unwrap())
+                                  !current_exclusive &&
+                                  self.has_overflow(current_guard.deref().unwrap())
                         { // this maps the obsolete check within an is_valid/deref auto call
                             mem::drop(next_guard);
                             mem::drop(current_guard);
-
-                            return Err((curr_level - 2, attempt + 1));
+                            return Err((curr_level - 1, attempt + 1));
                         }
 
                         debug_assert!(self.locking_strategy.additional_lock_required() &&

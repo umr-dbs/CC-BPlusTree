@@ -479,6 +479,23 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     }
 
     #[inline(always)]
+    pub fn downgrade(&mut self) -> bool {
+        match self {
+            RwWriter(guard, ptr) => unsafe {
+                let reader
+                    = RwLockWriteGuard::downgrade(mem::transmute_copy(guard));
+
+                let s_guard
+                    = RwReader(reader, *ptr);
+
+                ptr::write(self, s_guard);
+                true
+            },
+            _ => true
+        }
+    }
+
+    #[inline(always)]
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
             LockFree(_) => true,

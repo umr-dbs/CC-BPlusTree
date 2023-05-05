@@ -3,7 +3,6 @@ use std::{hint, mem, ptr};
 use std::mem::{transmute, transmute_copy};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
@@ -479,7 +478,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     }
 
     #[inline(always)]
-    pub fn downgrade(&mut self) -> bool {
+    pub fn downgrade(&mut self) {
         match self {
             RwWriter(guard, ptr) => unsafe {
                 let reader
@@ -488,10 +487,16 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                 let s_guard
                     = RwReader(reader, *ptr);
 
-                ptr::write(self, s_guard);
-                true
+                ptr::write(self, s_guard)
             },
-            _ => true
+            // OLCWriter(cell, latch)
+            // if *latch & OBSOLETE_FLAG_VERSION == 0 => {
+            //     let reader
+            //         = OLCReader(Some((cell.clone(), *latch & !WRITE_FLAG_VERSION)));
+            //
+            //     let _ = mem::replace(self, reader);
+            // }
+            _ => {}
         }
     }
 
@@ -796,7 +801,7 @@ impl<E: Default> SmartCell<E> {
                     ptr.get_mut(),
                 ))
             },
-            OLCCell(opt) | LightWeightHybridCell(opt) => unsafe {
+            OLCCell(opt) | LightWeightHybridCell(opt) => {
                 let read_version
                     = opt.load_version();
 

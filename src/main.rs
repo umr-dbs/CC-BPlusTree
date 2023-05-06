@@ -1,4 +1,6 @@
 use std::{env, fs, mem, path, thread};
+use std::collections::VecDeque;
+use std::io::BufReader;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Local};
@@ -28,21 +30,105 @@ mod test;
 const TERMINAL: bool = false;
 
 fn main() {
-    // let o = MAKE_INDEX(MonoWriter);
-    // let r = o.root.block.0.as_ref();
-    // println!("size smartflavor = {}", mem::size_of_val(r));
-    //
-    // println!("block size = {}", mem::size_of::<Block<252, 252, Key, Payload>>());
-    // make_splash();
-    // show_alignment_bsz();
-    // do_tests();
-    // simple_test();
-    if TERMINAL {
-        do_tests()
-    } else {
-        experiment(S_THREADS_CPU.to_vec(),
-                   S_INSERTIONS.as_slice(),
-                   S_STRATEGIES.as_slice())
+    for n in S_INSERTIONS {
+        let file_suffix = format_insertions(n as _);
+        let create_file = format!("create_{}.bin", file_suffix);
+        let create_file = create_file.as_str();
+
+        let scan_file = format!("scan_{}.bin", file_suffix);
+        let scan_file = scan_file.as_str();
+
+        // log_debug_ln(format!("Trying to use pre-generated data for n = '{}' ...", n));
+        let (create, scan) = if let (Ok(mut create), Ok(mut scan))
+            = (fs::read(create_file), fs::read(scan_file))
+        {
+            // log_debug_ln(format!("Found pre-generated data CREATE = '{}', SCAN = '{}'", create_file, scan_file));
+            unsafe {
+                create.set_len(create.len() / 8);
+                scan.set_len(scan.len() / 8);
+                (mem::transmute(create), mem::transmute(scan))
+            }
+        } else {
+            // log_debug_ln(format!("Generating CREATE = '{}', SCAN = '{}' ...", create_file, scan_file));
+            let t1s
+                = gen_rand_data(S_INSERTIONS[0] as usize);
+
+            let mut scans = t1s.clone();
+            scans.shuffle(&mut rand::thread_rng());
+
+            fs::write(create_file, unsafe {
+                std::slice::from_raw_parts(t1s.as_ptr() as _, t1s.len() * mem::size_of::<Key>())
+            }).unwrap();
+
+            fs::write(scan_file, unsafe {
+                std::slice::from_raw_parts(scans.as_ptr() as _, scans.len() * mem::size_of::<Key>())
+            }).unwrap();
+
+            (t1s, scans)
+        };
+
+        create_scan_test(create, scan);
+    }
+}
+
+fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
+    let threads_cpu
+        = S_THREADS_CPU.to_vec();
+
+    let strategies
+        = S_STRATEGIES.to_vec();
+
+    println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Read Time");
+
+    for num_threads in threads_cpu.iter() {
+        for ls in strategies.iter() {
+            print!("{}", t1s.len());
+            print!(",{}", *num_threads);
+
+            let (create_time, index) = beast_test(
+                *num_threads,
+                MAKE_INDEX(ls.clone()),
+                t1s.as_slice(), true);
+
+            print!(",{}", create_time);
+            print!(",{}", FAN_OUT);
+            print!(",{}", NUM_RECORDS);
+            print!(",{}", BSZ_BASE);
+
+            let chunk_size = scans.len() / *num_threads;
+            let mut slices = (0..*num_threads).map(|i| unsafe {
+                std::slice::from_raw_parts(
+                    scans.as_ptr().add(i * chunk_size),
+                    chunk_size)
+            }).collect::<VecDeque<_>>();
+
+            let index: &'static INDEX = unsafe { mem::transmute(&index) };
+
+            let start = SystemTime::now();
+            let read_handles = (0..*num_threads).map(|_| {
+                let chunk
+                    = slices.pop_front().unwrap();
+
+                thread::spawn(move ||
+                    for key in chunk {
+                        match index.dispatch(CRUDOperation::Point(*key)) {
+                            CRUDOperationResult::MatchedRecord(_) => {}
+                            CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                            cor =>
+                                log_debug(format!("sleepy joe hit me -> {}", cor))
+                        }})
+            }).collect::<Vec<_>>();
+
+            read_handles
+                .into_iter()
+                .for_each(|handle|
+                    handle.join().unwrap());
+
+            let read_time
+                = SystemTime::now().duration_since(start).unwrap().as_millis();
+
+            println!(",{}", read_time);
+        }
     }
 }
 

@@ -1,7 +1,6 @@
 use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
 use crate::page_model::{Attempts, Height, Level};
-use crate::tree::root::LEVEL_ROOT;
 use crate::utils::smart_cell::LatchType;
 
 #[inline(always)]

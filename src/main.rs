@@ -74,6 +74,12 @@ fn main() {
 }
 
 fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
+    let threads_cpu
+        = S_THREADS_CPU.to_vec();
+
+    let strategies
+        = S_STRATEGIES.to_vec();
+
     for num_threads in threads_cpu.iter() {
         for ls in strategies.iter() {
             print!("{}", t1s.len());

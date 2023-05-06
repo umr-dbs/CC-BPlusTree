@@ -815,15 +815,15 @@ impl<E: Default> SmartCell<E> {
             }
             HybridCell(opt, rw) => match rw.try_write() {
                 None => OLCReader(None),
-                Some(_writer) => unsafe {
+                Some(writer) => unsafe {
                     let (read, read_version)
                         = opt.is_read_not_obsolete_result();
 
                     if !read {
                         OLCReader(None)
                     } else if let Some(write_latch) = opt.write_lock_strong(read_version) {
-                        transmute(OLCWriter(
-                            self.clone(),
+                        transmute(HybridRwWriter(writer,
+                            opt,
                             write_latch))
                     } else {
                         OLCReader(None)

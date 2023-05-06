@@ -53,7 +53,7 @@ fn main() {
         } else {
             // log_debug_ln(format!("Generating CREATE = '{}', SCAN = '{}' ...", create_file, scan_file));
             let t1s
-                = gen_rand_data(S_INSERTIONS[0] as usize);
+                = gen_rand_data(n as usize);
 
             let mut scans = t1s.clone();
             scans.shuffle(&mut rand::thread_rng());

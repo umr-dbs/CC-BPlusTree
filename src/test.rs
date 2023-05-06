@@ -76,7 +76,7 @@ pub(crate) const S_INSERTIONS: [Key; 7] = [
     100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 11] = [
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 10] = [
     MonoWriter,
     LockCoupling,
 
@@ -97,7 +97,7 @@ pub(crate) const S_STRATEGIES: [CRUDProtocol; 11] = [
     olc(),
     lightweight_hybrid_lock_unlimited(),
 
-    hybrid_lock()
+    // hybrid_lock()
 ];
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX

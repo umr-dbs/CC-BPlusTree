@@ -78,7 +78,7 @@ fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
     let strategies
         = S_STRATEGIES.to_vec();
 
-    println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Read Time");
+    println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
 
     for num_threads in threads_cpu.iter() {
         for ls in strategies.iter() {

@@ -401,12 +401,14 @@ impl<const FAN_OUT: usize,
                             &mut current_guard,
                             child_pos,
                             next_guard)
-                    } else if !current_guard.is_valid() || !next_guard.is_valid() {
-                        mem::drop(next_guard);
-                        mem::drop(current_guard);
-
-                        return Err((curr_level - 1, attempt + 1));
-                    } else {
+                    }
+                    // else if !current_guard.is_valid() || !next_guard.is_valid() {
+                    //     mem::drop(next_guard);
+                    //     mem::drop(current_guard);
+                    //
+                    //     return Err((curr_level - 1, attempt + 1));
+                    // }
+                    else {
                         current_guard = next_guard;
                     }
                 }

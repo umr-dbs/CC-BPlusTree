@@ -42,13 +42,13 @@ pub fn dec_key(k: Key) -> Key {
 
 pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
-pub(crate) const S_THREADS_CPU: [usize; 6] = [
-    // 1,
-    // 2,
-    // 3,
-    // 4,
-    // 8,
-    // 10,
+pub(crate) const S_THREADS_CPU: [usize; 12] = [
+    1,
+    2,
+    3,
+    4,
+    8,
+    10,
     12,
     16,
     24,
@@ -61,31 +61,31 @@ pub(crate) const S_THREADS_CPU: [usize; 6] = [
     // usize::MAX
 ];
 
-pub(crate) const S_INSERTIONS: [Key; 2] = [
+pub(crate) const S_INSERTIONS: [Key; 7] = [
     // 10,
     // 100,
     // 1_000,
     // 10_000,
     // 100_000,
-    // 1_000_000,
-    // 2_000_000,
-    // 5_000_000,
-    // 10_000_000,
-    // 20_000_000,
+    1_000_000,
+    2_000_000,
+    5_000_000,
+    10_000_000,
+    20_000_000,
     50_000_000,
     100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 1] = [
-    // MonoWriter,
-    // LockCoupling,
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 9] = [
+    MonoWriter,
+    LockCoupling,
 
-    // orwc_attempts(0),
-    // orwc_attempts(1),
-    // orwc_attempts(4),
-    // orwc_attempts(16),
-    // orwc_attempts(64),
-    // orwc_attempts(1024),
+    orwc_attempts(0),
+    orwc_attempts(1),
+    orwc_attempts(4),
+    orwc_attempts(16),
+    orwc_attempts(64),
+    orwc_attempts(1024),
 
     // lightweight_hybrid_lock_read_attempts(0), // only relevant in contented workloads, i.e. WRITE+READ
     // lightweight_hybrid_lock_read_attempts(1),

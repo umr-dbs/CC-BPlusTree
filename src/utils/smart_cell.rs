@@ -288,7 +288,7 @@ impl<E: Default> OptCell<E> {
     pub fn write_obsolete_with_latch(&self, latch: LatchVersion) {
         // debug_assert!(write_version & WRITE_OBSOLETE_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store(OBSOLETE_FLAG_VERSION | latch, Relaxed)
+        self.cell_version.store(OBSOLETE_FLAG_VERSION | latch, Release)
     }
 
     #[inline(always)]
@@ -471,8 +471,10 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                 }
                 _ => {}
             }
-            HybridRwWriter(_, opt, latch) =>
-                opt.write_obsolete_with_latch(*latch),
+            HybridRwWriter(_, opt, latch) => {
+                opt.write_obsolete_with_latch(*latch);
+                *latch |= OBSOLETE_FLAG_VERSION;
+            }
             _ => {}
         }
     }
@@ -618,9 +620,9 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             OLCReader(Some((cell, latch))) => cell.0
                 .is_read_valid(*latch),
             OLCReader(None) => false,
-            HybridRwReader(.., opt, latch) |
-            HybridRwWriter(.., opt, latch) =>
+            HybridRwReader(.., opt, latch) =>
                 opt.is_read_valid(*latch),
+            //  | HybridRwWriter(.., opt, latch)
             _ => true
         }
     }

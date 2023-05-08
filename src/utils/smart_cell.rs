@@ -562,8 +562,14 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
                         }
 
                         if let Some(write_latch) = opt.write_lock_strong(read_latch) {
-                            mem::drop(guard);
-                            let writer = OLCWriter(transmute_copy(cell), write_latch);
+                            // mem::drop(guard);
+                            // let writer = OLCWriter(transmute_copy(cell), write_latch);
+                            // ptr::write(self as *const _ as *mut Self, writer);
+                            let writer = transmute(HybridRwWriter(
+                                guard,
+                                opt,
+                                write_latch));
+
                             ptr::write(self as *const _ as *mut Self, writer);
                             return true;
                         }

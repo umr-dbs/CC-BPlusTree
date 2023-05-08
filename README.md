@@ -1,6 +1,6 @@
 ## Concurrency Control CRUD B+Tree
-    Build:             - 07.05.2023
-    Version:           - 0.0.91 (Beta)
+    Build:             - 08.05.2023
+    Version:           - 0.0.92 (Beta)
     Enable OLC-HLE:    - cargo build --features hardware-lock-elision
     Architecture:      - x86
     OS:                - Linux, Windows

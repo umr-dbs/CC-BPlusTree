@@ -2,12 +2,13 @@ use std::{env, fs, mem, thread};
 use std::collections::VecDeque;
 use std::time::SystemTime;
 use chrono::{DateTime, Local};
+use parking_lot::RwLock;
 use rand::prelude::SliceRandom;
 use crate::tree::bplus_tree;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::test::{beast_test, BSZ_BASE, FAN_OUT, format_insertions, gen_rand_data, hle, INDEX, Key, log_debug, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU};
+use crate::test::{beast_test, BSZ_BASE, FAN_OUT, format_insertions, gen_rand_data, hle, INDEX, Key, log_debug, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, SyncIndex};
 use crate::utils::smart_cell::ENABLE_YIELD;
 
 mod block;
@@ -23,10 +24,10 @@ fn main() {
     make_splash();
 
     // create_scan
-    // println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
+    println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
 
     // update
-    println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
+    // println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
     for n in S_INSERTIONS {
         let file_suffix = format_insertions(n as _);
         let create_file = format!("create_{}.bin", file_suffix);
@@ -64,8 +65,8 @@ fn main() {
             (t1s, scans)
         };
 
-        update_test(create, scan);
-        // create_scan_test(create, scan);
+        // update_test(create, scan);
+        create_scan_test(create, scan);
     }
 }
 
@@ -95,20 +96,44 @@ fn update_test(t1s: Vec<Key>, updates: Vec<Key>) {
 
             let index: &'static INDEX = unsafe { mem::transmute(&index) };
 
-            let start = SystemTime::now();
-            let update_handles = (0..*num_threads).map(|_| {
-                let chunk
-                    = slices.pop_front().unwrap();
+            let start;
+            let update_handles =
+                if index.locking_strategy.is_mono_writer() {
+                    let index_sync = SyncIndex(RwLock::new(&index));
+                    let index_r: &'static SyncIndex = unsafe { mem::transmute(&index_sync) };
 
-                thread::spawn(move ||
-                    for key in chunk {
-                        match index.dispatch(CRUDOperation::Update(*key, Payload::default())) {
-                            CRUDOperationResult::Updated(..) => {}
-                            CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
-                            cor =>
-                                log_debug(format!("sleepy joe hit me -> {}", cor))
-                        }})
-            }).collect::<Vec<_>>();
+                    start = SystemTime::now();
+                    (0..*num_threads).map(|_| {
+                        let chunk
+                            = slices.pop_front().unwrap();
+
+                        thread::spawn(move ||
+                            for key in chunk {
+                                match index_r.dispatch(CRUDOperation::Update(*key, Payload::default())) {
+                                    CRUDOperationResult::Updated(..) => {}
+                                    CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                                    cor =>
+                                        log_debug(format!("sleepy joe hit me -> {}", cor))
+                                }
+                            })
+                    }).collect::<Vec<_>>()
+                } else {
+                    start = SystemTime::now();
+                    (0..*num_threads).map(|_| {
+                        let chunk
+                            = slices.pop_front().unwrap();
+
+                        thread::spawn(move ||
+                            for key in chunk {
+                                match index.dispatch(CRUDOperation::Update(*key, Payload::default())) {
+                                    CRUDOperationResult::Updated(..) => {}
+                                    CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                                    cor =>
+                                        log_debug(format!("sleepy joe hit me -> {}", cor))
+                                }
+                            })
+                    }).collect::<Vec<_>>()
+                };
 
             update_handles
                 .into_iter()
@@ -156,21 +181,43 @@ fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
             }).collect::<VecDeque<_>>();
 
             let index: &'static INDEX = unsafe { mem::transmute(&index) };
+            let start;
+            let read_handles = if index.locking_strategy.is_mono_writer() {
+                let index_sync = SyncIndex(RwLock::new(&index));
+                let index_r: &'static SyncIndex = unsafe { mem::transmute(&index_sync) };
 
-            let start = SystemTime::now();
-            let read_handles = (0..*num_threads).map(|_| {
-                let chunk
-                    = slices.pop_front().unwrap();
+                start = SystemTime::now();
+                (0..*num_threads).map(|_| {
+                    let chunk
+                        = slices.pop_front().unwrap();
 
-                thread::spawn(move ||
-                    for key in chunk {
-                        match index.dispatch(CRUDOperation::Point(*key)) {
-                            CRUDOperationResult::MatchedRecord(_) => {}
-                            CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
-                            cor =>
-                                log_debug(format!("sleepy joe hit me -> {}", cor))
-                        }})
-            }).collect::<Vec<_>>();
+                    thread::spawn(move ||
+                        for key in chunk {
+                            match index_r.dispatch(CRUDOperation::Point(*key)) {
+                                CRUDOperationResult::MatchedRecord(_) => {}
+                                CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                                cor =>
+                                    log_debug(format!("sleepy joe hit me -> {}", cor))
+                            }
+                        })
+                }).collect::<Vec<_>>()
+            } else {
+                start = SystemTime::now();
+                (0..*num_threads).map(|_| {
+                    let chunk
+                        = slices.pop_front().unwrap();
+
+                    thread::spawn(move ||
+                        for key in chunk {
+                            match index.dispatch(CRUDOperation::Point(*key)) {
+                                CRUDOperationResult::MatchedRecord(_) => {}
+                                CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                                cor =>
+                                    log_debug(format!("sleepy joe hit me -> {}", cor))
+                            }
+                        })
+                }).collect::<Vec<_>>()
+            };
 
             read_handles
                 .into_iter()

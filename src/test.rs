@@ -5,7 +5,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 use std::time::SystemTime;
 use itertools::Itertools;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use rand::prelude::SliceRandom;
 use rand::RngCore;
 use sysinfo::{DiskExt, System, UserExt};
@@ -269,11 +269,16 @@ pub fn gen_rand_data(n: usize) -> Vec<Key> {
     nums.into_iter().collect::<Vec<_>>()
 }
 
-pub struct SyncIndex<'a>(pub Mutex<&'a INDEX>);
+pub struct SyncIndex<'a>(pub RwLock<&'a INDEX>);
 
 impl CRUDDispatcher<Key, Payload> for SyncIndex<'_> {
     fn dispatch(&self, next_query: CRUDOperation<Key, Payload>) -> CRUDOperationResult<Key, Payload> {
-        self.0.lock().dispatch(next_query)
+        if next_query.is_read() {
+            self.0.read().dispatch(next_query)
+        }
+        else {
+            self.0.write().dispatch(next_query)
+        }
     }
 }
 
@@ -341,7 +346,7 @@ pub fn beast_test2(num_thread: usize, p_index: INDEX, t1s: &[u64]) -> u128 {
 
     let start;
     if p_index.locking_strategy.is_mono_writer() && num_thread > 1 {
-        let index = SyncIndex(Mutex::new(&p_index));
+        let index = SyncIndex(RwLock::new(&p_index));
         let index_r: &'static SyncIndex = unsafe { mem::transmute(&index) };
 
         start = SystemTime::now();
@@ -404,7 +409,7 @@ pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64], log: bool) -> (u
     let start;
 
     if ls.is_mono_writer() && num_thread > 1 {
-        let index = SyncIndex(Mutex::new(&index));
+        let index = SyncIndex(RwLock::new(&index));
         let index_r: &'static SyncIndex = unsafe { mem::transmute(&index) };
 
         start = SystemTime::now();
@@ -1135,7 +1140,7 @@ pub fn do_tests() {
                     threads.iter().for_each(|spawns| unsafe {
                         if crud.is_mono_writer() {
                             let index_r: &'static INDEX = mem::transmute(&index);
-                            let index = Arc::new(SyncIndex(Mutex::new(index_r)));
+                            let index = Arc::new(SyncIndex(RwLock::new(index_r)));
                             let start = SystemTime::now();
                             (0..=*spawns).map(|_| {
                                 let i1 = index.clone();

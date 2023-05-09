@@ -182,12 +182,12 @@ fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
 
             let index: &'static INDEX = unsafe { mem::transmute(&index) };
             let start;
-            let read_handles = if index.locking_strategy.is_mono_writer() {
+            if index.locking_strategy.is_mono_writer() {
                 let index_sync = SyncIndex(RwLock::new(&index));
                 let index_r: &'static SyncIndex = unsafe { mem::transmute(&index_sync) };
 
                 start = SystemTime::now();
-                (0..*num_threads).map(|_| {
+                let read_handles = (0..*num_threads).map(|_| {
                     let chunk
                         = slices.pop_front().unwrap();
 
@@ -200,10 +200,15 @@ fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
                                     log_debug(format!("sleepy joe hit me -> {}", cor))
                             }
                         })
-                }).collect::<Vec<_>>()
+                }).collect::<Vec<_>>();
+
+                read_handles
+                    .into_iter()
+                    .for_each(|handle|
+                        handle.join().unwrap());
             } else {
                 start = SystemTime::now();
-                (0..*num_threads).map(|_| {
+                let read_handles = (0..*num_threads).map(|_| {
                     let chunk
                         = slices.pop_front().unwrap();
 
@@ -216,13 +221,12 @@ fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
                                     log_debug(format!("sleepy joe hit me -> {}", cor))
                             }
                         })
-                }).collect::<Vec<_>>()
+                }).collect::<Vec<_>>();
+                read_handles
+                    .into_iter()
+                    .for_each(|handle|
+                        handle.join().unwrap());
             };
-
-            read_handles
-                .into_iter()
-                .for_each(|handle|
-                    handle.join().unwrap());
 
             let read_time
                 = SystemTime::now().duration_since(start).unwrap().as_millis();

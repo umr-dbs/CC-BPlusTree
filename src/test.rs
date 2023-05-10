@@ -73,23 +73,23 @@ pub(crate) const S_INSERTIONS: [Key; 1] = [
     // 100_000,
     // 1_000_000,
     // 2_000_000,
-    // 5_000_000,
+    5_000_000,
     // 10_000_000,
     // 20_000_000,
     // 50_000_000,
-    100_000_000,
+    // 100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 10] = [
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 5] = [
     MonoWriter,
     LockCoupling,
 
-    orwc_attempts(0),
+    // orwc_attempts(0),
     orwc_attempts(1),
-    orwc_attempts(4),
-    orwc_attempts(16),
-    orwc_attempts(64),
-    orwc_attempts(1024),
+    // orwc_attempts(4),
+    // orwc_attempts(16),
+    // orwc_attempts(64),
+    // orwc_attempts(1024),
 
     // lightweight_hybrid_lock_read_attempts(0), // only relevant in contented workloads, i.e. WRITE+READ
     // lightweight_hybrid_lock_read_attempts(1),

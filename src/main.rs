@@ -1,6 +1,6 @@
 use std::{env, fs, mem, thread};
 use std::collections::VecDeque;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Local};
 use parking_lot::RwLock;
 use rand::prelude::SliceRandom;
@@ -8,7 +8,7 @@ use crate::tree::bplus_tree;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::test::{beast_test, BSZ_BASE, FAN_OUT, format_insertions, gen_rand_data, hle, INDEX, Key, log_debug, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, SyncIndex};
+use crate::test::{beast_test, BSZ_BASE, FAN_OUT, format_insertions, gen_rand_data, hle, INDEX, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, SyncIndex};
 use crate::utils::smart_cell::ENABLE_YIELD;
 
 mod block;
@@ -97,13 +97,13 @@ fn update_test(t1s: Vec<Key>, updates: Vec<Key>) {
             let index: &'static INDEX = unsafe { mem::transmute(&index) };
 
             let start;
-            let update_handles =
+
                 if index.locking_strategy.is_mono_writer() {
-                    let index_sync = SyncIndex(RwLock::new(&index));
+                    let index_sync = SyncIndex(RwLock::new(index));
                     let index_r: &'static SyncIndex = unsafe { mem::transmute(&index_sync) };
 
                     start = SystemTime::now();
-                    (0..*num_threads).map(|_| {
+                    let update_handles = (0..*num_threads).map(|_| {
                         let chunk
                             = slices.pop_front().unwrap();
 
@@ -116,10 +116,14 @@ fn update_test(t1s: Vec<Key>, updates: Vec<Key>) {
                                         log_debug(format!("sleepy joe hit me -> {}", cor))
                                 }
                             })
-                    }).collect::<Vec<_>>()
+                    }).collect::<Vec<_>>();
+                    update_handles
+                        .into_iter()
+                        .for_each(|handle|
+                            handle.join().unwrap());
                 } else {
                     start = SystemTime::now();
-                    (0..*num_threads).map(|_| {
+                    let update_handles =  (0..*num_threads).map(|_| {
                         let chunk
                             = slices.pop_front().unwrap();
 
@@ -132,13 +136,14 @@ fn update_test(t1s: Vec<Key>, updates: Vec<Key>) {
                                         log_debug(format!("sleepy joe hit me -> {}", cor))
                                 }
                             })
-                    }).collect::<Vec<_>>()
+                    }).collect::<Vec<_>>();
+                    update_handles
+                        .into_iter()
+                        .for_each(|handle|
+                            handle.join().unwrap());
                 };
 
-            update_handles
-                .into_iter()
-                .for_each(|handle|
-                    handle.join().unwrap());
+
 
             let update_time
                 = SystemTime::now().duration_since(start).unwrap().as_millis();
@@ -195,9 +200,9 @@ fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
                         for key in chunk {
                             match index_r.dispatch(CRUDOperation::Point(*key)) {
                                 CRUDOperationResult::MatchedRecord(_) => {}
-                                CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                                CRUDOperationResult::Error => log_debug_ln(format!("Not found key = {}", key)),
                                 cor =>
-                                    log_debug(format!("sleepy joe hit me -> {}", cor))
+                                    log_debug_ln(format!("sleepy joe hit me -> {}", cor))
                             }
                         })
                 }).collect::<Vec<_>>();
@@ -216,9 +221,9 @@ fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
                         for key in chunk {
                             match index.dispatch(CRUDOperation::Point(*key)) {
                                 CRUDOperationResult::MatchedRecord(_) => {}
-                                CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                                CRUDOperationResult::Error => log_debug_ln(format!("Not found key = {}", key)),
                                 cor =>
-                                    log_debug(format!("sleepy joe hit me -> {}", cor))
+                                    log_debug_ln(format!("sleepy joe hit me -> {}", cor))
                             }
                         })
                 }).collect::<Vec<_>>();

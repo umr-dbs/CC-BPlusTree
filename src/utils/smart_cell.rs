@@ -507,6 +507,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
         match self {
             LockFree(_) => true,
             RwWriter(..) => true,
+            HybridRwWriter(..) => true,
             MutExclusive(..) => true,
             OLCWriter(..) => true,
             RwReader(reader, ptr) => unsafe {

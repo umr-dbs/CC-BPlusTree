@@ -1,15 +1,16 @@
 use std::{env, fs, mem, thread};
-use std::collections::VecDeque;
-use std::time::{Duration, SystemTime};
+use std::ops::{Deref, Index};
+use std::time::SystemTime;
 use chrono::{DateTime, Local};
 use parking_lot::RwLock;
-use rand::prelude::SliceRandom;
 use crate::tree::bplus_tree;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::test::{beast_test, BSZ_BASE, FAN_OUT, format_insertions, gen_rand_data, hle, INDEX, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, SyncIndex};
-use crate::utils::smart_cell::ENABLE_YIELD;
+use crate::locking::locking_strategy::CRUDProtocol;
+use crate::locking::locking_strategy::LockingStrategy::*;
+use crate::test::{BSZ_BASE, FAN_OUT, gen_rand_data, hle, INDEX, Key, log_debug, log_debug_ln, MAKE_INDEX, NUM_RECORDS, Payload, S_INSERTIONS, S_STRATEGIES, S_THREADS_CPU, show_alignment_bsz, SyncIndex, UnsafeIndex};
+use crate::utils::smart_cell::{ENABLE_YIELD, LatchType};
 
 mod block;
 mod crud_model;
@@ -20,225 +21,108 @@ mod tree;
 mod utils;
 mod test;
 
+pub const TREE: fn(Box<INDEX>) -> TreeDispatcher = |index| {
+    if let MonoWriter = index.locking_strategy {
+        TreeDispatcher::Wrapper(Box::leak(Box::new(SyncIndex(RwLock::new(*index)))))
+    }
+    else {
+        TreeDispatcher::Ref(Box::leak(index))
+    }
+};
+
 fn main() {
     make_splash();
+    show_alignment_bsz();
 
-    // create_scan
+    const THREADS: usize        = 24;
+    const INSERTIONS: usize     = 1_000_000;
+    const VALIDATE_CRUD: bool   = true;
+
+    const CRUD: CRUDProtocol = OLC;
+    // const CRUD: CRUDProtocol = LockCoupling;
+    // const CRUD: CRUDProtocol = LockCoupling;
+    // const CRUD: CRUDProtocol = LockCoupling;
+    // const CRUD: CRUDProtocol = LockCoupling;
+
+    let tree = TREE(Box::new(MAKE_INDEX(CRUD)));
+    // End Init B-Tree FREE
+
+    let data_org
+        = gen_rand_data(INSERTIONS);
+
+    let data
+        = data_org.chunks(THREADS).map(|c| c.to_vec()).collect::<Vec<_>>();
+
     println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
+    print!("{}", INSERTIONS);
+    print!(",{}", THREADS);
+    print!(",{}", CRUD);
 
-    // update
-    // println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
-    for n in S_INSERTIONS {
-        let file_suffix = format_insertions(n as _);
-        let create_file = format!("create_{}.bin", file_suffix);
-        let create_file = create_file.as_str();
+    let mut handles
+        = Vec::with_capacity(THREADS);
 
-        let scan_file = format!("scan_{}.bin", file_suffix);
-        let scan_file = scan_file.as_str();
+    let insert_data = data
+        .iter()
+        .map(|inner_insert| inner_insert
+            .iter()
+            .map(|k|CRUDOperation::Insert(*k, Payload::default()))
+            .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
 
-        // log_debug_ln(format!("Trying to use pre-generated data for n = '{}' ...", n));
-        let (create, scan) = if let (Ok(mut create), Ok(mut scan))
-            = (fs::read(create_file), fs::read(scan_file))
-        {
-            // log_debug_ln(format!("Found pre-generated data CREATE = '{}', SCAN = '{}'", create_file, scan_file));
-            unsafe {
-                create.set_len(create.len() / 8);
-                scan.set_len(scan.len() / 8);
-                (mem::transmute(create), mem::transmute(scan))
+    let start = SystemTime::now();
+    for chunk in insert_data {
+        let tree = tree.clone();
+        handles.push(thread::spawn(move ||
+            for insertion in chunk {
+                if VALIDATE_CRUD {
+                    match tree.dispatch(insertion) {
+                        CRUDOperationResult::Inserted(..) => {},
+                        _ => assert!(false)
+                    }
+                }
+                else {
+                    tree.dispatch(insertion);
+                }
+        }));
+    }
+
+    for thread in handles.drain(..) {
+        thread.join().unwrap();
+    }
+
+    print!(",{}", SystemTime::now().duration_since(start).unwrap().as_millis());
+    print!(",{}", FAN_OUT);
+    print!(",{}", NUM_RECORDS);
+    print!(",{}", BSZ_BASE);
+
+    let search_data = data
+        .iter()
+        .map(|inner_search| inner_search
+            .iter()
+            .map(|k|CRUDOperation::Point(*k))
+            .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+
+    let start = SystemTime::now();
+    for chunk in search_data {
+        let tree = tree.clone();
+        handles.push(thread::spawn(move ||
+            for search_op in chunk {
+                if VALIDATE_CRUD {
+                    match tree.dispatch(search_op) {
+                        CRUDOperationResult::MatchedRecord(Some(..))
+                        => {}
+                        _ => assert!(false)
+                    }
+                }
+                else {
+                    tree.dispatch(search_op);
+                }
             }
-        } else {
-            // log_debug_ln(format!("Generating CREATE = '{}', SCAN = '{}' ...", create_file, scan_file));
-            let t1s
-                = gen_rand_data(n as usize);
-
-            let mut scans = t1s.clone();
-            scans.shuffle(&mut rand::thread_rng());
-
-            fs::write(create_file, unsafe {
-                std::slice::from_raw_parts(t1s.as_ptr() as _, t1s.len() * mem::size_of::<Key>())
-            }).unwrap();
-
-            fs::write(scan_file, unsafe {
-                std::slice::from_raw_parts(scans.as_ptr() as _, scans.len() * mem::size_of::<Key>())
-            }).unwrap();
-
-            (t1s, scans)
-        };
-
-        // update_test(create, scan);
-        create_scan_test(create, scan);
+        ));
     }
-}
 
-fn update_test(t1s: Vec<Key>, updates: Vec<Key>) {
-    let threads_cpu
-        = S_THREADS_CPU.to_vec();
-
-    let strategies
-        = S_STRATEGIES.to_vec();
-
-    for num_threads in threads_cpu.iter() {
-        for ls in strategies.iter() {
-            print!("{}", t1s.len());
-            print!(",{}", *num_threads);
-
-            let (_, index) = beast_test(
-                *num_threads,
-                MAKE_INDEX(ls.clone()),
-                t1s.as_slice(), true);
-
-            let chunk_size = updates.len() / *num_threads;
-            let mut slices = (0..*num_threads).map(|i| unsafe {
-                std::slice::from_raw_parts(
-                    updates.as_ptr().add(i * chunk_size),
-                    chunk_size)
-            }).collect::<VecDeque<_>>();
-
-            let index: &'static INDEX = unsafe { mem::transmute(&index) };
-
-            let start;
-
-                if index.locking_strategy.is_mono_writer() {
-                    let index_sync = SyncIndex(RwLock::new(index));
-                    let index_r: &'static SyncIndex = unsafe { mem::transmute(&index_sync) };
-
-                    start = SystemTime::now();
-                    let update_handles = (0..*num_threads).map(|_| {
-                        let chunk
-                            = slices.pop_front().unwrap();
-
-                        thread::spawn(move ||
-                            for key in chunk {
-                                match index_r.dispatch(CRUDOperation::Update(*key, Payload::default())) {
-                                    CRUDOperationResult::Updated(..) => {}
-                                    CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
-                                    cor =>
-                                        log_debug(format!("sleepy joe hit me -> {}", cor))
-                                }
-                            })
-                    }).collect::<Vec<_>>();
-                    update_handles
-                        .into_iter()
-                        .for_each(|handle|
-                            handle.join().unwrap());
-                } else {
-                    start = SystemTime::now();
-                    let update_handles =  (0..*num_threads).map(|_| {
-                        let chunk
-                            = slices.pop_front().unwrap();
-
-                        thread::spawn(move ||
-                            for key in chunk {
-                                match index.dispatch(CRUDOperation::Update(*key, Payload::default())) {
-                                    CRUDOperationResult::Updated(..) => {}
-                                    CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
-                                    cor =>
-                                        log_debug(format!("sleepy joe hit me -> {}", cor))
-                                }
-                            })
-                    }).collect::<Vec<_>>();
-                    update_handles
-                        .into_iter()
-                        .for_each(|handle|
-                            handle.join().unwrap());
-                };
-
-
-
-            let update_time
-                = SystemTime::now().duration_since(start).unwrap().as_millis();
-
-            print!(",{}", update_time);
-            print!(",{}", FAN_OUT);
-            print!(",{}", NUM_RECORDS);
-            println!(",{}", BSZ_BASE);
-        }
-    }
-}
-
-fn create_scan_test(t1s: Vec<Key>, scans: Vec<Key>) {
-    let threads_cpu
-        = S_THREADS_CPU.to_vec();
-
-    let strategies
-        = S_STRATEGIES.to_vec();
-
-    for num_threads in threads_cpu.iter() {
-        for ls in strategies.iter() {
-            print!("{}", t1s.len());
-            print!(",{}", *num_threads);
-
-            let (create_time, index) = beast_test(
-                *num_threads,
-                MAKE_INDEX(ls.clone()),
-                t1s.as_slice(), true);
-
-            print!(",{}", create_time);
-            print!(",{}", FAN_OUT);
-            print!(",{}", NUM_RECORDS);
-            print!(",{}", BSZ_BASE);
-
-            let chunk_size = scans.len() / *num_threads;
-            let mut slices = (0..*num_threads).map(|i| unsafe {
-                std::slice::from_raw_parts(
-                    scans.as_ptr().add(i * chunk_size),
-                    chunk_size)
-            }).collect::<VecDeque<_>>();
-
-            let index: &'static INDEX = unsafe { mem::transmute(&index) };
-            let start;
-            if index.locking_strategy.is_mono_writer() {
-                let index_sync = SyncIndex(RwLock::new(&index));
-                let index_r: &'static SyncIndex = unsafe { mem::transmute(&index_sync) };
-
-                start = SystemTime::now();
-                let read_handles = (0..*num_threads).map(|_| {
-                    let chunk
-                        = slices.pop_front().unwrap();
-
-                    thread::spawn(move ||
-                        for key in chunk {
-                            match index_r.dispatch(CRUDOperation::Point(*key)) {
-                                CRUDOperationResult::MatchedRecord(_) => {}
-                                CRUDOperationResult::Error => log_debug_ln(format!("Not found key = {}", key)),
-                                cor =>
-                                    log_debug_ln(format!("sleepy joe hit me -> {}", cor))
-                            }
-                        })
-                }).collect::<Vec<_>>();
-
-                read_handles
-                    .into_iter()
-                    .for_each(|handle|
-                        handle.join().unwrap());
-            } else {
-                start = SystemTime::now();
-                let read_handles = (0..*num_threads).map(|_| {
-                    let chunk
-                        = slices.pop_front().unwrap();
-
-                    thread::spawn(move ||
-                        for key in chunk {
-                            match index.dispatch(CRUDOperation::Point(*key)) {
-                                CRUDOperationResult::MatchedRecord(_) => {}
-                                CRUDOperationResult::Error => log_debug_ln(format!("Not found key = {}", key)),
-                                cor =>
-                                    log_debug_ln(format!("sleepy joe hit me -> {}", cor))
-                            }
-                        })
-                }).collect::<Vec<_>>();
-                read_handles
-                    .into_iter()
-                    .for_each(|handle|
-                        handle.join().unwrap());
-            };
-
-            let read_time
-                = SystemTime::now().duration_since(start).unwrap().as_millis();
-
-            println!(",{}", read_time);
-        }
-    }
+    println!(",{}", SystemTime::now().duration_since(start).unwrap().as_millis());
 }
 
 /// Essential function.
@@ -274,4 +158,34 @@ fn make_splash() {
 
     println!();
     println!("--> System Log:");
+}
+
+// #[derive(Clone)]
+pub enum TreeDispatcher {
+    Wrapper(&'static SyncIndex),
+    Ref(&'static INDEX)
+}
+
+impl Clone for TreeDispatcher {
+
+    fn clone(&self) -> Self {
+        match self {
+            TreeDispatcher::Wrapper(inner) =>
+                TreeDispatcher::Wrapper(*inner),
+            TreeDispatcher::Ref(inner) =>
+                TreeDispatcher::Ref(*inner)
+        }
+    }
+}
+
+impl CRUDDispatcher<Key, Payload> for TreeDispatcher {
+
+    fn dispatch(&self, crud: CRUDOperation<Key, Payload>) -> CRUDOperationResult<Key, Payload> {
+        match self {
+            TreeDispatcher::Wrapper(sync)=>
+                sync.dispatch(crud),
+            TreeDispatcher::Ref(inner) =>
+                inner.dispatch(crud)
+        }
+    }
 }

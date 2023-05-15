@@ -66,25 +66,6 @@ impl<const FAN_OUT: usize,
                                attempt,
                                root.height(),
                                &root.block);
-        // let mut root_guard = match self.locking_strategy {
-        //     LockingStrategy::MonoWriter => root.block.borrow_free(),
-        //     LockingStrategy::LockCoupling => root.block.borrow_mut(),
-        //     LockingStrategy::OLC(OLCVariant::Free) => root.block.borrow_read(),
-        //     LockingStrategy::OLC(OLCVariant::Bounded { .. })
-        //     if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-        //         root.block.borrow_mut(),
-        //     LockingStrategy::OLC(..) => root.block.borrow_read(),
-        //     LockingStrategy::ORWC(..)
-        //     if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-        //         root.block.borrow_mut(),
-        //     LockingStrategy::ORWC(..) =>
-        //         root.block.borrow_read(),
-        //     // LockingStrategy::HybridLocking(..)
-        //     // if self.locking_strategy.is_lock_root(lock_level, attempt, root.height()) =>
-        //     //     root.block.borrow_mut(),
-        //     LockingStrategy::HybridLocking(..) =>
-        //         root.block.borrow_read()
-        // };
 
         let root_ref
             = root_guard.deref();

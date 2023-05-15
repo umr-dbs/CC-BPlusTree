@@ -2,8 +2,9 @@ use std::collections::{HashSet, VecDeque};
 use std::{env, fs, mem, path, thread};
 use std::fmt::Display;
 use std::hash::Hash;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use rand::prelude::SliceRandom;
@@ -16,7 +17,7 @@ use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, lightweight_hybrid_lock_read_attempts, lightweight_hybrid_lock_unlimited, LockingStrategy, olc, orwc, orwc_attempts};
 use crate::page_model::BlockRef;
 use crate::page_model::node::Node;
-use crate::make_splash;
+use crate::{make_splash, TREE, TreeDispatcher};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::locking::locking_strategy::LockingStrategy::{LockCoupling, MonoWriter};
@@ -24,7 +25,7 @@ use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::ENABLE_YIELD;
 
-pub const EXE_LOOK_UPS: bool = false;
+pub const EXE_LOOK_UPS: bool = true;
 pub const EXE_RANGE_LOOK_UPS: bool = false;
 
 pub const BSZ_BASE: usize = _4KB;
@@ -67,21 +68,21 @@ pub(crate) const S_THREADS_CPU: [usize; 12] = [
 
 pub(crate) const S_INSERTIONS: [Key; 1] = [
     // 10,
-    // 100,
+    100,
     // 1_000,
     // 10_000,
     // 100_000,
     // 1_000_000,
     // 2_000_000,
-    5_000_000,
+    // 5_000_000,
     // 10_000_000,
     // 20_000_000,
     // 50_000_000,
     // 100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 5] = [
-    MonoWriter,
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 4] = [
+    // MonoWriter,
     LockCoupling,
 
     // orwc_attempts(0),
@@ -269,9 +270,30 @@ pub fn gen_rand_data(n: usize) -> Vec<Key> {
     nums.into_iter().collect::<Vec<_>>()
 }
 
-pub struct SyncIndex<'a>(pub RwLock<&'a INDEX>);
+pub struct UnsafeIndex(pub SafeCell<INDEX>);
 
-impl CRUDDispatcher<Key, Payload> for SyncIndex<'_> {
+impl CRUDDispatcher<Key, Payload> for UnsafeIndex {
+    fn dispatch(&self, operation: CRUDOperation<Key, Payload>) -> CRUDOperationResult<Key, Payload> {
+        self.0.get_mut().dispatch(operation)
+    }
+}
+
+impl Deref for UnsafeIndex {
+    type Target = INDEX;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.get_mut()
+    }
+}
+
+unsafe impl Send for UnsafeIndex {}
+
+unsafe impl Sync for UnsafeIndex {}
+
+pub struct SyncIndex(pub RwLock<INDEX>);
+
+impl CRUDDispatcher<Key, Payload> for SyncIndex {
+    #[inline(always)]
     fn dispatch(&self, next_query: CRUDOperation<Key, Payload>) -> CRUDOperationResult<Key, Payload> {
         if next_query.is_read() {
             self.0.read().dispatch(next_query)
@@ -282,15 +304,16 @@ impl CRUDDispatcher<Key, Payload> for SyncIndex<'_> {
     }
 }
 
-unsafe impl<'a> Send for SyncIndex<'a> {}
+unsafe impl<'a> Send for SyncIndex {}
 
-unsafe impl<'a> Sync for SyncIndex<'a> {}
+unsafe impl<'a> Sync for SyncIndex {}
 
 #[inline(always)]
 fn beast_dispatch(index: &impl CRUDDispatcher<u64, f64>, next_query: CRUDOperation<u64, f64>) {
     match index.dispatch(next_query) { // tree.execute(operation),
         CRUDOperationResult::Inserted(key, ..) |
         CRUDOperationResult::Updated(key, ..) => {
+            thread::sleep(Duration::from_millis(5));
             if EXE_LOOK_UPS {
                 loop {
                     match index.dispatch(CRUDOperation::Point(key)) {
@@ -329,126 +352,110 @@ fn beast_dispatch(index: &impl CRUDDispatcher<u64, f64>, next_query: CRUDOperati
 }
 
 #[inline(always)]
-pub fn beast_test2(num_thread: usize, p_index: INDEX, t1s: &[u64]) -> u128 {
-    let query_buff = t1s
-        .iter()
-        .map(|key| CRUDOperation::Insert(*key, Payload::default()))
-        .collect::<Vec<_>>();
+pub fn beast_test2(num_thread: usize, p_index: TreeDispatcher, t1s: &[u64]) -> u128 {
+    // let query_buff = t1s
+    //     .iter()
+    //     .map(|key| CRUDOperation::Insert(*key, Payload::default()))
+    //     .collect::<Vec<_>>();
+    //
+    // let mut handles
+    //     = Vec::with_capacity(num_thread);
+    //
+    // let mut data_buff = query_buff
+    //     .chunks(t1s.len() / num_thread)
+    //     .into_iter()
+    //     .map(|s| SafeCell::new(s.to_vec()))
+    //     .collect::<Vec<_>>();
 
-    let mut handles
-        = Vec::with_capacity(num_thread);
+    // let start;
+    // if p_index.locking_strategy.is_mono_writer() && num_thread > 1 {
+    //     start = SystemTime::now();
+    //     for _ in 1..=num_thread {
+    //         let current_chunk
+    //             = data_buff.pop().unwrap();
+    //
+    //         let index_r
+    //             = p_index.clone();
+    //
+    //         handles.push(thread::spawn(move || current_chunk
+    //             .into_inner()
+    //             .into_iter()
+    //             .for_each(|next_query| beast_dispatch(&index_r, next_query))));
+    //     }
+    // }
+    // else {
+    //     let index: &'static INDEX
+    //         = unsafe { mem::transmute(&p_index) };
+    //
+    //     start = SystemTime::now();
+    //     for _ in 1..=num_thread {
+    //         let current_chunk
+    //             = data_buff.pop().unwrap();
+    //
+    //         handles.push(thread::spawn(move || current_chunk
+    //             .into_inner()
+    //             .into_iter()
+    //             .for_each(|next_query| beast_dispatch(index, next_query))));
+    //     }
+    // }
+    //
+    // handles
+    //     .into_iter()
+    //     .for_each(|handle| handle
+    //         .join()
+    //         .unwrap());
+    //
+    // let time = SystemTime::now().duration_since(start).unwrap().as_millis();
 
-    let mut data_buff = query_buff
-        .chunks(t1s.len() / num_thread)
-        .into_iter()
-        .map(|s| SafeCell::new(s.to_vec()))
-        .collect::<Vec<_>>();
-
-    let start;
-    if p_index.locking_strategy.is_mono_writer() && num_thread > 1 {
-        let index = SyncIndex(RwLock::new(&p_index));
-        let index_r: &'static SyncIndex = unsafe { mem::transmute(&index) };
-
-        start = SystemTime::now();
-        for _ in 1..=num_thread {
-            let current_chunk
-                = data_buff.pop().unwrap();
-            handles.push(thread::spawn(move || current_chunk
-                .into_inner()
-                .into_iter()
-                .for_each(|next_query| beast_dispatch(index_r, next_query))));
-        }
-    }
-    else {
-        let index: &'static INDEX
-            = unsafe { mem::transmute(&p_index) };
-
-        start = SystemTime::now();
-        for _ in 1..=num_thread {
-            let current_chunk
-                = data_buff.pop().unwrap();
-
-            handles.push(thread::spawn(move || current_chunk
-                .into_inner()
-                .into_iter()
-                .for_each(|next_query| beast_dispatch(index, next_query))));
-        }
-    }
-
-    handles
-        .into_iter()
-        .for_each(|handle| handle
-            .join()
-            .unwrap());
-
-    let time = SystemTime::now().duration_since(start).unwrap().as_millis();
-
-    print!(",{}", p_index.locking_strategy);
-    time
+    0
 }
 
 #[inline(always)]
-pub fn beast_test(num_thread: usize, index: INDEX, t1s: &[u64], log: bool) -> (u128, INDEX) {
-    let query_buff = t1s
-        .iter()
-        .map(|key| CRUDOperation::Insert(*key, Payload::default()))
-        .collect::<Vec<_>>();
-
-    let ls
-        = index.locking_strategy.clone();
-
-    let mut handles
-        = Vec::with_capacity(num_thread);
-
-    let mut data_buff = query_buff
-        .chunks(t1s.len() / num_thread)
-        .into_iter()
-        .map(|s| SafeCell::new(s.to_vec()))
-        .collect::<Vec<_>>();
-
-    let start;
-
-    if ls.is_mono_writer() && num_thread > 1 {
-        let index = SyncIndex(RwLock::new(&index));
-        let index_r: &'static SyncIndex = unsafe { mem::transmute(&index) };
-
-        start = SystemTime::now();
-        for _ in 1..=num_thread {
-            let current_chunk
-                = data_buff.pop().unwrap();
-            handles.push(thread::spawn(move || current_chunk
-                .into_inner()
-                .into_iter()
-                .for_each(|next_query| beast_dispatch(index_r, next_query))));
-        }
-    } else {
-        let index: &'static INDEX
-            = unsafe { mem::transmute(&index) };
-
-        start = SystemTime::now();
-        for _ in 1..=num_thread {
-            let current_chunk
-                = data_buff.pop().unwrap();
-
-            handles.push(thread::spawn(move || current_chunk
-                .into_inner()
-                .into_iter()
-                .for_each(|next_query| beast_dispatch(index, next_query))));
-        }
-    }
-
-    handles
-        .into_iter()
-        .for_each(|handle| handle
-            .join()
-            .unwrap());
-
-    let time = SystemTime::now().duration_since(start).unwrap().as_millis();
-    if log {
-        print!(",{}", ls);
-    }
-
-    (time, index)
+pub fn beast_test(num_thread: usize, index: TreeDispatcher, t1s: &[u64], log: bool) -> u128 {
+    // let query_buff = t1s
+    //     .iter()
+    //     .map(|key| CRUDOperation::Insert(*key, Payload::default()))
+    //     .collect::<Vec<_>>();
+    //
+    // let ls
+    //     = index.locking_strategy.clone();
+    //
+    // let mut handles
+    //     = Vec::with_capacity(num_thread);
+    //
+    // let mut data_buff = query_buff
+    //     .chunks(t1s.len() / num_thread)
+    //     .into_iter()
+    //     .map(|s| SafeCell::new(s.to_vec()))
+    //     .collect::<Vec<_>>();
+    //
+    // let start= SystemTime::now();
+    //     for _ in 1..=num_thread {
+    //         let current_chunk
+    //             = data_buff.pop().unwrap();
+    //
+    //         let index_r
+    //             = index.clone();
+    //
+    //         handles.push(thread::spawn(move || current_chunk
+    //             .into_inner()
+    //             .into_iter()
+    //             .for_each(|next_query| beast_dispatch(&index_r, next_query))));
+    //     }
+    //
+    //     handles
+    //         .into_iter()
+    //         .for_each(|handle| handle
+    //             .join()
+    //             .unwrap());
+    //
+    // let time = SystemTime::now().duration_since(start).unwrap().as_millis();
+    // if log {
+    //     print!(",{}", ls);
+    // }
+    //
+    // time
+    0
 }
 
 pub fn level_order<
@@ -1008,9 +1015,9 @@ pub fn do_tests() {
                                 S_INSERTIONS.as_slice(),
                                 S_STRATEGIES.as_slice()),
             "t1" => println!("Time = {}ms",
-                             beast_test(24, MAKE_INDEX(MonoWriter), gen_rand_data(200_000).as_slice(), true).0),
+                             beast_test(24, TREE(Box::new(MAKE_INDEX(MonoWriter))), gen_rand_data(200_000).as_slice(), true)),
             "t2" => println!("Time = {}ms",
-                             beast_test(24, MAKE_INDEX(olc()), gen_rand_data(20_000_000).as_slice(), true).0),
+                             beast_test(24, TREE(Box::new(MAKE_INDEX(olc()))), gen_rand_data(20_000_000).as_slice(), true)),
             "crud_protocol" | "crud_protocols" | "crud" | "cruds" | "protocol" | "protocols" =>
                 println!("{}", S_STRATEGIES
                     .as_slice()
@@ -1125,10 +1132,12 @@ pub fn do_tests() {
 
                 crud.into_iter().for_each(|crud| unsafe {
                     log_debug_ln("Creating index...".to_string());
-                    let (create_time, index) = if crud.is_mono_writer() {
-                        beast_test(1, MAKE_INDEX(crud.clone()), create_data.as_slice(), false)
+                    let mut index = TREE(Box::new(MAKE_INDEX(crud.clone())));
+
+                    let create_time = if crud.is_mono_writer() {
+                        beast_test(1,index.clone(), create_data.as_slice(), false)
                     } else {
-                        beast_test(4, MAKE_INDEX(crud.clone()), create_data.as_slice(), false)
+                        beast_test(4, index.clone(), create_data.as_slice(), false)
                     };
 
                     log_debug_ln(format!("Created index in `{}` ms", create_time));
@@ -1139,8 +1148,6 @@ pub fn do_tests() {
                     println!("Locking Strategy,Threads,Time");
                     threads.iter().for_each(|spawns| unsafe {
                         if crud.is_mono_writer() {
-                            let index_r: &'static INDEX = mem::transmute(&index);
-                            let index = Arc::new(SyncIndex(RwLock::new(index_r)));
                             let start = SystemTime::now();
                             (0..=*spawns).map(|_| {
                                 let i1 = index.clone();
@@ -1288,7 +1295,7 @@ pub fn experiment(threads_cpu: Vec<usize>,
 
                 let time = beast_test2(
                     *num_threads,
-                    MAKE_INDEX(ls.clone()),
+                    TREE(Box::new(MAKE_INDEX(ls.clone()))),
                     t1s.as_slice());
 
                 print!(",{}", time);

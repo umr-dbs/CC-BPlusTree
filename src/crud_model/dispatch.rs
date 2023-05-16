@@ -12,6 +12,7 @@ impl<const FAN_OUT: usize,
     Payload: Default + Clone + Sync + Display
 > CRUDDispatcher<Key, Payload> for BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
+    #[inline]
     fn dispatch(&self, crud_operation: CRUDOperation<Key, Payload>) -> CRUDOperationResult<Key, Payload> {
         let olc
             = self.locking_strategy.is_optimistic();

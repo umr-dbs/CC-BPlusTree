@@ -3,6 +3,7 @@ use std::{env, fs, mem, path, thread};
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use itertools::Itertools;
@@ -25,7 +26,7 @@ use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::ENABLE_YIELD;
 
-pub const EXE_LOOK_UPS: bool = true;
+pub const EXE_LOOK_UPS: bool = false;
 pub const EXE_RANGE_LOOK_UPS: bool = false;
 
 pub const BSZ_BASE: usize = _4KB;
@@ -68,29 +69,29 @@ pub(crate) const S_THREADS_CPU: [usize; 12] = [
 
 pub(crate) const S_INSERTIONS: [Key; 1] = [
     // 10,
-    100,
+    // 100,
     // 1_000,
     // 10_000,
     // 100_000,
     // 1_000_000,
     // 2_000_000,
     // 5_000_000,
-    // 10_000_000,
+    10_000_000,
     // 20_000_000,
     // 50_000_000,
     // 100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 4] = [
-    // MonoWriter,
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 11] = [
+    MonoWriter,
     LockCoupling,
 
-    // orwc_attempts(0),
+    orwc_attempts(0),
     orwc_attempts(1),
-    // orwc_attempts(4),
-    // orwc_attempts(16),
-    // orwc_attempts(64),
-    // orwc_attempts(1024),
+    orwc_attempts(4),
+    orwc_attempts(16),
+    orwc_attempts(64),
+    orwc_attempts(1024),
 
     // lightweight_hybrid_lock_read_attempts(0), // only relevant in contented workloads, i.e. WRITE+READ
     // lightweight_hybrid_lock_read_attempts(1),
@@ -100,7 +101,7 @@ pub(crate) const S_STRATEGIES: [CRUDProtocol; 4] = [
     // lightweight_hybrid_lock_read_attempts(1024),
 
     olc(),
-    // lightweight_hybrid_lock_unlimited(),
+    lightweight_hybrid_lock_unlimited(),
 
     hybrid_lock()
 ];
@@ -271,49 +272,6 @@ pub fn gen_rand_data(n: usize) -> Vec<Key> {
 }
 
 #[inline(always)]
-fn beast_dispatch(index: &Tree, next_query: CRUDOperation<u64, f64>) {
-    match index.dispatch(next_query) { // tree.execute(operation),
-        CRUDOperationResult::Inserted(key, ..) |
-        CRUDOperationResult::Updated(key, ..) => {
-            thread::sleep(Duration::from_millis(5));
-            if EXE_LOOK_UPS {
-                loop {
-                    match index.dispatch(CRUDOperation::Point(key)) {
-                        CRUDOperationResult::MatchedRecord(Some(record))
-                        if record.key == key => { break; }
-                        joe => { //  if !tree.locking_strategy().is_dolos()
-                            log_debug_ln(format!("\nSleepy Joe => Transaction::{} ->",
-                                                 CRUDOperation::<_, Payload>::Point(key)));
-                            log_debug_ln(format!("\nTransactionResult::{}", joe));
-                            println!()
-                        }
-                    };
-                }
-            }
-            if EXE_RANGE_LOOK_UPS {
-                loop {
-                    match index.dispatch(CRUDOperation::Range((key..=key).into())) {
-                        CRUDOperationResult::MatchedRecords(records)
-                        if records.len() != 1 =>
-                            println!("Sleepy Joe => RangeQuery len = {} - {}",
-                                     records.len(),
-                                     records.iter().join("\n")),
-                        CRUDOperationResult::MatchedRecords(ref records)
-                        if records[0].key != key => //{}
-                            println!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
-                        _ => { break; }
-                    };
-                }
-            }
-        }
-        joey => {
-            log_debug_ln(format!("\n#### Sleepy Joe => Transaction ERROR: {}", joey));
-            panic!()
-        }
-    };
-}
-
-#[inline(always)]
 pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[u64]) -> u128 {
     let mut data_buff = t1s
         .iter()
@@ -334,7 +292,44 @@ pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[u64]) -> u128 {
         let index = p_index.clone();
         handles.push(thread::spawn(move || current_chunk
             .into_iter()
-            .for_each(|next_query| beast_dispatch(&index, next_query))));
+            .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
+                CRUDOperationResult::Inserted(key, ..) |
+                CRUDOperationResult::Updated(key, ..) => {
+                    if EXE_LOOK_UPS {
+                        loop {
+                            match index.dispatch(CRUDOperation::Point(key)) {
+                                CRUDOperationResult::MatchedRecord(Some(record))
+                                if record.key == key => { break; }
+                                joe => { //  if !tree.locking_strategy().is_dolos()
+                                    log_debug_ln(format!("\nSleepy Joe => Transaction::{} ->",
+                                                         CRUDOperation::<_, Payload>::Point(key)));
+                                    log_debug_ln(format!("\nTransactionResult::{}", joe));
+                                    println!()
+                                }
+                            };
+                        }
+                    }
+                    if EXE_RANGE_LOOK_UPS {
+                        loop {
+                            match index.dispatch(CRUDOperation::Range((key..=key).into())) {
+                                CRUDOperationResult::MatchedRecords(records)
+                                if records.len() != 1 =>
+                                    println!("Sleepy Joe => RangeQuery len = {} - {}",
+                                             records.len(),
+                                             records.iter().join("\n")),
+                                CRUDOperationResult::MatchedRecords(ref records)
+                                if records[0].key != key => //{}
+                                    println!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
+                                _ => { break; }
+                            };
+                        }
+                    }
+                }
+                joey => {
+                    log_debug_ln(format!("\n#### Sleepy Joe => Transaction ERROR: {}", joey));
+                    panic!()
+                }
+            })));
     }
 
     handles
@@ -404,12 +399,12 @@ pub fn simple_test2() {
 }
 
 pub fn format_insertions(i: Key) -> String {
-    if i >= 1_000_000_000 {
+    if i % 1_000_000_000 == 0 {
         format!("{} B", i / 1_000_000_000)
-    } else if i >= 1_000_000 {
+    } else if i % 1_000_000 == 0 {
         format!("{} Mio", i / 1_000_000)
-    } else if i >= 1_000 {
-        format!("{} K", i / 100_000)
+    } else if i % 1_000 == 0 {
+        format!("{} K", i / 1_000)
     } else {
         i.to_string()
     }
@@ -1199,6 +1194,177 @@ pub fn experiment(threads_cpu: Vec<usize>,
                 print!(",{}", NUM_RECORDS);
                 println!(",{}", BSZ_BASE);
             }
+        }
+    }
+}
+
+pub fn start_paper_tests() {
+    for n in S_INSERTIONS {
+        let file_suffix = format_insertions(n as _);
+        let create_file = format!("create_{}.bin", file_suffix);
+        let create_file = create_file.as_str();
+
+        let scan_file = format!("scan_{}.bin", file_suffix);
+        let scan_file = scan_file.as_str();
+
+        if !Path::new(create_file).exists() || !Path::new(scan_file).exists() {
+            let t1s
+                = gen_rand_data(n as usize);
+
+            let mut scans = t1s.clone();
+            scans.shuffle(&mut rand::thread_rng());
+
+            fs::write(create_file, unsafe {
+                std::slice::from_raw_parts(t1s.as_ptr() as _, t1s.len() * mem::size_of::<Key>())
+            }).unwrap();
+
+            fs::write(scan_file, unsafe {
+                std::slice::from_raw_parts(scans.as_ptr() as _, scans.len() * mem::size_of::<Key>())
+            }).unwrap();
+        };
+    }
+
+    for n in S_INSERTIONS {
+        let file_suffix = format_insertions(n as _);
+        let create_file = format!("create_{}.bin", file_suffix);
+        let create_file = create_file.as_str();
+
+        let scan_file = format!("scan_{}.bin", file_suffix);
+        let scan_file = scan_file.as_str();
+
+        unsafe {
+            let mut create = fs::read(create_file).unwrap();
+            create.set_len(create.len() / 8);
+
+            let mut scan = fs::read(scan_file).unwrap();
+            scan.set_len(scan.len() / 8);
+
+            let create: Vec<Key> = mem::transmute(create);
+            let scan: Vec<Key> = mem::transmute(scan);
+
+            create_scan_test(create.as_slice(), scan.as_slice());
+            update_test(create.as_slice(), scan.as_slice());
+        }
+    }
+}
+
+fn update_test(t1s: &[Key], updates: &[Key]) {
+    let threads_cpu
+        = S_THREADS_CPU.to_vec();
+
+    let strategies
+        = S_STRATEGIES.to_vec();
+
+    for num_threads in threads_cpu.iter() {
+        for ls in strategies.iter() {
+            print!("{}", t1s.len());
+            print!(",{}", *num_threads);
+
+            let index = TREE(ls.clone());
+            let _ = beast_test(
+                *num_threads,
+                index.clone(),
+                t1s, true);
+
+            let chunk_size = updates.len() / *num_threads;
+            let mut slices = (0..*num_threads).map(|i| unsafe {
+                std::slice::from_raw_parts(
+                    updates.as_ptr().add(i * chunk_size),
+                    chunk_size)
+            }).collect::<VecDeque<_>>();
+
+            let start = SystemTime::now();
+            let update_handles = (0..*num_threads).map(|_| {
+                let chunk
+                    = slices.pop_front().unwrap();
+
+                let index
+                    = index.clone();
+
+                thread::spawn(move ||
+                    for key in chunk {
+                        match index.dispatch(CRUDOperation::Update(*key, Payload::default())) {
+                            CRUDOperationResult::Updated(..) => {}
+                            CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                            cor =>
+                                log_debug(format!("sleepy joe hit me -> {}", cor))
+                        }
+                    })
+            }).collect::<Vec<_>>();
+            update_handles
+                .into_iter()
+                .for_each(|handle|
+                    handle.join().unwrap());
+
+            let update_time
+                = SystemTime::now().duration_since(start).unwrap().as_millis();
+
+            print!(",{}", update_time);
+            print!(",{}", FAN_OUT);
+            print!(",{}", NUM_RECORDS);
+            println!(",{}", BSZ_BASE);
+        }
+    }
+}
+
+fn create_scan_test(t1s: &[Key], scans: &[Key]) {
+    let threads_cpu
+        = S_THREADS_CPU.to_vec();
+
+    let strategies
+        = S_STRATEGIES.to_vec();
+
+    for num_threads in threads_cpu.iter() {
+        for ls in strategies.iter() {
+            print!("{}", t1s.len());
+            print!(",{}", *num_threads);
+
+            let index = TREE(ls.clone());
+            let create_time = beast_test(
+                *num_threads,
+                index.clone(),
+                t1s, true);
+
+            print!(",{}", create_time);
+            print!(",{}", FAN_OUT);
+            print!(",{}", NUM_RECORDS);
+            print!(",{}", BSZ_BASE);
+
+            let chunk_size = scans.len() / *num_threads;
+            let mut slices = (0..*num_threads).map(|i| unsafe {
+                std::slice::from_raw_parts(
+                    scans.as_ptr().add(i * chunk_size),
+                    chunk_size)
+            }).collect::<VecDeque<_>>();
+
+            let start = SystemTime::now();
+            let read_handles = (0..*num_threads).map(|_| {
+                let chunk
+                    = slices.pop_front().unwrap();
+
+                let index
+                    = index.clone();
+
+                thread::spawn(move ||
+                    for key in chunk {
+                        match index.dispatch(CRUDOperation::Point(*key)) {
+                            CRUDOperationResult::MatchedRecord(..) => {}
+                            CRUDOperationResult::Error => log_debug_ln(format!("Not found key = {}", key)),
+                            cor =>
+                                log_debug_ln(format!("sleepy joe hit me -> {}", cor))
+                        }
+                    })
+            }).collect::<Vec<_>>();
+            read_handles
+                .into_iter()
+                .for_each(|handle|
+                    handle.join().unwrap());
+
+
+            let read_time
+                = SystemTime::now().duration_since(start).unwrap().as_millis();
+
+            println!(",{}", read_time);
         }
     }
 }

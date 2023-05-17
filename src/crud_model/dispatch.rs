@@ -82,7 +82,9 @@ impl<const FAN_OUT: usize,
                     _ => CRUDOperationResult::Error
             },
             CRUDOperation::Range(key_interval) if olc => {
-                let mut path = vec![];
+                let mut path
+                    = Vec::with_capacity(self.root.height() as _);
+
                 self.next_leaf_page(path.as_mut(),
                                     0,
                                     key_interval.lower);

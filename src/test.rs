@@ -76,10 +76,10 @@ pub(crate) const S_INSERTIONS: [Key; 1] = [
     // 1_000_000,
     // 2_000_000,
     // 5_000_000,
-    10_000_000,
+    // 10_000_000,
     // 20_000_000,
     // 50_000_000,
-    // 100_000_000,
+    100_000_000,
 ];
 
 pub(crate) const S_STRATEGIES: [CRUDProtocol; 11] = [
@@ -1224,6 +1224,7 @@ pub fn start_paper_tests() {
         };
     }
 
+    println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
     for n in S_INSERTIONS {
         let file_suffix = format_insertions(n as _);
         let create_file = format!("create_{}.bin", file_suffix);
@@ -1243,6 +1244,28 @@ pub fn start_paper_tests() {
             let scan: Vec<Key> = mem::transmute(scan);
 
             create_scan_test(create.as_slice(), scan.as_slice());
+        }
+    }
+    println!("######");println!("######");println!("######");println!("######");println!("######");println!("######");
+    println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
+    for n in S_INSERTIONS {
+        let file_suffix = format_insertions(n as _);
+        let create_file = format!("create_{}.bin", file_suffix);
+        let create_file = create_file.as_str();
+
+        let scan_file = format!("scan_{}.bin", file_suffix);
+        let scan_file = scan_file.as_str();
+
+        unsafe {
+            let mut create = fs::read(create_file).unwrap();
+            create.set_len(create.len() / 8);
+
+            let mut scan = fs::read(scan_file).unwrap();
+            scan.set_len(scan.len() / 8);
+
+            let create: Vec<Key> = mem::transmute(create);
+            let scan: Vec<Key> = mem::transmute(scan);
+
             update_test(create.as_slice(), scan.as_slice());
         }
     }

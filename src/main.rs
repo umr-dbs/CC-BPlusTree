@@ -1,6 +1,7 @@
 use std::{env, fs, mem, thread};
 use std::ops::{Deref, Index};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use chrono::{DateTime, Local};
 use parking_lot::RwLock;
@@ -186,8 +187,8 @@ impl CRUDDispatcher<Key, Payload> for TreeDispatcher {
     }
 }
 
-unsafe impl Send for TreeDispatcher {}
-unsafe impl Sync for TreeDispatcher {}
+// unsafe impl Send for TreeDispatcher {}
+// unsafe impl Sync for TreeDispatcher {}
 
 impl TreeDispatcher {
     pub fn as_index(&self) -> &INDEX {

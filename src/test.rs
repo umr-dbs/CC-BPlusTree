@@ -279,7 +279,12 @@ pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[u64]) -> u128 {
         .chunks(t1s.len() / num_thread)
         .into_iter()
         .map(|s| s.into_iter().collect::<Vec<_>>())
-        .collect::<Vec<_>>();
+        .collect::<VecDeque<_>>();
+
+    if data_buff.len() > num_thread {
+        let back = data_buff.pop_back().unwrap();
+        data_buff.front_mut().unwrap().extend(back);
+    }
 
     let mut handles
         = Vec::with_capacity(num_thread);
@@ -287,14 +292,13 @@ pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[u64]) -> u128 {
     let start = SystemTime::now();
     for _ in 1..=num_thread {
         let current_chunk
-            = data_buff.pop().unwrap();
+            = data_buff.pop_front().unwrap();
 
         let index = p_index.clone();
         handles.push(thread::spawn(move || current_chunk
             .into_iter()
             .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
-                CRUDOperationResult::Inserted(key, ..) |
-                CRUDOperationResult::Updated(key, ..) => {
+                CRUDOperationResult::Inserted(key, ..) => {
                     if EXE_LOOK_UPS {
                         loop {
                             match index.dispatch(CRUDOperation::Point(key)) {
@@ -344,7 +348,7 @@ pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[u64]) -> u128 {
 #[inline(always)]
 pub fn beast_test(num_thread: usize, index: Tree, t1s: &[u64], log: bool) -> u128 {
     let ls = index.as_index().locking_strategy.clone();
-    let time = beast_test2(num_thread, index.clone(), t1s);
+    let time = beast_test2(num_thread, index, t1s);
     if log {
         print!(",{}", ls);
     }
@@ -1246,7 +1250,9 @@ pub fn start_paper_tests() {
             create_scan_test(create.as_slice(), scan.as_slice());
         }
     }
-    println!("######");println!("######");println!("######");println!("######");println!("######");println!("######");
+
+    print!("{}", "######\n".repeat(10));
+
     println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
     for n in S_INSERTIONS {
         let file_suffix = format_insertions(n as _);
@@ -1284,20 +1290,23 @@ fn update_test(t1s: &[Key], updates: &[Key]) {
             print!(",{}", *num_threads);
 
             let index = TREE(ls.clone());
-            let _ = beast_test(
+            let _create_time = beast_test(
                 *num_threads,
                 index.clone(),
                 t1s, true);
 
-            let chunk_size = updates.len() / *num_threads;
-            let mut slices = (0..*num_threads).map(|i| unsafe {
-                std::slice::from_raw_parts(
-                    updates.as_ptr().add(i * chunk_size),
-                    chunk_size)
-            }).collect::<VecDeque<_>>();
+            let mut slices = updates
+                .chunks(updates.len() / *num_threads)
+                .map(|c| c.to_vec())
+                .collect::<VecDeque<_>>();
+
+            if slices.len() > *num_threads {
+                let back = slices.pop_back().unwrap();
+                slices.front_mut().unwrap().extend(back);
+            }
 
             let start = SystemTime::now();
-            let update_handles = (0..*num_threads).map(|_| {
+            let update_handles = (0..slices.len()).map(|_| {
                 let chunk
                     = slices.pop_front().unwrap();
 
@@ -1306,9 +1315,12 @@ fn update_test(t1s: &[Key], updates: &[Key]) {
 
                 thread::spawn(move ||
                     for key in chunk {
-                        match index.dispatch(CRUDOperation::Update(*key, Payload::default())) {
+                        match index.dispatch(CRUDOperation::Update(key, Payload::default())) {
                             CRUDOperationResult::Updated(..) => {}
-                            CRUDOperationResult::Error => log_debug(format!("Not found key = {}", key)),
+                            CRUDOperationResult::Error => {
+                                log_debug_ln(format!("Not found key = {}", key));
+                                log_debug_ln(format!("Point = {}", index.dispatch(CRUDOperation::Point(key))));
+                            },
                             cor =>
                                 log_debug(format!("sleepy joe hit me -> {}", cor))
                         }
@@ -1353,12 +1365,15 @@ fn create_scan_test(t1s: &[Key], scans: &[Key]) {
             print!(",{}", NUM_RECORDS);
             print!(",{}", BSZ_BASE);
 
-            let chunk_size = scans.len() / *num_threads;
-            let mut slices = (0..*num_threads).map(|i| unsafe {
-                std::slice::from_raw_parts(
-                    scans.as_ptr().add(i * chunk_size),
-                    chunk_size)
-            }).collect::<VecDeque<_>>();
+            let mut slices = scans
+                .chunks(scans.len() / *num_threads)
+                .map(|c| c.to_vec())
+                .collect::<VecDeque<_>>();
+
+            if slices.len() > *num_threads {
+                let back = slices.pop_back().unwrap();
+                slices.front_mut().unwrap().extend(back);
+            }
 
             let start = SystemTime::now();
             let read_handles = (0..*num_threads).map(|_| {
@@ -1370,7 +1385,7 @@ fn create_scan_test(t1s: &[Key], scans: &[Key]) {
 
                 thread::spawn(move ||
                     for key in chunk {
-                        match index.dispatch(CRUDOperation::Point(*key)) {
+                        match index.dispatch(CRUDOperation::Point(key)) {
                             CRUDOperationResult::MatchedRecord(..) => {}
                             CRUDOperationResult::Error => log_debug_ln(format!("Not found key = {}", key)),
                             cor =>

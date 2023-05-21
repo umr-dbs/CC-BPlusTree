@@ -1,12 +1,14 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
+use std::sync::Arc;
 // use crate::page_model::{AtomicBlockID, BlockID};
 use crate::block::block::Block;
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
-use crate::page_model::ObjectCount;
+use crate::page_model::{BlockID, ObjectCount};
+use crate::{Tree, TreeDispatcher};
 use crate::utils::smart_cell::{SmartCell, SmartFlavor};
 // use crate::tree::settings::BlockSettings;
 
@@ -27,7 +29,9 @@ pub const fn bsz_alignment_min<Key, Payload>() -> usize
 where Key: Default + Ord + Copy + Hash,
       Payload: Default + Clone
 {
-        // mem::size_of::<BlockID>() +
+        mem::align_of::<Arc<()>>() + // ptr size
+        mem::align_of::<usize>() + // dispatcher alignment
+        mem::size_of::<usize>() * 2 + // arc extras in data area in Tree
         mem::align_of::<Block<0, 0, Key, Payload>>() + // alignment for block
         mem::size_of::<ObjectCount>() + // len indicator
         mem::size_of::<usize>() * 2 + // arc extras in data area

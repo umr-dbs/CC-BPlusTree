@@ -15,7 +15,7 @@ use crate::block::block::Block;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::crud_model::crud_api::CRUDDispatcher;
-use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, lightweight_hybrid_lock_read_attempts, lightweight_hybrid_lock_unlimited, LockingStrategy, olc, orwc, orwc_attempts};
+use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, lightweight_hybrid_lock_read_attempts, lightweight_hybrid_lock_unlimited, lightweight_hybrid_lock_write_attempts, LockingStrategy, olc, orwc, orwc_attempts};
 use crate::page_model::BlockRef;
 use crate::page_model::node::Node;
 use crate::{make_splash, TREE, Tree, TreeDispatcher};
@@ -82,10 +82,9 @@ pub(crate) const S_INSERTIONS: [Key; 1] = [
     100_000_000,
 ];
 
-pub(crate) const S_STRATEGIES: [CRUDProtocol; 11] = [
+pub(crate) const S_STRATEGIES: [CRUDProtocol; 17] = [
     MonoWriter,
     LockCoupling,
-
     orwc_attempts(0),
     orwc_attempts(1),
     orwc_attempts(4),
@@ -102,6 +101,12 @@ pub(crate) const S_STRATEGIES: [CRUDProtocol; 11] = [
 
     olc(),
     lightweight_hybrid_lock_unlimited(),
+    lightweight_hybrid_lock_write_attempts(0),
+    lightweight_hybrid_lock_write_attempts(1),
+    lightweight_hybrid_lock_write_attempts(4),
+    lightweight_hybrid_lock_write_attempts(16),
+    lightweight_hybrid_lock_write_attempts(64),
+    lightweight_hybrid_lock_write_attempts(1024),
 
     hybrid_lock()
 ];
@@ -1228,51 +1233,197 @@ pub fn start_paper_tests() {
         };
     }
 
-    println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
-    for n in S_INSERTIONS {
-        let file_suffix = format_insertions(n as _);
-        let create_file = format!("create_{}.bin", file_suffix);
-        let create_file = create_file.as_str();
+    // println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
+    // for n in S_INSERTIONS {
+    //     let file_suffix = format_insertions(n as _);
+    //     let create_file = format!("create_{}.bin", file_suffix);
+    //     let create_file = create_file.as_str();
+    //
+    //     let scan_file = format!("scan_{}.bin", file_suffix);
+    //     let scan_file = scan_file.as_str();
+    //
+    //     unsafe {
+    //         let mut create = fs::read(create_file).unwrap();
+    //         create.set_len(create.len() / 8);
+    //
+    //         let mut scan = fs::read(scan_file).unwrap();
+    //         scan.set_len(scan.len() / 8);
+    //
+    //         let create: Vec<Key> = mem::transmute(create);
+    //         let scan: Vec<Key> = mem::transmute(scan);
+    //
+    //         create_scan_test(create.as_slice(), scan.as_slice());
+    //     }
+    // }
+    //
+    // print!("{}", "######\n".repeat(10));
 
-        let scan_file = format!("scan_{}.bin", file_suffix);
-        let scan_file = scan_file.as_str();
+    // println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
+    // for n in S_INSERTIONS {
+    //     let file_suffix = format_insertions(n as _);
+    //     let create_file = format!("create_{}.bin", file_suffix);
+    //     let create_file = create_file.as_str();
+    //
+    //     let scan_file = format!("scan_{}.bin", file_suffix);
+    //     let scan_file = scan_file.as_str();
+    //
+    //     unsafe {
+    //         let mut create = fs::read(create_file).unwrap();
+    //         create.set_len(create.len() / 8);
+    //
+    //         let mut scan = fs::read(scan_file).unwrap();
+    //         scan.set_len(scan.len() / 8);
+    //
+    //         let create: Vec<Key> = mem::transmute(create);
+    //         let scan: Vec<Key> = mem::transmute(scan);
+    //
+    //         update_test(create.as_slice(), scan.as_slice());
+    //     }
+    // }
 
-        unsafe {
-            let mut create = fs::read(create_file).unwrap();
-            create.set_len(create.len() / 8);
+    println!("Number Insertions,Update Threads,Read Threads,Locking Strategy,Mixed Time,Fan Out,Leaf Records,Block Size");
 
-            let mut scan = fs::read(scan_file).unwrap();
-            scan.set_len(scan.len() / 8);
+    for update_ratio in [
+        0.1_f64,
+        0.5_f64,
+        0.9_f64]
+    {
+        let read_ratio
+            = 1_f64 - update_ratio;
 
-            let create: Vec<Key> = mem::transmute(create);
-            let scan: Vec<Key> = mem::transmute(scan);
+        for n in S_INSERTIONS {
+            let file_suffix = format_insertions(n as _);
+            let create_file = format!("create_{}.bin", file_suffix);
+            let create_file = create_file.as_str();
 
-            create_scan_test(create.as_slice(), scan.as_slice());
+            let scan_file = format!("scan_{}.bin", file_suffix);
+            let scan_file = scan_file.as_str();
+
+            unsafe {
+                let mut create = fs::read(create_file).unwrap();
+                create.set_len(create.len() / 8);
+
+                let mut scan = fs::read(scan_file).unwrap();
+                scan.set_len(scan.len() / 8);
+
+                let create: Vec<Key> = mem::transmute(create);
+                let update: Vec<Key> = mem::transmute(scan);
+
+                let updates
+                    = &update[..(update_ratio * update.len() as f64) as usize];
+
+                let reads =
+                    &update[..(read_ratio * update.len() as f64) as usize];
+
+                mixed_test(create.as_slice(),
+                           updates,
+                           reads,
+                           update_ratio,
+                           read_ratio);
+            }
         }
     }
+}
 
-    print!("{}", "######\n".repeat(10));
+fn mixed_test(create: &[Key], updates: &[Key], reads: &[Key], ratio_update: f64, ratio_read: f64) {
+    let threads_cpu
+        = [10, 20, 30, 60, 70, 80, 90, 100, 120];
 
-    println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
-    for n in S_INSERTIONS {
-        let file_suffix = format_insertions(n as _);
-        let create_file = format!("create_{}.bin", file_suffix);
-        let create_file = create_file.as_str();
+    let strategies
+        = S_STRATEGIES.to_vec();
 
-        let scan_file = format!("scan_{}.bin", file_suffix);
-        let scan_file = scan_file.as_str();
+    for num_threads in threads_cpu.iter() {
+        let reader_threads
+            = (ratio_read * *num_threads as f64) as usize;
 
-        unsafe {
-            let mut create = fs::read(create_file).unwrap();
-            create.set_len(create.len() / 8);
+        let updater_threads
+            = (ratio_update * *num_threads as f64) as usize;
 
-            let mut scan = fs::read(scan_file).unwrap();
-            scan.set_len(scan.len() / 8);
+        for ls in strategies.iter() {
+            print!("{}", create.len());
+            print!(",{}", updater_threads);
+            print!(",{}", reader_threads);
 
-            let create: Vec<Key> = mem::transmute(create);
-            let scan: Vec<Key> = mem::transmute(scan);
+            let index = TREE(ls.clone());
+            let _create_time = beast_test(
+                *num_threads,
+                index.clone(),
+                create, true);
 
-            update_test(create.as_slice(), scan.as_slice());
+            let mut update_chunks = updates
+                .chunks(updates.len() / updater_threads)
+                .map(|c| c.to_vec())
+                .collect::<VecDeque<_>>();
+
+            if update_chunks.len() > updater_threads {
+                let back = update_chunks.pop_back().unwrap();
+                update_chunks.front_mut().unwrap().extend(back);
+            }
+
+            let mut read_chunks = reads
+                .chunks(reads.len() / reader_threads)
+                .map(|c| c.to_vec())
+                .collect::<VecDeque<_>>();
+
+            if read_chunks.len() > reader_threads {
+                let back = read_chunks.pop_back().unwrap();
+                read_chunks.front_mut().unwrap().extend(back);
+            }
+
+            let start = SystemTime::now();
+
+            let handles = (0..*num_threads)
+                .map(|_| {
+                    let u_chunk
+                        = update_chunks.pop_front().unwrap();
+
+                    let r_chunk
+                        = read_chunks.pop_front().unwrap();
+
+                    let u_index
+                        = index.clone();
+
+                    let r_index
+                        = index.clone();
+
+                    [thread::spawn(move ||
+                        for key in u_chunk {
+                            match u_index.dispatch(CRUDOperation::Update(key, Payload::default())) {
+                                CRUDOperationResult::Updated(..) => {}
+                                CRUDOperationResult::Error => {
+                                    log_debug_ln(format!("Not found key = {}", key));
+                                    log_debug_ln(format!("Point = {}", u_index.dispatch(CRUDOperation::Point(key))));
+                                }
+                                cor =>
+                                    log_debug(format!("sleepy joe hit me -> {}", cor))
+                            }
+                        }),
+                        thread::spawn(move ||
+                            for key in r_chunk {
+                                match r_index.dispatch(CRUDOperation::Point(key)) {
+                                    CRUDOperationResult::MatchedRecord(..) => {}
+                                    CRUDOperationResult::Error => {
+                                        log_debug_ln(format!("Not found key = {}", key));
+                                        log_debug_ln(format!("Point = {}", r_index.dispatch(CRUDOperation::Point(key))));
+                                    }
+                                    cor =>
+                                        log_debug(format!("sleepy joe hit me -> {}", cor))
+                                }
+                            })
+                    ]
+                }).flatten().collect::<Vec<_>>();
+
+            handles
+                .into_iter()
+                .for_each(|handle| handle.join().unwrap());
+
+            let update_time
+                = SystemTime::now().duration_since(start).unwrap().as_millis();
+
+            print!(",{}", update_time);
+            print!(",{}", FAN_OUT);
+            print!(",{}", NUM_RECORDS);
+            println!(",{}", BSZ_BASE);
         }
     }
 }
@@ -1320,7 +1471,7 @@ fn update_test(t1s: &[Key], updates: &[Key]) {
                             CRUDOperationResult::Error => {
                                 log_debug_ln(format!("Not found key = {}", key));
                                 log_debug_ln(format!("Point = {}", index.dispatch(CRUDOperation::Point(key))));
-                            },
+                            }
                             cor =>
                                 log_debug(format!("sleepy joe hit me -> {}", cor))
                         }

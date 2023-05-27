@@ -44,6 +44,16 @@ pub const fn lightweight_hybrid_lock_write_attempts(write_attempt: Attempts) -> 
 }
 
 #[inline(always)]
+pub const fn lightweight_hybrid_lock_write_read_attempts(write_attempt: Attempts, read_attempt: Attempts) -> LockingStrategy {
+    LockingStrategy::LightweightHybridLock {
+        read_level: 1f32,
+        read_attempt,
+        write_level: 1f32,
+        write_attempt,
+    }
+}
+
+#[inline(always)]
 pub const fn lightweight_hybrid_lock_unlimited() -> LockingStrategy {
     LockingStrategy::LightweightHybridLock {
         read_level: f32::MAX,

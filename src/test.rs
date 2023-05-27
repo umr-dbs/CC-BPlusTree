@@ -15,7 +15,7 @@ use crate::block::block::Block;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::crud_model::crud_api::CRUDDispatcher;
-use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, lightweight_hybrid_lock_read_attempts, lightweight_hybrid_lock_unlimited, lightweight_hybrid_lock_write_attempts, LockingStrategy, olc, orwc, orwc_attempts};
+use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, lightweight_hybrid_lock_read_attempts, lightweight_hybrid_lock_unlimited, lightweight_hybrid_lock_write_attempts, lightweight_hybrid_lock_write_read_attempts, LockingStrategy, olc, orwc, orwc_attempts};
 use crate::page_model::BlockRef;
 use crate::page_model::node::Node;
 use crate::{make_splash, TREE, Tree, TreeDispatcher};
@@ -107,7 +107,6 @@ pub(crate) const S_STRATEGIES: [CRUDProtocol; 17] = [
     lightweight_hybrid_lock_write_attempts(16),
     lightweight_hybrid_lock_write_attempts(64),
     lightweight_hybrid_lock_write_attempts(1024),
-
     hybrid_lock()
 ];
 
@@ -1233,54 +1232,54 @@ pub fn start_paper_tests() {
         };
     }
 
-    // println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
-    // for n in S_INSERTIONS {
-    //     let file_suffix = format_insertions(n as _);
-    //     let create_file = format!("create_{}.bin", file_suffix);
-    //     let create_file = create_file.as_str();
-    //
-    //     let scan_file = format!("scan_{}.bin", file_suffix);
-    //     let scan_file = scan_file.as_str();
-    //
-    //     unsafe {
-    //         let mut create = fs::read(create_file).unwrap();
-    //         create.set_len(create.len() / 8);
-    //
-    //         let mut scan = fs::read(scan_file).unwrap();
-    //         scan.set_len(scan.len() / 8);
-    //
-    //         let create: Vec<Key> = mem::transmute(create);
-    //         let scan: Vec<Key> = mem::transmute(scan);
-    //
-    //         create_scan_test(create.as_slice(), scan.as_slice());
-    //     }
-    // }
-    //
-    // print!("{}", "######\n".repeat(10));
+    println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
+    for n in S_INSERTIONS {
+        let file_suffix = format_insertions(n as _);
+        let create_file = format!("create_{}.bin", file_suffix);
+        let create_file = create_file.as_str();
 
-    // println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
-    // for n in S_INSERTIONS {
-    //     let file_suffix = format_insertions(n as _);
-    //     let create_file = format!("create_{}.bin", file_suffix);
-    //     let create_file = create_file.as_str();
-    //
-    //     let scan_file = format!("scan_{}.bin", file_suffix);
-    //     let scan_file = scan_file.as_str();
-    //
-    //     unsafe {
-    //         let mut create = fs::read(create_file).unwrap();
-    //         create.set_len(create.len() / 8);
-    //
-    //         let mut scan = fs::read(scan_file).unwrap();
-    //         scan.set_len(scan.len() / 8);
-    //
-    //         let create: Vec<Key> = mem::transmute(create);
-    //         let scan: Vec<Key> = mem::transmute(scan);
-    //
-    //         update_test(create.as_slice(), scan.as_slice());
-    //     }
-    // }
+        let scan_file = format!("scan_{}.bin", file_suffix);
+        let scan_file = scan_file.as_str();
 
+        unsafe {
+            let mut create = fs::read(create_file).unwrap();
+            create.set_len(create.len() / 8);
+
+            let mut scan = fs::read(scan_file).unwrap();
+            scan.set_len(scan.len() / 8);
+
+            let create: Vec<Key> = mem::transmute(create);
+            let scan: Vec<Key> = mem::transmute(scan);
+
+            create_scan_test(create.as_slice(), scan.as_slice());
+        }
+    }
+
+    print!("{}", "######\n".repeat(10));
+    println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
+    for n in S_INSERTIONS {
+        let file_suffix = format_insertions(n as _);
+        let create_file = format!("create_{}.bin", file_suffix);
+        let create_file = create_file.as_str();
+
+        let scan_file = format!("scan_{}.bin", file_suffix);
+        let scan_file = scan_file.as_str();
+
+        unsafe {
+            let mut create = fs::read(create_file).unwrap();
+            create.set_len(create.len() / 8);
+
+            let mut scan = fs::read(scan_file).unwrap();
+            scan.set_len(scan.len() / 8);
+
+            let create: Vec<Key> = mem::transmute(create);
+            let scan: Vec<Key> = mem::transmute(scan);
+
+            update_test(create.as_slice(), scan.as_slice());
+        }
+    }
+
+    print!("{}", "######\n".repeat(10));
     println!("Number Insertions,Update Threads,Read Threads,Locking Strategy,Mixed Time,Fan Out,Leaf Records,Block Size");
 
     for update_ratio in [
@@ -1329,8 +1328,37 @@ fn mixed_test(create: &[Key], updates: &[Key], reads: &[Key], ratio_update: f64,
     let threads_cpu
         = [10, 20, 30, 60, 70, 80, 90, 100, 120];
 
-    let strategies
-        = S_STRATEGIES.to_vec();
+    let strategies = vec![
+        MonoWriter,
+        LockCoupling,
+        orwc_attempts(0),
+        orwc_attempts(1),
+        orwc_attempts(4),
+        orwc_attempts(16),
+        orwc_attempts(64),
+
+        olc(),
+
+        lightweight_hybrid_lock_read_attempts(0),
+        lightweight_hybrid_lock_read_attempts(1),
+        lightweight_hybrid_lock_read_attempts(4),
+        lightweight_hybrid_lock_read_attempts(16),
+        lightweight_hybrid_lock_read_attempts(64),
+
+        lightweight_hybrid_lock_write_attempts(0),
+        lightweight_hybrid_lock_write_attempts(1),
+        lightweight_hybrid_lock_write_attempts(4),
+        lightweight_hybrid_lock_write_attempts(16),
+        lightweight_hybrid_lock_write_attempts(64),
+
+        lightweight_hybrid_lock_write_read_attempts(0, 0),
+        lightweight_hybrid_lock_write_read_attempts(1, 1),
+        lightweight_hybrid_lock_write_read_attempts(4, 4),
+        lightweight_hybrid_lock_write_read_attempts(16, 16),
+        lightweight_hybrid_lock_write_read_attempts(64, 64),
+
+        hybrid_lock()
+    ];
 
     for num_threads in threads_cpu.iter() {
         let reader_threads
@@ -1370,57 +1398,61 @@ fn mixed_test(create: &[Key], updates: &[Key], reads: &[Key], ratio_update: f64,
                 read_chunks.front_mut().unwrap().extend(back);
             }
 
+            let mut handles
+                = Vec::with_capacity(*num_threads);
+
             let start = SystemTime::now();
 
-            let handles = (0..*num_threads)
-                .map(|_| {
-                    let u_chunk
-                        = update_chunks.pop_front().unwrap();
+            handles.extend((0..updater_threads).map(|_| {
+                let u_chunk
+                    = update_chunks.pop_front().unwrap();
 
-                    let r_chunk
-                        = read_chunks.pop_front().unwrap();
+                let u_index
+                    = index.clone();
 
-                    let u_index
-                        = index.clone();
-
-                    let r_index
-                        = index.clone();
-
-                    [thread::spawn(move ||
-                        for key in u_chunk {
-                            match u_index.dispatch(CRUDOperation::Update(key, Payload::default())) {
-                                CRUDOperationResult::Updated(..) => {}
-                                CRUDOperationResult::Error => {
-                                    log_debug_ln(format!("Not found key = {}", key));
-                                    log_debug_ln(format!("Point = {}", u_index.dispatch(CRUDOperation::Point(key))));
-                                }
-                                cor =>
-                                    log_debug(format!("sleepy joe hit me -> {}", cor))
+                thread::spawn(move ||
+                    for key in u_chunk {
+                        match u_index.dispatch(CRUDOperation::Update(key, Payload::default())) {
+                            CRUDOperationResult::Updated(..) => {}
+                            CRUDOperationResult::Error => {
+                                log_debug_ln(format!("Not found key = {}", key));
+                                log_debug_ln(format!("Point = {}", u_index.dispatch(CRUDOperation::Point(key))));
                             }
-                        }),
-                        thread::spawn(move ||
-                            for key in r_chunk {
-                                match r_index.dispatch(CRUDOperation::Point(key)) {
-                                    CRUDOperationResult::MatchedRecord(..) => {}
-                                    CRUDOperationResult::Error => {
-                                        log_debug_ln(format!("Not found key = {}", key));
-                                        log_debug_ln(format!("Point = {}", r_index.dispatch(CRUDOperation::Point(key))));
-                                    }
-                                    cor =>
-                                        log_debug(format!("sleepy joe hit me -> {}", cor))
-                                }
-                            })
-                    ]
-                }).flatten().collect::<Vec<_>>();
+                            cor =>
+                                log_debug(format!("sleepy joe hit me -> {}", cor))
+                        }
+                    })
+            }));
+
+            handles.extend((0..reader_threads).map(|_| {
+                let r_index
+                    = index.clone();
+
+                let r_chunk
+                    = read_chunks.pop_front().unwrap();
+
+                thread::spawn(move ||
+                    for key in r_chunk {
+                        match r_index.dispatch(CRUDOperation::Point(key)) {
+                            CRUDOperationResult::MatchedRecord(..) => {}
+                            CRUDOperationResult::Error => {
+                                log_debug_ln(format!("Not found key = {}", key));
+                                log_debug_ln(format!("Point = {}", r_index.dispatch(CRUDOperation::Point(key))));
+                            }
+                            cor =>
+                                log_debug(format!("sleepy joe hit me -> {}", cor))
+                        }
+                    })
+            }));
 
             handles
                 .into_iter()
                 .for_each(|handle| handle.join().unwrap());
 
-            let update_time
+            let mixed_time
                 = SystemTime::now().duration_since(start).unwrap().as_millis();
 
-            print!(",{}", update_time);
+            print!(",{}", mixed_time);
             print!(",{}", FAN_OUT);
             print!(",{}", NUM_RECORDS);
             println!(",{}", BSZ_BASE);
@@ -1429,11 +1461,42 @@ fn mixed_test(create: &[Key], updates: &[Key], reads: &[Key], ratio_update: f64,
 }
 
 fn update_test(t1s: &[Key], updates: &[Key]) {
-    let threads_cpu
-        = S_THREADS_CPU.to_vec();
+    let threads_cpu = [
+        1,
+        2,
+        3,
+        4,
+        8,
+        10,
+        12,
+        16,
+        24,
+        32,
+        64,
+        128
+    ];
 
-    let strategies
-        = S_STRATEGIES.to_vec();
+    let strategies = [
+        MonoWriter,
+        LockCoupling,
+        orwc_attempts(0),
+        orwc_attempts(1),
+        orwc_attempts(4),
+        orwc_attempts(16),
+        orwc_attempts(64),
+        orwc_attempts(1024),
+
+        olc(),
+
+        lightweight_hybrid_lock_write_attempts(0),
+        lightweight_hybrid_lock_write_attempts(1),
+        lightweight_hybrid_lock_write_attempts(4),
+        lightweight_hybrid_lock_write_attempts(16),
+        lightweight_hybrid_lock_write_attempts(64),
+        lightweight_hybrid_lock_write_attempts(1024),
+
+        hybrid_lock()
+    ];
 
     for num_threads in threads_cpu.iter() {
         for ls in strategies.iter() {
@@ -1494,11 +1557,40 @@ fn update_test(t1s: &[Key], updates: &[Key]) {
 }
 
 fn create_scan_test(t1s: &[Key], scans: &[Key]) {
-    let threads_cpu
-        = S_THREADS_CPU.to_vec();
+    let threads_cpu = [
+        1,
+        2,
+        3,
+        4,
+        8,
+        10,
+        12,
+        16,
+        24,
+        32,
+        64,
+        128
+    ];
 
-    let strategies
-        = S_STRATEGIES.to_vec();
+    let strategies = vec![
+        // MonoWriter,
+        // LockCoupling,
+        // orwc_attempts(0),
+        // orwc_attempts(1),
+        // orwc_attempts(4),
+        // orwc_attempts(16),
+        // orwc_attempts(64),
+        //
+        // olc(),
+
+        lightweight_hybrid_lock_write_attempts(0),
+        lightweight_hybrid_lock_write_attempts(1),
+        lightweight_hybrid_lock_write_attempts(4),
+        lightweight_hybrid_lock_write_attempts(16),
+        lightweight_hybrid_lock_write_attempts(64),
+
+        hybrid_lock()
+    ];
 
     for num_threads in threads_cpu.iter() {
         for ls in strategies.iter() {

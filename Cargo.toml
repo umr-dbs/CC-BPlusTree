@@ -1,6 +1,6 @@
 [package]
 name = "CCBPlusTree"
-version = "0.0.96"
+version = "0.0.97"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "Experimental Concurrency Control CRUD B+Tree Implementation"
@@ -19,7 +19,7 @@ hardware-lock-elision = []
 
 [dependencies]
 crossbeam = "0.8.2"
-chrono = "0.4.24"
+chrono = "0.4.26"
 rand = "0.8.5"
 num_cpus = "1.15.0"
 itertools = "0.10.5"

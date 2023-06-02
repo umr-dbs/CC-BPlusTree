@@ -1214,58 +1214,84 @@ pub fn experiment(threads_cpu: Vec<usize>,
 }
 
 pub fn start_paper_tests() {
-    // let insertions = [100_000_000];
-    //
-    // for n in insertions {
-    //     let file_suffix = format_insertions(n as _);
-    //     let create_file = format!("create_{}.bin", file_suffix);
-    //     let create_file = create_file.as_str();
-    //
-    //     let scan_file = format!("scan_{}.bin", file_suffix);
-    //     let scan_file = scan_file.as_str();
-    //
-    //     if !Path::new(create_file).exists() || !Path::new(scan_file).exists() {
-    //         let t1s
-    //             = gen_rand_data(n as usize);
-    //
-    //         let mut scans = t1s.clone();
-    //         scans.shuffle(&mut rand::thread_rng());
-    //
-    //         fs::write(create_file, unsafe {
-    //             std::slice::from_raw_parts(t1s.as_ptr() as _, t1s.len() * mem::size_of::<Key>())
-    //         }).unwrap();
-    //
-    //         fs::write(scan_file, unsafe {
-    //             std::slice::from_raw_parts(scans.as_ptr() as _, scans.len() * mem::size_of::<Key>())
-    //         }).unwrap();
-    //     };
-    // }
-
     println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Updates Performed,Reads Performed");
-    real_contention_test(Duration::from_secs(3), 10, 10, olc());
 
+    let n
+        = 10_000_000;
+
+    let time_out
+        = Duration::from_secs(10);
+
+    let thread_cases = vec![
+        (10, 110),
+        (20, 100),
+        (30, 90),
+        (40, 80),
+        (50, 70),
+
+        (60, 60),
+
+        (70, 50),
+        (80, 40),
+        (90, 30),
+        (100, 20),
+        (110, 10),
+    ];
+
+    let locking_protocols = vec![
+        MonoWriter,
+        LockCoupling,
+        orwc_attempts(0),
+        orwc_attempts(1),
+        orwc_attempts(4),
+        orwc_attempts(16),
+        orwc_attempts(64),
+        olc(),
+        // lightweight_hybrid_lock_unlimited(),
+        lightweight_hybrid_lock_read_attempts(0),
+        lightweight_hybrid_lock_read_attempts(1),
+        lightweight_hybrid_lock_read_attempts(4),
+        lightweight_hybrid_lock_read_attempts(16),
+        lightweight_hybrid_lock_read_attempts(64),
+        lightweight_hybrid_lock_write_attempts(0),
+        lightweight_hybrid_lock_write_attempts(1),
+        lightweight_hybrid_lock_write_attempts(4),
+        lightweight_hybrid_lock_write_attempts(16),
+        lightweight_hybrid_lock_write_attempts(64),
+        lightweight_hybrid_lock_write_read_attempts(0, 0),
+        hybrid_lock()
+    ];
+
+    for (u, r) in thread_cases {
+        for ls in locking_protocols.iter() {
+            real_contention_test(
+                time_out,
+                u,
+                r,
+                ls.clone(),
+                n);
+        }
+    }
 }
 
-pub fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize, ls: LockingStrategy) {
-    const KEY_RANGE: RangeInclusive<Key> = 1..=10_000_000;
+fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize, ls: LockingStrategy, n: usize) {
+    let key_range = 1..=n as Key;
 
-    print!("{}", KEY_RANGE.end() - KEY_RANGE.start() + 1);
+    print!("{}", n);
     print!(",{}", number_u);
     print!(",{}", number_r);
     print!(",{}", timeout.as_millis());
     print!(",{}", ls);
 
-    // log_debug_ln(format!("Generating tree..."));
+    let is_mono = ls.is_mono_writer();
     let tree = TREE(ls);
 
-    // log_debug_ln(format!("Inserting {} records to tree...", KEY_RANGE.end()));
-
-    beast_test2(16, tree.clone(), gen_rand_data(*KEY_RANGE.end() as usize).as_slice());
-
-    // log_debug_ln(format!("Starting workload: Updaters = {}, Readers = {}, Duration = {}ms",
-    //                      number_u,
-    //                      number_r,
-    //                      timeout.as_millis()));
+    if is_mono {
+        beast_test2(1, tree.clone(), gen_rand_data(*key_range.end() as usize).as_slice());
+    }
+    else {
+        beast_test2(16, tree.clone(), gen_rand_data(*key_range.end() as usize).as_slice());
+    }
 
     let (send_u, rec_u)
         = crossbeam::channel::unbounded::<()>();
@@ -1273,6 +1299,7 @@ pub fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize,
     let updater = || {
         let u_tree = tree.clone();
         let rec_u = rec_u.clone();
+        let key_range = key_range.clone();
 
         spawn(move || {
             let mut rng
@@ -1282,7 +1309,7 @@ pub fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize,
             loop {
                 u_counter += 1;
                 let key
-                    = rng.gen_range(KEY_RANGE);
+                    = rng.gen_range(key_range.clone());
 
                 u_tree.dispatch(CRUDOperation::Update(key, Payload::default()));
 
@@ -1300,6 +1327,7 @@ pub fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize,
     let reader = || {
         let r_tree = tree.clone();
         let rec_r = rec_r.clone();
+        let key_range = key_range.clone();
 
         spawn(move || {
             let mut rng
@@ -1309,7 +1337,7 @@ pub fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize,
             loop {
                 r_counter += 1;
                 let key
-                    = rng.gen_range(KEY_RANGE);
+                    = rng.gen_range(key_range.clone());
 
                 r_tree.dispatch(CRUDOperation::Point(key));
 
@@ -1332,7 +1360,6 @@ pub fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize,
         thread::yield_now()
     }
 
-    // log_debug_ln(format!("Finished timout"));
     mem::drop(send_u);
     mem::drop(send_r);
 

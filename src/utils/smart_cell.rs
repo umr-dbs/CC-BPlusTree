@@ -782,7 +782,7 @@ impl<E: Default> SmartCell<E> {
             ReadersWriterCell(rw, ptr) => unsafe {
                 RwReader(transmute(rw.read()), ptr.as_ref())
             },
-            _ => unreachable!()
+            _ => OLCReader(None)
         }
     }
 
@@ -796,7 +796,7 @@ impl<E: Default> SmartCell<E> {
                     OLCReader(Some((self.clone(), read_latch))),
                 _ => OLCReader(None)
             },
-            _ => unreachable!()
+            _ => OLCReader(None)
         }
     }
 

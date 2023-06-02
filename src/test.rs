@@ -2,14 +2,16 @@ use std::collections::{HashSet, VecDeque};
 use std::{env, fs, mem, path, thread};
 use std::fmt::Display;
 use std::hash::Hash;
-use std::ops::{Deref, DerefMut};
+use std::ops::{Deref, DerefMut, RangeInclusive};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc};
+use std::thread::spawn;
 use std::time::{Duration, SystemTime};
+use crossbeam::channel::TryRecvError;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use rand::prelude::SliceRandom;
-use rand::RngCore;
+use rand::{Rng, RngCore};
 use sysinfo::{DiskExt, System, UserExt};
 use crate::block::block::Block;
 use crate::block::block_manager::{_4KB, bsz_alignment};
@@ -260,19 +262,24 @@ pub fn simple_test() {
 }
 
 pub fn gen_rand_data(n: usize) -> Vec<Key> {
-    let mut nums = HashSet::new();
-    let mut rand = rand::thread_rng();
-    loop {
-        let next = rand.next_u64() as Key;
-        if !nums.contains(&next) {
-            nums.insert(next);
-        }
+    // let mut nums = HashSet::new();
 
-        if nums.len() == n as usize {
-            break;
-        }
-    }
-    nums.into_iter().collect::<Vec<_>>()
+    let mut rand = rand::thread_rng();
+    let mut nums = (1..=n as Key).collect::<Vec<Key>>();
+    nums.shuffle(&mut rand);
+    nums
+
+    // loop {
+    //     let next = rand.next_u64() as Key;
+    //     if !nums.contains(&next) {
+    //         nums.insert(next);
+    //     }
+    //
+    //     if nums.len() == n as usize {
+    //         break;
+    //     }
+    // }
+    // nums.into_iter().collect::<Vec<_>>()
 }
 
 #[inline(always)]
@@ -1207,121 +1214,139 @@ pub fn experiment(threads_cpu: Vec<usize>,
 }
 
 pub fn start_paper_tests() {
-    for n in S_INSERTIONS {
-        let file_suffix = format_insertions(n as _);
-        let create_file = format!("create_{}.bin", file_suffix);
-        let create_file = create_file.as_str();
+    // let insertions = [100_000_000];
+    //
+    // for n in insertions {
+    //     let file_suffix = format_insertions(n as _);
+    //     let create_file = format!("create_{}.bin", file_suffix);
+    //     let create_file = create_file.as_str();
+    //
+    //     let scan_file = format!("scan_{}.bin", file_suffix);
+    //     let scan_file = scan_file.as_str();
+    //
+    //     if !Path::new(create_file).exists() || !Path::new(scan_file).exists() {
+    //         let t1s
+    //             = gen_rand_data(n as usize);
+    //
+    //         let mut scans = t1s.clone();
+    //         scans.shuffle(&mut rand::thread_rng());
+    //
+    //         fs::write(create_file, unsafe {
+    //             std::slice::from_raw_parts(t1s.as_ptr() as _, t1s.len() * mem::size_of::<Key>())
+    //         }).unwrap();
+    //
+    //         fs::write(scan_file, unsafe {
+    //             std::slice::from_raw_parts(scans.as_ptr() as _, scans.len() * mem::size_of::<Key>())
+    //         }).unwrap();
+    //     };
+    // }
 
-        let scan_file = format!("scan_{}.bin", file_suffix);
-        let scan_file = scan_file.as_str();
+    println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Updates Performed,Reads Performed");
+    real_contention_test(Duration::from_secs(3), 10, 10, olc());
 
-        if !Path::new(create_file).exists() || !Path::new(scan_file).exists() {
-            let t1s
-                = gen_rand_data(n as usize);
+}
 
-            let mut scans = t1s.clone();
-            scans.shuffle(&mut rand::thread_rng());
+pub fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize, ls: LockingStrategy) {
+    const KEY_RANGE: RangeInclusive<Key> = 1..=10_000_000;
 
-            fs::write(create_file, unsafe {
-                std::slice::from_raw_parts(t1s.as_ptr() as _, t1s.len() * mem::size_of::<Key>())
-            }).unwrap();
+    print!("{}", KEY_RANGE.end() - KEY_RANGE.start() + 1);
+    print!(",{}", number_u);
+    print!(",{}", number_r);
+    print!(",{}", timeout.as_millis());
+    print!(",{}", ls);
 
-            fs::write(scan_file, unsafe {
-                std::slice::from_raw_parts(scans.as_ptr() as _, scans.len() * mem::size_of::<Key>())
-            }).unwrap();
-        };
-    }
+    // log_debug_ln(format!("Generating tree..."));
+    let tree = TREE(ls);
 
-    println!("Number Insertions,Number Threads,Locking Strategy,Create Time,Fan Out,Leaf Records,Block Size,Scan Time");
-    for n in S_INSERTIONS {
-        let file_suffix = format_insertions(n as _);
-        let create_file = format!("create_{}.bin", file_suffix);
-        let create_file = create_file.as_str();
+    // log_debug_ln(format!("Inserting {} records to tree...", KEY_RANGE.end()));
 
-        let scan_file = format!("scan_{}.bin", file_suffix);
-        let scan_file = scan_file.as_str();
+    beast_test2(16, tree.clone(), gen_rand_data(*KEY_RANGE.end() as usize).as_slice());
 
-        unsafe {
-            let mut create = fs::read(create_file).unwrap();
-            create.set_len(create.len() / 8);
+    // log_debug_ln(format!("Starting workload: Updaters = {}, Readers = {}, Duration = {}ms",
+    //                      number_u,
+    //                      number_r,
+    //                      timeout.as_millis()));
 
-            let mut scan = fs::read(scan_file).unwrap();
-            scan.set_len(scan.len() / 8);
+    let (send_u, rec_u)
+        = crossbeam::channel::unbounded::<()>();
 
-            let create: Vec<Key> = mem::transmute(create);
-            let scan: Vec<Key> = mem::transmute(scan);
+    let updater = || {
+        let u_tree = tree.clone();
+        let rec_u = rec_u.clone();
 
-            create_scan_test(create.as_slice(), scan.as_slice());
-        }
-    }
+        spawn(move || {
+            let mut rng
+                = rand::thread_rng();
 
-    print!("{}", "######\n".repeat(10));
-    println!("Number Insertions,Number Threads,Locking Strategy,Update Time,Fan Out,Leaf Records,Block Size");
-    for n in S_INSERTIONS {
-        let file_suffix = format_insertions(n as _);
-        let create_file = format!("create_{}.bin", file_suffix);
-        let create_file = create_file.as_str();
+            let mut u_counter = 0_usize;
+            loop {
+                u_counter += 1;
+                let key
+                    = rng.gen_range(KEY_RANGE);
 
-        let scan_file = format!("scan_{}.bin", file_suffix);
-        let scan_file = scan_file.as_str();
+                u_tree.dispatch(CRUDOperation::Update(key, Payload::default()));
 
-        unsafe {
-            let mut create = fs::read(create_file).unwrap();
-            create.set_len(create.len() / 8);
-
-            let mut scan = fs::read(scan_file).unwrap();
-            scan.set_len(scan.len() / 8);
-
-            let create: Vec<Key> = mem::transmute(create);
-            let scan: Vec<Key> = mem::transmute(scan);
-
-            update_test(create.as_slice(), scan.as_slice());
-        }
-    }
-
-    print!("{}", "######\n".repeat(10));
-    println!("Number Insertions,Update Threads,Read Threads,Locking Strategy,Mixed Time,Fan Out,Leaf Records,Block Size");
-
-    for update_ratio in [
-        0.1_f64,
-        0.5_f64,
-        0.9_f64]
-    {
-        let read_ratio
-            = 1_f64 - update_ratio;
-
-        for n in S_INSERTIONS {
-            let file_suffix = format_insertions(n as _);
-            let create_file = format!("create_{}.bin", file_suffix);
-            let create_file = create_file.as_str();
-
-            let scan_file = format!("scan_{}.bin", file_suffix);
-            let scan_file = scan_file.as_str();
-
-            unsafe {
-                let mut create = fs::read(create_file).unwrap();
-                create.set_len(create.len() / 8);
-
-                let mut scan = fs::read(scan_file).unwrap();
-                scan.set_len(scan.len() / 8);
-
-                let create: Vec<Key> = mem::transmute(create);
-                let update: Vec<Key> = mem::transmute(scan);
-
-                let updates
-                    = &update[..(update_ratio * update.len() as f64) as usize];
-
-                let reads =
-                    &update[..(read_ratio * update.len() as f64) as usize];
-
-                mixed_test(create.as_slice(),
-                           updates,
-                           reads,
-                           update_ratio,
-                           read_ratio);
+                match rec_u.try_recv() {
+                    Ok(..) | Err(TryRecvError::Disconnected) => return u_counter,
+                    _ => {}
+                }
             }
-        }
+        })
+    };
+
+    let (send_r, rec_r)
+        = crossbeam::channel::unbounded::<()>();
+
+    let reader = || {
+        let r_tree = tree.clone();
+        let rec_r = rec_r.clone();
+
+        spawn(move || {
+            let mut rng
+                = rand::thread_rng();
+
+            let mut r_counter = 0_usize;
+            loop {
+                r_counter += 1;
+                let key
+                    = rng.gen_range(KEY_RANGE);
+
+                r_tree.dispatch(CRUDOperation::Point(key));
+
+                match rec_r.try_recv() {
+                    Ok(..) | Err(TryRecvError::Disconnected) => return r_counter,
+                    _ => {}
+                }
+            }
+        })
+    };
+
+    let start = SystemTime::now();
+    let mut u_handle
+        = (0..number_u).map(|_| (updater)()).collect::<Vec<_>>();
+
+    let mut r_handle
+        = (0..number_r).map(|_| (reader)()).collect::<Vec<_>>();
+
+    while SystemTime::now().duration_since(start).unwrap().lt(&timeout) {
+        thread::yield_now()
     }
+
+    // log_debug_ln(format!("Finished timout"));
+    mem::drop(send_u);
+    mem::drop(send_r);
+
+    let u = u_handle
+        .drain(..)
+        .map(|h| h.join().unwrap())
+        .sum::<usize>();
+
+    let r = r_handle
+        .drain(..)
+        .map(|h| h.join().unwrap())
+        .sum::<usize>();
+
+    println!(",{},{}", u, r);
 }
 
 fn mixed_test(create: &[Key], updates: &[Key], reads: &[Key], ratio_update: f64, ratio_read: f64) {
@@ -1336,28 +1361,26 @@ fn mixed_test(create: &[Key], updates: &[Key], reads: &[Key], ratio_update: f64,
         orwc_attempts(4),
         orwc_attempts(16),
         orwc_attempts(64),
-
         olc(),
-
         lightweight_hybrid_lock_read_attempts(0),
         lightweight_hybrid_lock_read_attempts(1),
         lightweight_hybrid_lock_read_attempts(4),
         lightweight_hybrid_lock_read_attempts(16),
         lightweight_hybrid_lock_read_attempts(64),
 
-        lightweight_hybrid_lock_write_attempts(0),
-        lightweight_hybrid_lock_write_attempts(1),
-        lightweight_hybrid_lock_write_attempts(4),
-        lightweight_hybrid_lock_write_attempts(16),
-        lightweight_hybrid_lock_write_attempts(64),
+        // lightweight_hybrid_lock_write_attempts(0),
+        // lightweight_hybrid_lock_write_attempts(1),
+        // lightweight_hybrid_lock_write_attempts(4),
+        // lightweight_hybrid_lock_write_attempts(16),
+        // lightweight_hybrid_lock_write_attempts(64),
+        //
+        // lightweight_hybrid_lock_write_read_attempts(0, 0),
+        // lightweight_hybrid_lock_write_read_attempts(1, 1),
+        // lightweight_hybrid_lock_write_read_attempts(4, 4),
+        // lightweight_hybrid_lock_write_read_attempts(16, 16),
+        // lightweight_hybrid_lock_write_read_attempts(64, 64),
 
-        lightweight_hybrid_lock_write_read_attempts(0, 0),
-        lightweight_hybrid_lock_write_read_attempts(1, 1),
-        lightweight_hybrid_lock_write_read_attempts(4, 4),
-        lightweight_hybrid_lock_write_read_attempts(16, 16),
-        lightweight_hybrid_lock_write_read_attempts(64, 64),
-
-        hybrid_lock()
+        // hybrid_lock()
     ];
 
     for num_threads in threads_cpu.iter() {
@@ -1366,9 +1389,11 @@ fn mixed_test(create: &[Key], updates: &[Key], reads: &[Key], ratio_update: f64,
 
         let updater_threads
             = (ratio_update * *num_threads as f64) as usize;
-
+// Number Records,Update Records,Read Records,Update Threads,Read Threads,Locking Strategy,Mixed Time,Fan Out
         for ls in strategies.iter() {
             print!("{}", create.len());
+            print!(",{}", (create.len() as f64 * ratio_update) as usize);
+            print!(",{}", (create.len() as f64 * ratio_read) as usize);
             print!(",{}", updater_threads);
             print!(",{}", reader_threads);
 
@@ -1485,16 +1510,13 @@ fn update_test(t1s: &[Key], updates: &[Key]) {
         orwc_attempts(16),
         orwc_attempts(64),
         orwc_attempts(1024),
-
         olc(),
-
         lightweight_hybrid_lock_write_attempts(0),
         lightweight_hybrid_lock_write_attempts(1),
         lightweight_hybrid_lock_write_attempts(4),
         lightweight_hybrid_lock_write_attempts(16),
         lightweight_hybrid_lock_write_attempts(64),
         lightweight_hybrid_lock_write_attempts(1024),
-
         hybrid_lock()
     ];
 
@@ -1588,8 +1610,7 @@ fn create_scan_test(t1s: &[Key], scans: &[Key]) {
         lightweight_hybrid_lock_write_attempts(4),
         lightweight_hybrid_lock_write_attempts(16),
         lightweight_hybrid_lock_write_attempts(64),
-
-        hybrid_lock()
+        hybrid_lock(),
     ];
 
     for num_threads in threads_cpu.iter() {

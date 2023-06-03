@@ -1217,12 +1217,13 @@ pub fn start_paper_tests() {
     println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Updates Performed,Reads Performed");
 
     let n
-        = 10_000_000;
+        = 100_000_000;
 
     let time_out
         = Duration::from_secs(10);
 
     let thread_cases = vec![
+        (0, 120),
         (10, 110),
         (20, 100),
         (30, 90),
@@ -1236,6 +1237,7 @@ pub fn start_paper_tests() {
         (90, 30),
         (100, 20),
         (110, 10),
+        (120, 0)
     ];
 
     let locking_protocols = vec![

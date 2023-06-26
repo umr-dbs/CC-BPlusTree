@@ -1213,8 +1213,57 @@ pub fn experiment(threads_cpu: Vec<usize>,
     }
 }
 
-pub fn start_paper_tests() {
+pub fn start_paper_solo() {
     println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Updates Performed,Reads Performed");
+
+    let n
+        = 100_000_000;
+
+    let time_out
+        = Duration::from_secs(10);
+
+    let thread_cases = [1, 2, 4, 8, 16, 32, 64, 128]
+        .into_iter()
+        .flat_map(|u| vec![(u, 0), (0, u)]).collect::<Vec<_>>();
+
+    let locking_protocols = vec![
+        MonoWriter,
+        LockCoupling,
+        orwc_attempts(0),
+        orwc_attempts(1),
+        orwc_attempts(4),
+        orwc_attempts(16),
+        orwc_attempts(64),
+        olc(),
+        // lightweight_hybrid_lock_unlimited(),
+        lightweight_hybrid_lock_read_attempts(0),
+        lightweight_hybrid_lock_read_attempts(1),
+        lightweight_hybrid_lock_read_attempts(4),
+        lightweight_hybrid_lock_read_attempts(16),
+        lightweight_hybrid_lock_read_attempts(64),
+        lightweight_hybrid_lock_write_attempts(0),
+        lightweight_hybrid_lock_write_attempts(1),
+        lightweight_hybrid_lock_write_attempts(4),
+        lightweight_hybrid_lock_write_attempts(16),
+        lightweight_hybrid_lock_write_attempts(64),
+        lightweight_hybrid_lock_write_read_attempts(0, 0),
+        hybrid_lock()
+    ];
+
+    for (u, r) in thread_cases {
+        for ls in locking_protocols.iter() {
+            real_contention_test(
+                time_out,
+                u,
+                r,
+                ls.clone(),
+                n);
+        }
+    }
+}
+
+pub fn start_paper_tests() {
+    println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Slowest Update Operation,Slowest Read Operation");
 
     let n
         = 100_000_000;
@@ -1266,7 +1315,8 @@ pub fn start_paper_tests() {
 
     for (u, r) in thread_cases {
         for ls in locking_protocols.iter() {
-            real_contention_test(
+            // real_contention_test(
+            longest_runner_test(
                 time_out,
                 u,
                 r,
@@ -1274,6 +1324,114 @@ pub fn start_paper_tests() {
                 n);
         }
     }
+}
+
+fn longest_runner_test(timeout: Duration, number_u: usize, number_r: usize, ls: LockingStrategy, n: usize) {
+    let key_range = 1..=n as Key;
+
+    print!("{}", n);
+    print!(",{}", number_u);
+    print!(",{}", number_r);
+    print!(",{}", timeout.as_millis());
+    print!(",{}", ls);
+
+    let is_mono = ls.is_mono_writer();
+    let tree = TREE(ls);
+
+    if is_mono {
+        beast_test2(1, tree.clone(), gen_rand_data(*key_range.end() as usize).as_slice());
+    }
+    else {
+        beast_test2(16, tree.clone(), gen_rand_data(*key_range.end() as usize).as_slice());
+    }
+
+    let (send_u, rec_u)
+        = crossbeam::channel::unbounded::<()>();
+
+    let updater = || {
+        let u_tree = tree.clone();
+        let rec_u = rec_u.clone();
+        let key_range = key_range.clone();
+
+        spawn(move || {
+            let mut rng
+                = rand::thread_rng();
+
+            let mut longest_time = 0;
+
+            loop {
+                let updater_time = SystemTime::now();
+
+                let key
+                    = rng.gen_range(key_range.clone());
+
+                u_tree.dispatch(CRUDOperation::Update(key, Payload::default()));
+
+                longest_time.max(SystemTime::now().duration_since(updater_time).unwrap().as_millis());
+
+                match rec_u.try_recv() {
+                    Ok(..) | Err(TryRecvError::Disconnected) => return longest_time,
+                    _ => {}
+                }
+            }
+        })
+    };
+
+    let (send_r, rec_r)
+        = crossbeam::channel::unbounded::<()>();
+
+    let reader = || {
+        let r_tree = tree.clone();
+        let rec_r = rec_r.clone();
+        let key_range = key_range.clone();
+
+        spawn(move || {
+            let mut rng
+                = rand::thread_rng();
+
+            let mut longest_time = 0;
+            loop {
+                let reader_time = SystemTime::now();
+                let key
+                    = rng.gen_range(key_range.clone());
+
+                r_tree.dispatch(CRUDOperation::Point(key));
+
+                longest_time.max(SystemTime::now().duration_since(reader_time).unwrap().as_millis());
+
+                match rec_r.try_recv() {
+                    Ok(..) | Err(TryRecvError::Disconnected) => return longest_time,
+                    _ => {}
+                }
+            }
+        })
+    };
+
+    let start = SystemTime::now();
+    let mut u_handle
+        = (0..number_u).map(|_| (updater)()).collect::<Vec<_>>();
+
+    let mut r_handle
+        = (0..number_r).map(|_| (reader)()).collect::<Vec<_>>();
+
+    while SystemTime::now().duration_since(start).unwrap().lt(&timeout) {
+        thread::yield_now()
+    }
+
+    mem::drop(send_u);
+    mem::drop(send_r);
+
+    let u = u_handle
+        .drain(..)
+        .map(|h| h.join().unwrap())
+        .sum::<u128>();
+
+    let r = r_handle
+        .drain(..)
+        .map(|h| h.join().unwrap())
+        .sum::<u128>();
+
+    println!(",{},{}", u, r);
 }
 
 fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize, ls: LockingStrategy, n: usize) {

@@ -117,23 +117,23 @@ impl Display for LockingStrategy {
             LockingStrategy::OLC => write!(f, "OLC"),
             LockingStrategy::LightweightHybridLock {
                 write_level, read_level, ..
-            } if *write_level > 1f32 && *read_level > 1f32 => write!(f, "Lightweight-HybridLock(Unlimited)"),
+            } if *write_level > 1f32 && *read_level > 1f32 => write!(f, "LHL(Unlimited)"),
             LockingStrategy::LightweightHybridLock {
                 write_level, read_level, read_attempt, ..
-            } if *write_level > 1f32  => write!(f, "Lightweight-HybridLock(rAttempts={};rLevel={}*height)",
+            } if *write_level > 1f32  => write!(f, "LHL(rAttempts={};rLevel={}*height)",
                                                 read_attempt, read_level),
             LockingStrategy::LightweightHybridLock {
                 write_level, write_attempt, read_level, ..
-            } if *read_level > 1f32  => write!(f, "Lightweight-HybridLock(wAttempts={};wLevel={}*height)",
+            } if *read_level > 1f32  => write!(f, "LHL(wAttempts={};wLevel={}*height)",
                                                write_attempt, write_level),
             LockingStrategy::LightweightHybridLock {
                 read_level, read_attempt,
                 write_level, write_attempt
-            } => write!(f, "Lightweight-HybridLock(wAttempts={};wLevel={}*height;rAttempts={};rLevel={}*height)",
+            } => write!(f, "LHL(wAttempts={};wLevel={}*height;rAttempts={};rLevel={}*height)",
                         write_attempt, write_level,
                         read_attempt, read_level),
             LockingStrategy::HybridLocking { read_attempt } =>
-                write!(f, "HybridLocking(Attempts={})", read_attempt),
+                write!(f, "HL(Attempts={})", read_attempt),
         }
     }
 }

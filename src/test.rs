@@ -1367,7 +1367,7 @@ fn longest_runner_test(timeout: Duration, number_u: usize, number_r: usize, ls: 
 
                 u_tree.dispatch(CRUDOperation::Update(key, Payload::default()));
 
-                longest_time.max(SystemTime::now().duration_since(updater_time).unwrap().as_millis());
+                longest_time = longest_time.max(SystemTime::now().duration_since(updater_time).unwrap().as_nanos());
 
                 match rec_u.try_recv() {
                     Ok(..) | Err(TryRecvError::Disconnected) => return longest_time,
@@ -1397,7 +1397,7 @@ fn longest_runner_test(timeout: Duration, number_u: usize, number_r: usize, ls: 
 
                 r_tree.dispatch(CRUDOperation::Point(key));
 
-                longest_time.max(SystemTime::now().duration_since(reader_time).unwrap().as_millis());
+                longest_time = longest_time.max(SystemTime::now().duration_since(reader_time).unwrap().as_nanos());
 
                 match rec_r.try_recv() {
                     Ok(..) | Err(TryRecvError::Disconnected) => return longest_time,

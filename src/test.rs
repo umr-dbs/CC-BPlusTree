@@ -1,8 +1,10 @@
 use std::collections::{HashSet, VecDeque};
 use std::{env, fs, mem, path, thread};
-use std::fmt::Display;
-use std::hash::Hash;
-use std::ops::{Deref, DerefMut, RangeInclusive};
+use std::cmp::Ordering;
+use std::convert::Into;
+use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
+use std::ops::{Add, Deref, DerefMut, Div, RangeInclusive, Sub};
 use std::path::Path;
 use std::sync::{Arc};
 use std::thread::spawn;
@@ -11,7 +13,7 @@ use crossbeam::channel::TryRecvError;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use rand::prelude::SliceRandom;
-use rand::{Rng, RngCore};
+use rand::{Rng, RngCore, thread_rng};
 use sysinfo::{DiskExt, System, UserExt};
 use crate::block::block::Block;
 use crate::block::block_manager::{_4KB, bsz_alignment};
@@ -28,6 +30,7 @@ use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::ENABLE_YIELD;
 
+pub const VALIDATE_OPERATION_RESULT: bool = false;
 pub const EXE_LOOK_UPS: bool = false;
 pub const EXE_RANGE_LOOK_UPS: bool = false;
 
@@ -36,6 +39,108 @@ pub const BSZ: usize = BSZ_BASE - bsz_alignment::<Key, Payload>();
 pub const FAN_OUT: usize = BSZ / 8 / 2;
 pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
 
+// #[derive(Copy, Clone, Default)]
+// pub struct KeyWrap(f64);
+//
+// unsafe impl Sync for KeyWrap { }
+// impl Into<KeyWrap> for u64 {
+//     fn into(self) -> KeyWrap {
+//         (self as f64).into()
+//     }
+// }
+//
+// impl Into<usize> for KeyWrap {
+//     fn into(self) -> usize {
+//         self.0 as usize
+//     }
+// }
+//
+// impl Into<KeyWrap> for f64 {
+//     fn into(self) -> KeyWrap {
+//         KeyWrap(self)
+//     }
+// }
+//
+// impl Into<Key> for usize {
+//     fn into(self) -> KeyWrap {
+//         (self as f64).into()
+//     }
+// }
+//
+// impl Into<KeyWrap> for i32 {
+//     fn into(self) -> KeyWrap {
+//         (self as f64).into()
+//     }
+// }
+//
+// impl Into<KeyWrap> for u32 {
+//     fn into(self) -> KeyWrap {
+//         (self as f64).into()
+//     }
+// }
+//
+// impl KeyWrap {
+//     pub const MIN: Self = Self(f64::MIN);
+//     pub const MAX: Self = Self(f64::MAX);
+//
+//     pub fn checked_sub(&self, other: &Self) -> Option<Self> {
+//         if self.to_bits() == Self::MIN.to_bits() {
+//             None
+//         }
+//         else {
+//             Some(Self(self.0.sub(other.0)))
+//         }
+//     }
+//
+//     pub fn checked_add(&self, other: &Self) -> Option<Self> {
+//         if self.to_bits() == Self::MAX.to_bits() {
+//             None
+//         }
+//         else {
+//             Some(Self(self.0.add(other.0)))
+//         }
+//     }
+// }
+//
+// impl Deref for Key {
+//     type Target = f64;
+//
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+//
+// impl Display for Key {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "{}", self)
+//     }
+// }
+//
+// impl Eq for Key {}
+//
+// impl PartialEq<Self> for Key {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.cmp(other).is_eq()
+//     }
+// }
+//
+// impl PartialOrd<Self> for Key {
+//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+//         Some(self.cmp(other))
+//     }
+// }
+//
+// impl Ord for Key {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         self.total_cmp(other)
+//     }
+// }
+//
+// impl Hash for KeyWrap {
+//     fn hash<H: Hasher>(&self, state: &mut H) {
+//         state.write_u64(self.0.to_bits())
+//     }
+// }
 
 pub type Key = u64;
 pub type Payload = f64;
@@ -127,7 +232,7 @@ pub fn simple_test() {
     const INSERT: fn(u64) -> CRUDOperation<Key, Payload> = |k: Key|
         CRUDOperation::Insert(k, k as _);
 
-    const UPDATE: fn(u64) -> CRUDOperation<Key, Payload> = |k: Key|
+    const UPDATE: fn(Key) -> CRUDOperation<Key, Payload> = |k: Key|
         CRUDOperation::Update(k, k as _);
 
     let _keys_insert_org = vec![
@@ -283,7 +388,7 @@ pub fn gen_rand_data(n: usize) -> Vec<Key> {
 }
 
 #[inline(always)]
-pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[u64]) -> u128 {
+pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[Key]) -> u128 {
     let mut data_buff = t1s
         .iter()
         .map(|key| CRUDOperation::Insert(*key, Payload::default()))
@@ -340,10 +445,11 @@ pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[u64]) -> u128 {
                         }
                     }
                 }
-                joey => {
+                joey if VALIDATE_OPERATION_RESULT => {
                     log_debug_ln(format!("\n#### Sleepy Joe => Transaction ERROR: {}", joey));
                     panic!()
                 }
+                _ => {}
             })));
     }
 
@@ -357,7 +463,7 @@ pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[u64]) -> u128 {
 }
 
 #[inline(always)]
-pub fn beast_test(num_thread: usize, index: Tree, t1s: &[u64], log: bool) -> u128 {
+pub fn beast_test(num_thread: usize, index: Tree, t1s: &[Key], log: bool) -> u128 {
     let ls = index.as_index().locking_strategy.clone();
     let time = beast_test2(num_thread, index, t1s);
     if log {
@@ -1213,57 +1319,57 @@ pub fn experiment(threads_cpu: Vec<usize>,
     }
 }
 
-pub fn start_paper_solo() {
-    println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Updates Performed,Reads Performed");
-
-    let n
-        = 100_000_000;
-
-    let time_out
-        = Duration::from_secs(10);
-
-    let thread_cases = [1, 2, 4, 8, 16, 32, 64, 128]
-        .into_iter()
-        .flat_map(|u| vec![(u, 0), (0, u)]).collect::<Vec<_>>();
-
-    let locking_protocols = vec![
-        MonoWriter,
-        LockCoupling,
-        orwc_attempts(0),
-        orwc_attempts(1),
-        orwc_attempts(4),
-        orwc_attempts(16),
-        orwc_attempts(64),
-        olc(),
-        // lightweight_hybrid_lock_unlimited(),
-        lightweight_hybrid_lock_read_attempts(0),
-        lightweight_hybrid_lock_read_attempts(1),
-        lightweight_hybrid_lock_read_attempts(4),
-        lightweight_hybrid_lock_read_attempts(16),
-        lightweight_hybrid_lock_read_attempts(64),
-        lightweight_hybrid_lock_write_attempts(0),
-        lightweight_hybrid_lock_write_attempts(1),
-        lightweight_hybrid_lock_write_attempts(4),
-        lightweight_hybrid_lock_write_attempts(16),
-        lightweight_hybrid_lock_write_attempts(64),
-        lightweight_hybrid_lock_write_read_attempts(0, 0),
-        hybrid_lock()
-    ];
-
-    for (u, r) in thread_cases {
-        for ls in locking_protocols.iter() {
-            real_contention_test(
-                time_out,
-                u,
-                r,
-                ls.clone(),
-                n);
-        }
-    }
-}
+// pub fn start_paper_solo() {
+//     println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Updates Performed,Reads Performed");
+//
+//     let n
+//         = 100_000_000;
+//
+//     let time_out
+//         = Duration::from_secs(10);
+//
+//     let thread_cases = [1, 2, 4, 8, 16, 32, 64, 128]
+//         .into_iter()
+//         .flat_map(|u| vec![(u, 0), (0, u)]).collect::<Vec<_>>();
+//
+//     let locking_protocols = vec![
+//         MonoWriter,
+//         LockCoupling,
+//         orwc_attempts(0),
+//         orwc_attempts(1),
+//         orwc_attempts(4),
+//         orwc_attempts(16),
+//         orwc_attempts(64),
+//         olc(),
+//         // lightweight_hybrid_lock_unlimited(),
+//         lightweight_hybrid_lock_read_attempts(0),
+//         lightweight_hybrid_lock_read_attempts(1),
+//         lightweight_hybrid_lock_read_attempts(4),
+//         lightweight_hybrid_lock_read_attempts(16),
+//         lightweight_hybrid_lock_read_attempts(64),
+//         lightweight_hybrid_lock_write_attempts(0),
+//         lightweight_hybrid_lock_write_attempts(1),
+//         lightweight_hybrid_lock_write_attempts(4),
+//         lightweight_hybrid_lock_write_attempts(16),
+//         lightweight_hybrid_lock_write_attempts(64),
+//         lightweight_hybrid_lock_write_read_attempts(0, 0),
+//         hybrid_lock()
+//     ];
+//
+//     for (u, r) in thread_cases {
+//         for ls in locking_protocols.iter() {
+//             real_contention_test(
+//                 time_out,
+//                 u,
+//                 r,
+//                 ls.clone(),
+//                 n);
+//         }
+//     }
+// }
 
 pub fn start_paper_tests() {
-    println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Slowest Update Operation,Slowest Read Operation");
+    println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Create Time,Updates Performed,Reads Performed");
 
     let n
         = 100_000_000;
@@ -1315,8 +1421,7 @@ pub fn start_paper_tests() {
 
     for (u, r) in thread_cases {
         for ls in locking_protocols.iter() {
-            // real_contention_test(
-            longest_runner_test(
+            expo_runner_test(
                 time_out,
                 u,
                 r,
@@ -1325,6 +1430,108 @@ pub fn start_paper_tests() {
         }
     }
 }
+
+fn expo_runner_test(timeout: Duration, number_u: usize, number_r: usize, ls: LockingStrategy, n: usize) {
+    let key_range = 1..=n as Key;
+
+    print!("{}", n);
+    print!(",{}", number_u);
+    print!(",{}", number_r);
+    print!(",{}", timeout.as_millis());
+    print!(",{}", ls);
+
+    let is_mono = ls.is_mono_writer();
+    let tree = TREE(ls);
+
+    let create_start = SystemTime::now();
+    if is_mono {
+        beast_test2(number_u.max(1), tree.clone(), gen_data_exp(*key_range.end()).as_slice());
+    }
+    else {
+        beast_test2(number_u.max(1), tree.clone(), gen_data_exp(*key_range.end()).as_slice());
+    }
+
+    let create_end = SystemTime::now().duration_since(create_start).unwrap().as_millis();
+    print!(",{}", create_end);
+
+    let (send_u, rec_u)
+        = crossbeam::channel::unbounded::<()>();
+
+    let updater = || {
+        let u_tree = tree.clone();
+        let rec_u = rec_u.clone();
+
+        spawn(move || {
+            let mut count = 0;
+
+            loop {
+                let key
+                    = gen_rand_key(n as _, 0, n as _) as _;
+
+                u_tree.dispatch(CRUDOperation::Update(key, Payload::default()));
+                count += 1;
+
+                match rec_u.try_recv() {
+                    Ok(..) | Err(TryRecvError::Disconnected) => return count,
+                    _ => {}
+                }
+            }
+        })
+    };
+
+    let (send_r, rec_r)
+        = crossbeam::channel::unbounded::<()>();
+
+    let reader = || {
+        let r_tree = tree.clone();
+        let rec_r = rec_r.clone();
+
+        spawn(move || {
+            let mut count = 0;
+            loop {
+                let reader_time = SystemTime::now();
+                let key
+                    = gen_rand_key(n as _, 0, n as _) as _;
+
+                r_tree.dispatch(CRUDOperation::Point(key));
+
+                count += 1;
+
+                match rec_r.try_recv() {
+                    Ok(..) | Err(TryRecvError::Disconnected) => return count,
+                    _ => {}
+                }
+            }
+        })
+    };
+
+    let start = SystemTime::now();
+    let mut u_handle
+        = (0..number_u).map(|_| (updater)()).collect::<Vec<_>>();
+
+    let mut r_handle
+        = (0..number_r).map(|_| (reader)()).collect::<Vec<_>>();
+
+    while SystemTime::now().duration_since(start).unwrap().lt(&timeout) {
+        thread::yield_now()
+    }
+
+    mem::drop(send_u);
+    mem::drop(send_r);
+
+    let u = u_handle
+        .drain(..)
+        .map(|h| h.join().unwrap())
+        .sum::<u128>();
+
+    let r = r_handle
+        .drain(..)
+        .map(|h| h.join().unwrap())
+        .sum::<u128>();
+
+    println!(",{},{}", u, r);
+}
+
 
 fn longest_runner_test(timeout: Duration, number_u: usize, number_r: usize, ls: LockingStrategy, n: usize) {
     let key_range = 1..=n as Key;
@@ -1856,4 +2063,34 @@ fn create_scan_test(t1s: &[Key], scans: &[Key]) {
             println!(",{}", read_time);
         }
     }
+}
+
+pub fn gen_data_exp(limit: u64) -> Vec<u64> {
+    (1..=limit)
+        .map(|i|
+            gen_rand_key(i, 0, i))
+        .collect()
+}
+
+pub fn gen_rand_key(i: u64, range_start: u64, range_end: u64) -> u64 {
+    #[inline(always)]
+    fn sample_next() -> f64 {
+        const LAMBDA: f64 = 125_f64;
+
+        let num
+            = rand::Rng::gen_range(&mut thread_rng(), 0_f64..1_f64);
+
+        (1_f64 - num)
+            .ln()
+            .div(-LAMBDA)
+    }
+
+    let range = range_end - range_start;
+
+    (((loop {
+        let key = i as f64 * (1_f64 - sample_next());
+        if key >= 0_f64 {
+            break key
+        }
+    }) / range as f64) * range_end as f64) as _
 }

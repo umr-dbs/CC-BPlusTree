@@ -388,7 +388,7 @@ pub fn gen_rand_data(n: usize) -> Vec<Key> {
 }
 
 #[inline(always)]
-pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[Key]) -> u128 {
+pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[Key]) -> (u128, u64) {
     let mut data_buff = t1s
         .iter()
         .map(|key| CRUDOperation::Insert(*key, Payload::default()))
@@ -411,61 +411,32 @@ pub fn beast_test2(num_thread: usize, p_index: Tree, t1s: &[Key]) -> u128 {
             = data_buff.pop_front().unwrap();
 
         let index = p_index.clone();
-        handles.push(thread::spawn(move || current_chunk
-            .into_iter()
-            .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
-                CRUDOperationResult::Inserted(key, ..) => {
-                    if EXE_LOOK_UPS {
-                        loop {
-                            match index.dispatch(CRUDOperation::Point(key)) {
-                                CRUDOperationResult::MatchedRecord(Some(record))
-                                if record.key == key => { break; }
-                                joe => { //  if !tree.locking_strategy().is_dolos()
-                                    log_debug_ln(format!("\nSleepy Joe => Transaction::{} ->",
-                                                         CRUDOperation::<_, Payload>::Point(key)));
-                                    log_debug_ln(format!("\nTransactionResult::{}", joe));
-                                    println!()
-                                }
-                            };
-                        }
-                    }
-                    if EXE_RANGE_LOOK_UPS {
-                        loop {
-                            match index.dispatch(CRUDOperation::Range((key..=key).into())) {
-                                CRUDOperationResult::MatchedRecords(records)
-                                if records.len() != 1 =>
-                                    println!("Sleepy Joe => RangeQuery len = {} - {}",
-                                             records.len(),
-                                             records.iter().join("\n")),
-                                CRUDOperationResult::MatchedRecords(ref records)
-                                if records[0].key != key => //{}
-                                    println!("Sleepy Joe => RangeQuery matched garbage record = {}", records[0]),
-                                _ => { break; }
-                            };
-                        }
-                    }
-                }
-                joey if VALIDATE_OPERATION_RESULT => {
-                    log_debug_ln(format!("\n#### Sleepy Joe => Transaction ERROR: {}", joey));
-                    panic!()
-                }
-                _ => {}
-            })));
+        handles.push(spawn(move || {
+            let mut counter_dups = 0;
+            current_chunk
+                .into_iter()
+                .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
+                    CRUDOperationResult::Inserted(..) => {}
+                    _ => counter_dups += 1
+                });
+            counter_dups
+        }));
     }
 
-    handles
+    let dups = handles
         .into_iter()
-        .for_each(|handle| handle
+        .map(|handle| handle
             .join()
-            .unwrap());
+            .unwrap())
+        .sum();
 
-    SystemTime::now().duration_since(start).unwrap().as_millis()
+    (SystemTime::now().duration_since(start).unwrap().as_millis(), dups)
 }
 
 #[inline(always)]
 pub fn beast_test(num_thread: usize, index: Tree, t1s: &[Key], log: bool) -> u128 {
     let ls = index.as_index().locking_strategy.clone();
-    let time = beast_test2(num_thread, index, t1s);
+    let (time, _dups) = beast_test2(num_thread, index, t1s);
     if log {
         print!(",{}", ls);
     }
@@ -1305,7 +1276,7 @@ pub fn experiment(threads_cpu: Vec<usize>,
                 print!("{}", t1s.len());
                 print!(",{}", *num_threads);
 
-                let time = beast_test2(
+                let (time, _dups) = beast_test2(
                     *num_threads,
                     TREE(ls.clone()),
                     t1s.as_slice());
@@ -1369,31 +1340,10 @@ pub fn experiment(threads_cpu: Vec<usize>,
 // }
 
 pub fn start_paper_tests() {
-    println!("Number Records,Update Threads,Read Threads,Timeout,Locking Strategy,Create Time,Updates Performed,Reads Performed");
+    println!("Number Records,Number Threads,Locking Strategy,Create Time,Duplicates Count");
 
-    let n
-        = 100_000_000;
-
-    let time_out
-        = Duration::from_secs(10);
-
-    let thread_cases = vec![
-        (0, 120),
-        (10, 110),
-        (20, 100),
-        (30, 90),
-        (40, 80),
-        (50, 70),
-
-        (60, 60),
-
-        (70, 50),
-        (80, 40),
-        (90, 30),
-        (100, 20),
-        (110, 10),
-        (120, 0)
-    ];
+    let number_records
+        = 10_000_000;
 
     let locking_protocols = vec![
         MonoWriter,
@@ -1416,120 +1366,43 @@ pub fn start_paper_tests() {
         lightweight_hybrid_lock_write_attempts(16),
         lightweight_hybrid_lock_write_attempts(64),
         lightweight_hybrid_lock_write_read_attempts(0, 0),
-        hybrid_lock()
+        hybrid_lock(),
     ];
 
-    for (u, r) in thread_cases {
-        for ls in locking_protocols.iter() {
+    for create_threads in [1,2,4,8,16,24,32,64,128] {
+        for protocol in locking_protocols.iter() {
             expo_runner_test(
-                time_out,
-                u,
-                r,
-                ls.clone(),
-                n);
+                create_threads,
+                protocol.clone(),
+                number_records);
         }
     }
 }
 
-fn expo_runner_test(timeout: Duration, number_u: usize, number_r: usize, ls: LockingStrategy, n: usize) {
+fn expo_runner_test(create_threads: usize, ls: LockingStrategy, n: usize) {
     let key_range = 1..=n as Key;
 
     print!("{}", n);
-    print!(",{}", number_u);
-    print!(",{}", number_r);
-    print!(",{}", timeout.as_millis());
+    print!(",{}", create_threads);
     print!(",{}", ls);
 
     let is_mono = ls.is_mono_writer();
     let tree = TREE(ls);
 
-    let create_start = SystemTime::now();
-    if is_mono {
-        beast_test2(number_u.max(1), tree.clone(), gen_data_exp(*key_range.end()).as_slice());
-    }
-    else {
-        beast_test2(number_u.max(1), tree.clone(), gen_data_exp(*key_range.end()).as_slice());
-    }
-
-    let create_end = SystemTime::now().duration_since(create_start).unwrap().as_millis();
-    print!(",{}", create_end);
-
-    let (send_u, rec_u)
-        = crossbeam::channel::unbounded::<()>();
-
-    let updater = || {
-        let u_tree = tree.clone();
-        let rec_u = rec_u.clone();
-
-        spawn(move || {
-            let mut count = 0;
-
-            loop {
-                let key
-                    = gen_rand_key(n as _, 0, n as _) as _;
-
-                u_tree.dispatch(CRUDOperation::Update(key, Payload::default()));
-                count += 1;
-
-                match rec_u.try_recv() {
-                    Ok(..) | Err(TryRecvError::Disconnected) => return count,
-                    _ => {}
-                }
-            }
-        })
+    let (time, dups) = if is_mono {
+        beast_test2(
+            create_threads,
+            tree.clone(),
+            gen_data_exp(*key_range.end()).as_slice()
+        )
+    } else {
+        beast_test2(
+            create_threads,
+            tree.clone(),
+            gen_data_exp(*key_range.end()).as_slice())
     };
 
-    let (send_r, rec_r)
-        = crossbeam::channel::unbounded::<()>();
-
-    let reader = || {
-        let r_tree = tree.clone();
-        let rec_r = rec_r.clone();
-
-        spawn(move || {
-            let mut count = 0;
-            loop {
-                let reader_time = SystemTime::now();
-                let key
-                    = gen_rand_key(n as _, 0, n as _) as _;
-
-                r_tree.dispatch(CRUDOperation::Point(key));
-
-                count += 1;
-
-                match rec_r.try_recv() {
-                    Ok(..) | Err(TryRecvError::Disconnected) => return count,
-                    _ => {}
-                }
-            }
-        })
-    };
-
-    let start = SystemTime::now();
-    let mut u_handle
-        = (0..number_u).map(|_| (updater)()).collect::<Vec<_>>();
-
-    let mut r_handle
-        = (0..number_r).map(|_| (reader)()).collect::<Vec<_>>();
-
-    while SystemTime::now().duration_since(start).unwrap().lt(&timeout) {
-        thread::yield_now()
-    }
-
-    mem::drop(send_u);
-    mem::drop(send_r);
-
-    let u = u_handle
-        .drain(..)
-        .map(|h| h.join().unwrap())
-        .sum::<u128>();
-
-    let r = r_handle
-        .drain(..)
-        .map(|h| h.join().unwrap())
-        .sum::<u128>();
-
-    println!(",{},{}", u, r);
+    println!(",{},{}", time, dups);
 }
 
 
@@ -1547,8 +1420,7 @@ fn longest_runner_test(timeout: Duration, number_u: usize, number_r: usize, ls: 
 
     if is_mono {
         beast_test2(1, tree.clone(), gen_rand_data(*key_range.end() as usize).as_slice());
-    }
-    else {
+    } else {
         beast_test2(16, tree.clone(), gen_rand_data(*key_range.end() as usize).as_slice());
     }
 
@@ -1655,8 +1527,7 @@ fn real_contention_test(timeout: Duration, number_u: usize, number_r: usize, ls:
 
     if is_mono {
         beast_test2(1, tree.clone(), gen_rand_data(*key_range.end() as usize).as_slice());
-    }
-    else {
+    } else {
         beast_test2(16, tree.clone(), gen_rand_data(*key_range.end() as usize).as_slice());
     }
 
@@ -2092,5 +1963,5 @@ pub fn gen_rand_key(i: u64, range_start: u64, range_end: u64) -> u64 {
         if key >= 0_f64 {
             break key
         }
-    }) / range as f64) * range_end as f64) as _
+    }) / range as f64) * u64::MAX as f64) as _
 }

@@ -1340,7 +1340,7 @@ pub fn experiment(threads_cpu: Vec<usize>,
 // }
 
 pub fn start_paper_tests() {
-    println!("Number Records,Number Threads,Locking Strategy,Create Time,Duplicates Count");
+    println!("Number Records,Number Threads,Locking Strategy,Create Time,Duplicates Count,Lambda");
 
     let number_records
         = 10_000_000;
@@ -1353,56 +1353,52 @@ pub fn start_paper_tests() {
         orwc_attempts(4),
         orwc_attempts(16),
         orwc_attempts(64),
+        orwc_attempts(128),
         olc(),
         // lightweight_hybrid_lock_unlimited(),
-        lightweight_hybrid_lock_read_attempts(0),
-        lightweight_hybrid_lock_read_attempts(1),
-        lightweight_hybrid_lock_read_attempts(4),
-        lightweight_hybrid_lock_read_attempts(16),
-        lightweight_hybrid_lock_read_attempts(64),
+        // lightweight_hybrid_lock_read_attempts(0),
+        // lightweight_hybrid_lock_read_attempts(1),
+        // lightweight_hybrid_lock_read_attempts(4),
+        // lightweight_hybrid_lock_read_attempts(16),
+        // lightweight_hybrid_lock_read_attempts(64),
         lightweight_hybrid_lock_write_attempts(0),
         lightweight_hybrid_lock_write_attempts(1),
         lightweight_hybrid_lock_write_attempts(4),
         lightweight_hybrid_lock_write_attempts(16),
         lightweight_hybrid_lock_write_attempts(64),
-        lightweight_hybrid_lock_write_read_attempts(0, 0),
+        lightweight_hybrid_lock_write_attempts(128),
+        // lightweight_hybrid_lock_write_read_attempts(0, 0),
         hybrid_lock(),
     ];
 
-    for create_threads in [1,2,4,8,16,24,32,64,128] {
+    for create_threads in [1, 2, 3, 4, 8, 12, 16, 24, 32, 40, 56, 64, 96, 128] {
         for protocol in locking_protocols.iter() {
-            expo_runner_test(
-                create_threads,
-                protocol.clone(),
-                number_records);
+            for lambda in [16_f64, 32_f64, 64_f64, 128_f64, 256_f64] {
+                expo_runner_test(
+                    create_threads,
+                    protocol.clone(),
+                    number_records,
+                    lambda);
+            }
         }
     }
 }
 
-fn expo_runner_test(create_threads: usize, ls: LockingStrategy, n: usize) {
+fn expo_runner_test(create_threads: usize, ls: LockingStrategy, n: usize, lambda: f64) {
     let key_range = 1..=n as Key;
 
     print!("{}", n);
     print!(",{}", create_threads);
     print!(",{}", ls);
 
-    let is_mono = ls.is_mono_writer();
     let tree = TREE(ls);
 
-    let (time, dups) = if is_mono {
-        beast_test2(
-            create_threads,
-            tree.clone(),
-            gen_data_exp(*key_range.end()).as_slice()
-        )
-    } else {
-        beast_test2(
-            create_threads,
-            tree.clone(),
-            gen_data_exp(*key_range.end()).as_slice())
-    };
+    let (time, dups) = beast_test2(
+        create_threads,
+        tree.clone(),
+        gen_data_exp(*key_range.end(), lambda).as_slice());
 
-    println!(",{},{}", time, dups);
+    println!(",{},{},{}", time, dups, lambda);
 }
 
 
@@ -1936,32 +1932,32 @@ fn create_scan_test(t1s: &[Key], scans: &[Key]) {
     }
 }
 
-pub fn gen_data_exp(limit: u64) -> Vec<u64> {
+pub fn gen_data_exp(limit: u64, lambda: f64) -> Vec<u64> {
     (1..=limit)
         .map(|i|
-            gen_rand_key(i, 0, i))
+            gen_rand_key(i, 0, i, lambda))
         .collect()
 }
 
-pub fn gen_rand_key(i: u64, range_start: u64, range_end: u64) -> u64 {
+pub fn gen_rand_key(i: u64, range_start: u64, range_end: u64, lambda: f64) -> u64 {
     #[inline(always)]
-    fn sample_next() -> f64 {
-        const LAMBDA: f64 = 125_f64;
+    fn sample_next(lambda: f64) -> f64 {
+        // const LAMBDA: f64 = 125_f64;
 
         let num
             = rand::Rng::gen_range(&mut thread_rng(), 0_f64..1_f64);
 
         (1_f64 - num)
             .ln()
-            .div(-LAMBDA)
+            .div(-lambda)
     }
 
     let range = range_end - range_start;
 
     (((loop {
-        let key = i as f64 * (1_f64 - sample_next());
+        let key = i as f64 * (1_f64 - sample_next(lambda));
         if key >= 0_f64 {
-            break key
+            break key;
         }
     }) / range as f64) * u64::MAX as f64) as _
 }

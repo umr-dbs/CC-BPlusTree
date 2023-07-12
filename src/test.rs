@@ -13,7 +13,8 @@ use crossbeam::channel::TryRecvError;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use rand::prelude::SliceRandom;
-use rand::{Rng, RngCore, thread_rng};
+use rand::{Rng, RngCore, SeedableRng, thread_rng};
+use rand::rngs::StdRng;
 use sysinfo::{DiskExt, System, UserExt};
 use crate::block::block::Block;
 use crate::block::block_manager::{_4KB, bsz_alignment};
@@ -1374,17 +1375,19 @@ pub fn start_paper_tests() {
     for create_threads in [1, 2, 3, 4, 8, 12, 16, 24, 32, 40, 56, 64, 96, 128] {
         for protocol in locking_protocols.iter() {
             for lambda in [16_f64, 32_f64, 64_f64, 128_f64, 256_f64] {
+                let mut rnd = StdRng::seed_from_u64(90501960);
                 expo_runner_test(
                     create_threads,
                     protocol.clone(),
                     number_records,
-                    lambda);
+                    lambda,
+                    &mut rnd);
             }
         }
     }
 }
 
-fn expo_runner_test(create_threads: usize, ls: LockingStrategy, n: usize, lambda: f64) {
+fn expo_runner_test(create_threads: usize, ls: LockingStrategy, n: usize, lambda: f64, rnd: &mut StdRng) {
     let key_range = 1..=n as Key;
 
     print!("{}", n);
@@ -1396,7 +1399,7 @@ fn expo_runner_test(create_threads: usize, ls: LockingStrategy, n: usize, lambda
     let (time, dups) = beast_test2(
         create_threads,
         tree.clone(),
-        gen_data_exp(*key_range.end(), lambda).as_slice());
+        gen_data_exp(*key_range.end(), lambda, rnd).as_slice());
 
     println!(",{},{},{}", time, dups, lambda);
 }
@@ -1932,20 +1935,20 @@ fn create_scan_test(t1s: &[Key], scans: &[Key]) {
     }
 }
 
-pub fn gen_data_exp(limit: u64, lambda: f64) -> Vec<u64> {
+pub fn gen_data_exp(limit: u64, lambda: f64, rnd: &mut StdRng) -> Vec<u64> {
     (1..=limit)
         .map(|i|
-            gen_rand_key(i, 0, i, lambda))
+            gen_rand_key(i, 0, i, lambda, rnd))
         .collect()
 }
 
-pub fn gen_rand_key(i: u64, range_start: u64, range_end: u64, lambda: f64) -> u64 {
+pub fn gen_rand_key(i: u64, range_start: u64, range_end: u64, lambda: f64, rnd: &mut StdRng) -> u64 {
     #[inline(always)]
-    fn sample_next(lambda: f64) -> f64 {
+    fn sample_next(lambda: f64, rnd: &mut StdRng) -> f64 {
         // const LAMBDA: f64 = 125_f64;
 
         let num
-            = rand::Rng::gen_range(&mut thread_rng(), 0_f64..1_f64);
+            = rnd.gen_range(0_f64..1_f64);
 
         (1_f64 - num)
             .ln()
@@ -1955,7 +1958,7 @@ pub fn gen_rand_key(i: u64, range_start: u64, range_end: u64, lambda: f64) -> u6
     let range = range_end - range_start;
 
     (((loop {
-        let key = i as f64 * (1_f64 - sample_next(lambda));
+        let key = i as f64 * (1_f64 - sample_next(lambda, rnd));
         if key >= 0_f64 {
             break key;
         }

@@ -8,7 +8,7 @@ use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::locking::locking_strategy::CRUDProtocol;
 use crate::locking::locking_strategy::LockingStrategy::*;
-use crate::test::{hle, INDEX, Key, MAKE_INDEX, Payload, show_alignment_bsz, start_paper_tests};
+use crate::test::{INDEX, Key, MAKE_INDEX, Payload, start_paper_tests};
 use crate::utils::smart_cell::ENABLE_YIELD;
 
 mod block;
@@ -193,5 +193,16 @@ impl TreeDispatcher {
             TreeDispatcher::Wrapper(inner) => unsafe { &*inner.data_ptr() },
             TreeDispatcher::Ref(inner) => inner
         }
+    }
+}
+pub fn hle() -> &'static str {
+    if cfg!(feature = "hardware-lock-elision") {
+        if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+            "ON    "
+        } else {
+            "NO HTL"
+        }
+    } else {
+        "OFF   "
     }
 }

@@ -624,8 +624,16 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
         match self {
-            OLCReader(Some((cell, latch))) => cell.0
-                .is_read_valid(*latch),
+            OLCReader(Some((cell, latch))) => {
+                if let HybridCell(opt, rw) = cell.0.as_ref() {
+                    !rw.is_locked_exclusive() && opt.is_read_valid(*latch)
+                }
+                else {
+                    cell.0.is_read_valid(*latch)
+                }
+            }
+            // OLCReader(Some((cell, latch))) => cell.0
+            //     .is_read_valid(*latch),
             OLCReader(None) => false,
             HybridRwReader(.., opt, latch) =>
                 opt.is_read_valid(*latch),

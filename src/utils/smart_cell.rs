@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter};
-use std::{hint, mem, ptr, thread};
+use std::{hint, mem, ptr};
 use std::mem::{transmute, transmute_copy};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -624,16 +624,8 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
         match self {
-            OLCReader(Some((cell, latch))) => {
-                if let HybridCell(opt, rw) = cell.0.as_ref() {
-                    !rw.is_locked_exclusive() && opt.is_read_valid(*latch)
-                }
-                else {
-                    cell.0.is_read_valid(*latch)
-                }
-            }
-            // OLCReader(Some((cell, latch))) => cell.0
-            //     .is_read_valid(*latch),
+            OLCReader(Some((cell, latch))) => cell.0
+                .is_read_valid(*latch),
             OLCReader(None) => false,
             HybridRwReader(.., opt, latch) =>
                 opt.is_read_valid(*latch),
@@ -809,33 +801,6 @@ impl<E: Default> SmartCell<E> {
     }
 
     #[inline(always)]
-    pub fn borrow_mut_hybrid(&self) -> SmartGuard<'static, E> {
-        match self.0.deref() {
-            HybridCell(opt, rw) => unsafe {
-                let writer
-                    = rw.write();
-
-                loop {
-                    let version
-                        = opt.load_version();
-
-                    match version & WRITE_OBSOLETE_FLAG_VERSION == 0 {
-                        true if opt.write_lock_strong(version).is_some() =>
-                            break transmute(
-                             HybridRwWriter(writer,
-                                           opt,
-                                           version | WRITE_FLAG_VERSION)),
-                        _ if version & OBSOLETE_FLAG_VERSION != 0 =>
-                            break OLCReader(None),
-                        _ => thread::yield_now()
-                    }
-                }
-            }
-            _ => OLCReader(None)
-        }
-    }
-
-    #[inline(always)]
     pub fn borrow_mut(&self) -> SmartGuard<'static, E> {
         match self.0.deref() {
             FreeCell(ptr) => LockFree(ptr.get_mut()),
@@ -857,38 +822,23 @@ impl<E: Default> SmartCell<E> {
                     OLCReader(None)
                 }
             }
-            HybridCell(opt, rw) => unsafe {
-                let (read, read_version)
-                    = opt.read_lock();
+            HybridCell(opt, rw) => match rw.try_write() {
+                None => OLCReader(None),
+                Some(writer) => unsafe {
+                    let (read, read_version)
+                        = opt.is_read_not_obsolete_result();
 
-                match read {
-                    true if !rw.is_locked() => match opt.write_lock_strong(read_version) {
-                        Some(write_version) => return transmute(
-                            OLCWriter(self.clone(), write_version)),
-                        _ => {}
+                    if !read {
+                        OLCReader(None)
+                    } else if let Some(write_latch) = opt.write_lock_strong(read_version) {
+                        transmute(HybridRwWriter(writer,
+                                                 opt,
+                                                 write_latch))
+                    } else {
+                        OLCReader(None)
                     }
-                    _ => {}
-                };
-
-                OLCReader(None)
-            },
-            // HybridCell(opt, rw) => match rw.try_write() {
-            //     None => OLCReader(None),
-            //     Some(writer) => unsafe {
-            //         let (read, read_version)
-            //             = opt.is_read_not_obsolete_result();
-            //
-            //         if !read {
-            //             OLCReader(None)
-            //         } else if let Some(write_latch) = opt.write_lock_strong(read_version) {
-            //             transmute(HybridRwWriter(writer,
-            //                 opt,
-            //                 write_latch))
-            //         } else {
-            //             OLCReader(None)
-            //         }
-            //     }
-            // }
+                }
+            }
             ExclusiveCell(mutex, ptr) => unsafe {
                 transmute(MutExclusive(
                     transmute(mutex.lock()),

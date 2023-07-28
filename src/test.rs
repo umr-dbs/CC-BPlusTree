@@ -13,7 +13,7 @@ use rand::rngs::StdRng;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::crud_model::crud_api::CRUDDispatcher;
-use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, lightweight_hybrid_lock_read_attempts, lightweight_hybrid_lock_unlimited, LHL, lightweight_hybrid_lock_write_read_attempts, LockingStrategy, OLC, orwc, orwc_attempts};
+use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, LHL_read, lightweight_hybrid_lock_unlimited, LHL_write, LHL_read_write, LockingStrategy, OLC, orwc, orwc_attempts};
 use crate::{TREE, Tree};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
@@ -120,12 +120,26 @@ pub fn start_paper_tests() {
 
     let protocols = [
         OLC(),
-        LHL(0),
-        LHL(1),
-        LHL(4),
-        LHL(16),
-        LHL(64),
-        LHL(128),
+
+        LHL_read(0),
+        LHL_read(1),
+        LHL_read(4),
+        LHL_read(16),
+        LHL_read(64),
+
+        LHL_write(0),
+        LHL_write(1),
+        LHL_write(4),
+        LHL_write(16),
+        LHL_write(64),
+        LHL_write(128),
+
+        LHL_read_write(0, 0),
+        LHL_read_write(1, 1),
+        LHL_read_write(4, 4),
+        LHL_read_write(16, 16),
+        LHL_read_write(64, 64),
+        LHL_read_write(128, 128),
     ];
 
     for protocol in protocols {

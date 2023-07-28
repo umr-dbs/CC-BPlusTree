@@ -1,3 +1,68 @@
+pub fn start_paper_tests_old() {
+    println!("Number Records,Number Threads,Locking Strategy,Create Time,Duplicates Count,Lambda,Run");
+
+    let number_records
+        = 1_000_000;
+
+    let repeats
+        = 10_usize;
+
+    let threads
+        = [1, 2, 4, 6, 8, 16, 20, 24, 32, 40, 56, 64, 72, 80, 96, 128];
+
+    let lambdas
+        = [0.1_f64, 16_f64, 32_f64, 64_f64, 128_f64, 256_f64, 512_f64, 1024_f64];
+
+    let locking_protocols = [
+        // MonoWriter,
+        // LockCoupling,
+        // orwc_attempts(0),
+        // orwc_attempts(1),
+        // orwc_attempts(4),
+        // orwc_attempts(16),
+        // orwc_attempts(64),
+        // orwc_attempts(128),
+        olc(),
+        // lightweight_hybrid_lock_unlimited(),
+        // lightweight_hybrid_lock_write_attempts(0),
+        // lightweight_hybrid_lock_write_attempts(1),
+        // lightweight_hybrid_lock_write_attempts(4),
+        // lightweight_hybrid_lock_write_attempts(16),
+        // lightweight_hybrid_lock_write_attempts(64),
+        // lightweight_hybrid_lock_write_attempts(128),
+        // lightweight_hybrid_lock_write_attempts(0),
+        // hybrid_lock(),
+    ];
+
+    let data_lambdas = lambdas.iter().map(|lambda| {
+        let mut rnd = StdRng::seed_from_u64(90501960);
+        gen_data_exp(number_records, *lambda, &mut rnd)
+            .into_iter()
+            .map(|key|
+                CRUDOperation::Insert(key, Payload::default()))
+            .collect::<Vec<_>>()
+    }).collect::<Vec<_>>();
+
+    for protocol in locking_protocols {
+        for create_threads in threads.iter() {
+            for lambda in 0..lambdas.len() {
+                for run in 1..=repeats {
+                    print!("{}", number_records);
+                    print!(",{}", create_threads);
+                    print!(",{}", protocol);
+
+                    let (time, dups) = beast_test2(
+                        *create_threads,
+                        TREE(protocol.clone()),
+                        data_lambdas[lambda].as_slice());
+
+                    println!(",{},{},{},{}", time, dups, lambdas[lambda], run);
+                }
+            }
+        }
+    }
+}
+
 pub fn simple_test2() {
     let singled_versioned_index = MAKE_INDEX(LockingStrategy::MonoWriter);
 

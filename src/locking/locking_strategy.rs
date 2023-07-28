@@ -4,7 +4,7 @@ use crate::page_model::{Attempts, Height, Level};
 use crate::utils::smart_cell::LatchType;
 
 #[inline(always)]
-pub const fn olc() -> LockingStrategy {
+pub const fn OLC() -> LockingStrategy {
     LockingStrategy::OLC
 }
 
@@ -34,7 +34,7 @@ pub const fn lightweight_hybrid_lock_read_attempts(read_attempt: Attempts) -> Lo
 }
 
 #[inline(always)]
-pub const fn lightweight_hybrid_lock_write_attempts(write_attempt: Attempts) -> LockingStrategy {
+pub const fn LHL(write_attempt: Attempts) -> LockingStrategy {
     LockingStrategy::LightweightHybridLock {
         read_level: f32::MAX,
         read_attempt: Attempts::MAX,

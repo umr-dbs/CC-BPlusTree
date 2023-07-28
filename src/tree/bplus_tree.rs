@@ -181,8 +181,8 @@ impl<const FAN_OUT: usize,
                     || attempt >= *write_attempt
                     || curr_level.is_lock(height, *write_level)
                 ) => block_cc.borrow_pin(),
-            // LockingStrategy::HybridLocking { read_attempt } if attempt >= *read_attempt =>
-            //     block_cc.borrow_mut_hybrid(),
+            LockingStrategy::HybridLocking { .. } if curr_level >= max_level =>
+                block_cc.borrow_mut(),
             _ => block_cc.borrow_read()
         }
     }

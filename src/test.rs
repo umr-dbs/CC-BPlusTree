@@ -18,6 +18,7 @@ use crate::{TREE, Tree};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::locking::locking_strategy::LockingStrategy::{LockCoupling, MonoWriter};
+use crate::utils::interval::Interval;
 
 pub const VALIDATE_OPERATION_RESULT: bool = false;
 pub const EXE_LOOK_UPS: bool = false;
@@ -45,37 +46,37 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, Key::MIN, Key::MAX, inc_key, dec_key);
 
 #[inline(always)]
-pub fn insert(create_threads: usize, tree: Tree, operations: &[CRUDOperation<Key, Payload>]) -> (u128, u64) {
-    let mut data_buff = operations
+pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key, Payload>]) -> (u128, u64) {
+    let mut data_buff = operations_queue
         .iter()
-        .chunks(operations.len() / create_threads)
+        .chunks(operations_queue.len() / worker_threads)
         .into_iter()
         .map(|s| s.into_iter().cloned().collect::<Vec<_>>())
         .collect::<VecDeque<_>>();
 
-    if data_buff.len() > create_threads {
+    if data_buff.len() > worker_threads {
         let back = data_buff.pop_back().unwrap();
         data_buff.front_mut().unwrap().extend(back);
     }
 
     let mut handles
-        = Vec::with_capacity(create_threads);
+        = Vec::with_capacity(worker_threads);
 
     let start = SystemTime::now();
-    for _ in 1..=create_threads {
+    for _ in 1..=worker_threads {
         let current_chunk
             = data_buff.pop_front().unwrap();
 
         let index = tree.clone();
         handles.push(spawn(move || {
-            let mut counter_dups = 0;
+            let mut counter_errs = 0;
             current_chunk
                 .into_iter()
                 .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
-                    CRUDOperationResult::Inserted(..) => {}
-                    _ => counter_dups += 1
+                    CRUDOperationResult::Error => counter_errs += 1,
+                    _ => {}
                 });
-            counter_dups
+            counter_errs
         }));
     }
 
@@ -90,30 +91,42 @@ pub fn insert(create_threads: usize, tree: Tree, operations: &[CRUDOperation<Key
 }
 
 pub fn start_paper_tests() {
-    println!("Records,Threads,Protocol,Create Time,Dupes,Lambda,Run,Mixed Time,U-TH,Updates,Reads,Total");
-    let number_records
+    println!("Records,Threads,Protocol,Create Time,Dupes,Lambda,Run,Mixed Time,U-TH,Updates,Reads,Ranges,Range Offset,Total");
+    const N: u64
         = 1_000_000;
 
-    let key_range
-        = 1..=number_records;
+    const KEY_RANGE: RangeInclusive<Key>
+        = 1..=N;
 
-    let repeats
-        = 10_usize;
+    const REPEATS: usize
+        = 3;
 
-    let updates
+    const UPDATES_THRESHOLD: [f64; 5]
         = [0.1, 0.3, 0.5, 0.7, 0.9];
 
-    let threads
+    const THREADS: [usize; 15]
         = [1, 2, 4, 5, 8, 16, 20, 25, 32, 40, 50, 64, 80, 100, 125];
 
-    let lambdas
+    const LAMBDAS: [f64; 8]
         = [0.1_f64, 16_f64, 32_f64, 64_f64, 128_f64, 256_f64, 512_f64, 1024_f64];
 
-    let data_lambdas = lambdas
+    const RQ_PROBABILITY: [f64; 7]
+        = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0];
+
+    const RQ_OFFSET: [u64; 6] = [
+        1 * (NUM_RECORDS as u64 + 1_u64),
+        2 * (NUM_RECORDS as u64 + 1_u64),
+        4 * (NUM_RECORDS as u64 + 1_u64),
+        8 * (NUM_RECORDS as u64 + 1_u64),
+        16 * (NUM_RECORDS as u64 + 1_u64),
+        64 * (NUM_RECORDS as u64 + 1_u64)
+    ];
+
+    let data_lambdas = LAMBDAS
         .iter()
         .map(|lambda| {
             let mut rnd = StdRng::seed_from_u64(90501960);
-            gen_data_exp(number_records, *lambda, &mut rnd)
+            gen_data_exp(N, *lambda, &mut rnd)
                 .into_iter().map(|key| CRUDOperation::Insert(key, Payload::default()))
                 .collect::<Vec<_>>()
         }).collect::<Vec<_>>();
@@ -143,17 +156,23 @@ pub fn start_paper_tests() {
     ];
 
     for protocol in protocols {
-        for thread in threads {
-            for lambda in 0..lambdas.len() {
-                for updates_thresh_hold in 0..updates.len() {
-                    mixed_test_new(
-                        protocol.clone(),
-                        data_lambdas[lambda].as_slice(),
-                        key_range.clone(),
-                        thread,
-                        lambdas[lambda],
-                        repeats,
-                        updates[updates_thresh_hold])
+        for thread in THREADS {
+            for lambda in 0..LAMBDAS.len() {
+                for ut in UPDATES_THRESHOLD {
+                    for rq in RQ_PROBABILITY {
+                        for rq_off in RQ_OFFSET {
+                            mixed_test_new(
+                                protocol.clone(),
+                                data_lambdas[lambda].as_slice(),
+                                KEY_RANGE.clone(),
+                                thread,
+                                LAMBDAS[lambda],
+                                REPEATS,
+                                ut,
+                                rq,
+                                rq_off)
+                        }
+                    }
                 }
             }
         }
@@ -168,6 +187,8 @@ fn mixed_test_new(
     lambda: f64,
     runs: usize,
     updates_thresh_hold: f64,
+    rq_probability: f64,
+    rq_offset: Key
 ) {
     let operations_count
         = data.len();
@@ -179,27 +200,37 @@ fn mixed_test_new(
         = TREE(ls.clone());
 
     let (create_time, dups) = if ls.is_mono_writer() {
-        insert(1, tree.clone(), data)
+        bulk_crud(1, tree.clone(), data)
     } else {
-        insert(16, tree.clone(), data)
+        bulk_crud(16, tree.clone(), data)
     };
 
-    let mut rnd = StdRng::seed_from_u64(90501960);
+    let gen_key = || gen_rand_key(
+        data.len() as _,
+        *key_range.start(),
+        *key_range.end(),
+        lambda,
+        &mut StdRng::seed_from_u64(90501960));
+
     let operations = thread_rng()
         .sample_iter(Uniform::new(0_f64, 1_f64))
         .take(operations_count)
+        .collect::<Vec<_>>()
+        .into_iter()
         .map(|t| {
-            let key = gen_rand_key(
-                data.len() as _,
-                *key_range.start(),
-                *key_range.end(),
-                lambda,
-                &mut rnd);
+            let key = gen_key();
 
             if t <= updates_thresh_hold {
                 CRUDOperation::Update(key, Payload::default())
             } else {
-                CRUDOperation::Point(key)
+                if thread_rng().gen_bool(rq_probability) {
+                    CRUDOperation::Range(Interval::new(
+                        key,
+                        key.checked_add(rq_offset).unwrap_or(Key::MAX)))
+                }
+                else {
+                    CRUDOperation::Point(key)
+                }
             }
         })
         .chunks(operation_per_thread)
@@ -225,6 +256,15 @@ fn mixed_test_new(
             .sum::<usize>())
         .sum::<usize>();
 
+    let actual_rq_count = operations
+        .iter()
+        .map(|u| u
+            .iter()
+            .map(|op|
+                if let CRUDOperation::Range(..) = op { 1 } else { 0 })
+            .sum::<usize>())
+        .sum::<usize>();
+
     let worker = |which: usize| {
         let u_tree
             = tree.clone();
@@ -246,8 +286,8 @@ fn mixed_test_new(
             .drain(..)
             .for_each(|handle| handle.join().unwrap());
 
-        // assert_eq!(data.len(), actual_reads_count + actual_updates_count);
-        println!("{},{},{},{},{},{},{},{},{},{},{},{}",
+        // assert_eq!(data.len(), actual_reads_count + actual_rq_count + actual_updates_count);
+        println!("{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                  operations_count,
                  threads,
                  ls.clone(),
@@ -259,7 +299,9 @@ fn mixed_test_new(
                  updates_thresh_hold,
                  actual_updates_count,
                  actual_reads_count,
-                 actual_reads_count + actual_updates_count);
+                 actual_rq_count,
+                 rq_offset,
+                 actual_reads_count + actual_rq_count + actual_updates_count);
     }
 }
 

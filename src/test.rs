@@ -93,25 +93,25 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
 pub fn start_paper_tests() {
     println!("Records,Threads,Protocol,Create Time,Dupes,Lambda,Run,Mixed Time,U-TH,Updates,Reads,Ranges,Range Offset,Total");
     const N: u64
-        = 1_000_000;
+    = 100_000;
 
     const KEY_RANGE: RangeInclusive<Key>
-        = 1..=N;
+    = 1..=N;
 
     const REPEATS: usize
-        = 3;
+    = 3;
 
     const UPDATES_THRESHOLD: [f64; 5]
-        = [0.1, 0.3, 0.5, 0.7, 0.9];
+    = [0.1, 0.3, 0.5, 0.7, 0.9];
 
-    const THREADS: [usize; 15]
-        = [1, 2, 4, 5, 8, 16, 20, 25, 32, 40, 50, 64, 80, 100, 125];
+    const THREADS: [usize; 9]
+    = [ 20, 25, 32, 40, 50, 64, 80, 100, 125];
 
     const LAMBDAS: [f64; 8]
-        = [0.1_f64, 16_f64, 32_f64, 64_f64, 128_f64, 256_f64, 512_f64, 1024_f64];
+    = [0.1_f64, 16_f64, 32_f64, 64_f64, 128_f64, 256_f64, 512_f64, 1024_f64];
 
     const RQ_PROBABILITY: [f64; 7]
-        = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0];
+    = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0];
 
     const RQ_OFFSET: [u64; 6] = [
         1 * (NUM_RECORDS as u64 + 1_u64),
@@ -133,20 +133,17 @@ pub fn start_paper_tests() {
 
     let protocols = [
         OLC(),
-
         LHL_read(0),
         LHL_read(1),
         LHL_read(4),
         LHL_read(16),
         LHL_read(64),
-
         LHL_write(0),
         LHL_write(1),
         LHL_write(4),
         LHL_write(16),
         LHL_write(64),
         LHL_write(128),
-
         LHL_read_write(0, 0),
         LHL_read_write(1, 1),
         LHL_read_write(4, 4),
@@ -156,14 +153,30 @@ pub fn start_paper_tests() {
     ];
 
     for protocol in protocols {
-        for thread in THREADS {
-            for lambda in 0..LAMBDAS.len() {
+        for lambda in 0..LAMBDAS.len() {
+            let tree
+                = TREE(protocol.clone());
+
+            let (create_time, errs) = if protocol.is_mono_writer() {
+                bulk_crud(1,
+                          tree.clone(),
+                          data_lambdas[lambda].as_slice())
+            } else {
+                bulk_crud(16,
+                          tree.clone(),
+                          data_lambdas[lambda].as_slice())
+            };
+
+            for thread in THREADS {
                 for ut in UPDATES_THRESHOLD {
                     for rq in RQ_PROBABILITY {
                         for rq_off in RQ_OFFSET {
                             mixed_test_new(
+                                create_time,
+                                errs,
                                 protocol.clone(),
-                                data_lambdas[lambda].as_slice(),
+                                tree.clone(),
+                                N,
                                 KEY_RANGE.clone(),
                                 thread,
                                 LAMBDAS[lambda],
@@ -180,33 +193,27 @@ pub fn start_paper_tests() {
 }
 
 fn mixed_test_new(
+    create_time: u128,
+    dups: u64,
     ls: CRUDProtocol,
-    data: &[CRUDOperation<Key, Payload>],
+    tree: Tree,
+    n: u64,
     key_range: RangeInclusive<Key>,
     threads: usize,
     lambda: f64,
     runs: usize,
     updates_thresh_hold: f64,
     rq_probability: f64,
-    rq_offset: Key
+    rq_offset: Key,
 ) {
     let operations_count
-        = data.len();
+        = n as usize;
 
     let operation_per_thread
         = operations_count / threads;
 
-    let tree
-        = TREE(ls.clone());
-
-    let (create_time, dups) = if ls.is_mono_writer() {
-        bulk_crud(1, tree.clone(), data)
-    } else {
-        bulk_crud(16, tree.clone(), data)
-    };
-
     let gen_key = || gen_rand_key(
-        data.len() as _,
+        n,
         *key_range.start(),
         *key_range.end(),
         lambda,
@@ -227,8 +234,7 @@ fn mixed_test_new(
                     CRUDOperation::Range(Interval::new(
                         key,
                         key.checked_add(rq_offset).unwrap_or(Key::MAX)))
-                }
-                else {
+                } else {
                     CRUDOperation::Point(key)
                 }
             }
@@ -274,8 +280,7 @@ fn mixed_test_new(
 
         spawn(move || working_queue
             .iter()
-            .for_each(|op| { u_tree.dispatch(op.clone()); })
-        )
+            .for_each(|op| { u_tree.dispatch(op.clone()); }))
     };
 
     for run in 1..=runs {

@@ -104,8 +104,8 @@ pub fn start_paper_tests() {
     const UPDATES_THRESHOLD: [f64; 5]
     = [0.1, 0.3, 0.5, 0.7, 0.9];
 
-    const THREADS: [usize; 9]
-    = [ 20, 25, 32, 40, 50, 64, 80, 100, 125];
+    const THREADS: [usize; 15]
+    = [1, 2, 4, 5, 8, 16, 20, 25, 32, 40, 50, 64, 80, 100, 125];
 
     const LAMBDAS: [f64; 8]
     = [0.1_f64, 16_f64, 32_f64, 64_f64, 128_f64, 256_f64, 512_f64, 1024_f64];
@@ -113,13 +113,12 @@ pub fn start_paper_tests() {
     const RQ_PROBABILITY: [f64; 7]
     = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0];
 
-    const RQ_OFFSET: [u64; 6] = [
-        1 * (NUM_RECORDS as u64 + 1_u64),
-        2 * (NUM_RECORDS as u64 + 1_u64),
+    const RQ_OFFSET: [u64; 5] = [
         4 * (NUM_RECORDS as u64 + 1_u64),
-        8 * (NUM_RECORDS as u64 + 1_u64),
         16 * (NUM_RECORDS as u64 + 1_u64),
-        64 * (NUM_RECORDS as u64 + 1_u64)
+        64 * (NUM_RECORDS as u64 + 1_u64),
+        256 * (NUM_RECORDS as u64 + 1_u64),
+        512 * (NUM_RECORDS as u64 + 1_u64)
     ];
 
     let data_lambdas = LAMBDAS
@@ -244,33 +243,19 @@ fn mixed_test_new(
         .map(|chunk| Arc::new(chunk.collect::<Vec<_>>()))
         .collect::<Vec<_>>();
 
-    let actual_updates_count = operations
+    let (actual_reads_count, actual_rq_count, actual_updates_count) = operations
         .iter()
-        .map(|u| u
-            .iter()
-            .map(|op|
-                if let CRUDOperation::Update(..) = op { 1 } else { 0 })
-            .sum::<usize>())
-        .sum::<usize>();
-
-    let actual_reads_count = operations
-        .iter()
-        .map(|u| u
-            .iter()
-            .map(|op|
-                if let CRUDOperation::Point(..) = op { 1 } else { 0 })
-            .sum::<usize>())
-        .sum::<usize>();
-
-    let actual_rq_count = operations
-        .iter()
-        .map(|u| u
-            .iter()
-            .map(|op|
-                if let CRUDOperation::Range(..) = op { 1 } else { 0 })
-            .sum::<usize>())
-        .sum::<usize>();
-
+        .fold((0usize, 0usize, 0usize), |(p, r, u), inner| {
+            let (n_p, n_r, n_u) = inner
+                .iter()
+                .fold((0usize, 0usize, 0usize), |(p, r, u), op|
+                    match op {
+                        CRUDOperation::Point(..) => (p + 1, r, u),
+                        CRUDOperation::Range(..) => (p, r + 1, u),
+                        _ => (p, r, u + 1)
+                    });
+            (n_p + p, n_r + r, n_u + u)
+        });
     let worker = |which: usize| {
         let u_tree
             = tree.clone();

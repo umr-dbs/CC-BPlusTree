@@ -91,7 +91,7 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
 }
 
 pub fn start_paper_tests() {
-    println!("Records,Threads,Protocol,Create Time,Dupes,Lambda,Run,Mixed Time,U-TH,Updates,Reads,Ranges,Range Offset,Total");
+    println!("Records,Threads,Protocol,Create Time,Dupes,Lambda,Run,Mixed Time,U-TH,Updates,Reads,Ranges,Range Offset,RQ-TH,Total");
     const N: u64
     = 100_000;
 
@@ -277,7 +277,7 @@ fn mixed_test_new(
             .for_each(|handle| handle.join().unwrap());
 
         // assert_eq!(data.len(), actual_reads_count + actual_rq_count + actual_updates_count);
-        println!("{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        println!("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                  operations_count,
                  threads,
                  ls.clone(),
@@ -291,6 +291,7 @@ fn mixed_test_new(
                  actual_reads_count,
                  actual_rq_count,
                  rq_offset,
+                 rq_probability,
                  actual_reads_count + actual_rq_count + actual_updates_count);
     }
 }

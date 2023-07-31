@@ -110,15 +110,12 @@ pub fn start_paper_tests() {
     const LAMBDAS: [f64; 8]
     = [0.1_f64, 16_f64, 32_f64, 64_f64, 128_f64, 256_f64, 512_f64, 1024_f64];
 
-    const RQ_PROBABILITY: [f64; 7]
-    = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0];
+    const RQ_PROBABILITY: [f64; 5]
+    = [0.0, 0.1, 0.5, 0.9, 1.0];
 
-    const RQ_OFFSET: [u64; 5] = [
+    const RQ_OFFSET: [u64; 2] = [
         4 * (NUM_RECORDS as u64 + 1_u64),
-        16 * (NUM_RECORDS as u64 + 1_u64),
         64 * (NUM_RECORDS as u64 + 1_u64),
-        256 * (NUM_RECORDS as u64 + 1_u64),
-        512 * (NUM_RECORDS as u64 + 1_u64)
     ];
 
     let data_lambdas = LAMBDAS
@@ -211,12 +208,15 @@ fn mixed_test_new(
     let operation_per_thread
         = operations_count / threads;
 
-    let gen_key = || gen_rand_key(
+    let mut rnd
+        = StdRng::seed_from_u64(0x3A5F72B9C81D4EF2);
+
+    let mut gen_key = || gen_rand_key(
         n,
         *key_range.start(),
         *key_range.end(),
         lambda,
-        &mut StdRng::seed_from_u64(90501960));
+        &mut rnd);
 
     let operations = thread_rng()
         .sample_iter(Uniform::new(0_f64, 1_f64))
@@ -230,9 +230,17 @@ fn mixed_test_new(
                 CRUDOperation::Update(key, Payload::default())
             } else {
                 if thread_rng().gen_bool(rq_probability) {
-                    CRUDOperation::Range(Interval::new(
-                        key,
-                        key.checked_add(rq_offset).unwrap_or(Key::MAX)))
+                    match key.checked_add(rq_offset) {
+                        None => {
+                            let key1 = key.sub(rq_offset);
+                            CRUDOperation::Range(Interval::new(
+                                key1,
+                                key))
+                        }
+                        Some(key1) => CRUDOperation::Range(Interval::new(
+                            key,
+                            key1))
+                    }
                 } else {
                     CRUDOperation::Point(key)
                 }
@@ -273,10 +281,9 @@ fn mixed_test_new(
         (0..threads)
             .map(|which| (worker)(which))
             .collect::<Vec<_>>()
-            .drain(..)
+            .into_iter()
             .for_each(|handle| handle.join().unwrap());
 
-        // assert_eq!(data.len(), actual_reads_count + actual_rq_count + actual_updates_count);
         println!("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                  operations_count,
                  threads,

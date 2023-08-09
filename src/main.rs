@@ -19,6 +19,8 @@ mod record_model;
 mod tree;
 mod utils;
 mod test;
+// @Bernhard: Manually reduce InternalNode size:
+// Check whether that makes a difference.
 
 pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
     Arc::new(if let MonoWriter = crud {

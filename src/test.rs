@@ -92,6 +92,10 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
 
 pub fn start_paper_tests() {
     println!("Records,Threads,Protocol,Create Time,Dupes,Lambda,Run,Mixed Time,U-TH,Updates,Reads,Ranges,Range Offset,RQ-TH,Total");
+
+    const ENABLE_CASES: bool
+    = true;
+
     const N: u64
     = 100_000;
 
@@ -148,8 +152,24 @@ pub fn start_paper_tests() {
         LHL_read_write(128, 128),
     ];
 
+    let cases = vec![
+        (&LAMBDAS[0], &UPDATES_THRESHOLD[2], &RQ_PROBABILITY[0], RQ_OFFSET[0]),
+        (&LAMBDAS[0], &UPDATES_THRESHOLD[2], &RQ_PROBABILITY[1], RQ_OFFSET[0]),
+        (&LAMBDAS[0], &UPDATES_THRESHOLD[2], &RQ_PROBABILITY[0], RQ_OFFSET[1]),
+        (&LAMBDAS[0], &UPDATES_THRESHOLD[2], &RQ_PROBABILITY[3], RQ_OFFSET[0]),
+        (&LAMBDAS[0], &UPDATES_THRESHOLD[3], &RQ_PROBABILITY[2], RQ_OFFSET[1]),
+        (&LAMBDAS[0], &UPDATES_THRESHOLD[4], &RQ_PROBABILITY[3], RQ_OFFSET[0]),
+        (&LAMBDAS[4], &UPDATES_THRESHOLD[0], &RQ_PROBABILITY[1], RQ_OFFSET[0]),
+        (&LAMBDAS[6], &UPDATES_THRESHOLD[1], &RQ_PROBABILITY[2], RQ_OFFSET[1]),
+        (&LAMBDAS[7], &UPDATES_THRESHOLD[0], &RQ_PROBABILITY[1], RQ_OFFSET[0]),
+        (&LAMBDAS[7], &UPDATES_THRESHOLD[1], &RQ_PROBABILITY[3], RQ_OFFSET[0]),
+    ];
+
     for protocol in protocols {
         for lambda in 0..LAMBDAS.len() {
+            if cases.iter().find(|(l, ..)| &LAMBDAS[lambda] == *l).is_none() {
+                continue
+            }
             let tree
                 = TREE(protocol.clone());
 
@@ -167,6 +187,12 @@ pub fn start_paper_tests() {
                 for ut in UPDATES_THRESHOLD {
                     for rq in RQ_PROBABILITY {
                         for rq_off in RQ_OFFSET {
+                            if ENABLE_CASES && cases.iter().find(|(_, uth, rqt, off, ..)|
+                                &ut == *uth && &rq == *rqt && rq_off == *off).is_none()
+                            {
+                                continue
+                            }
+
                             mixed_test_new(
                                 create_time,
                                 errs,

@@ -183,7 +183,7 @@ fn make_leaf_hits_map(tree: Tree) -> Vec<(Interval<Key>, usize)> {
 
 pub fn start_paper_tests() {
     const MAKE_HIST: bool
-    = true;
+    = false;
 
     const RQ_ENABLED: bool
     = false;

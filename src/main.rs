@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Local};
 use parking_lot::RwLock;
 use crate::tree::bplus_tree;
-use crate::crud_model::crud_api::CRUDDispatcher;
+use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::locking::locking_strategy::CRUDProtocol;
@@ -173,7 +173,7 @@ pub enum TreeDispatcher {
 
 impl CRUDDispatcher<Key, Payload> for TreeDispatcher {
     #[inline(always)]
-    fn dispatch(&self, crud: CRUDOperation<Key, Payload>) -> CRUDOperationResult<Key, Payload> {
+    fn dispatch(&self, crud: CRUDOperation<Key, Payload>) -> (NodeVisits, CRUDOperationResult<Key, Payload>) {
         match self {
             TreeDispatcher::Ref(inner) => inner.dispatch(crud),
             TreeDispatcher::Wrapper(sync) => if crud.is_read() {

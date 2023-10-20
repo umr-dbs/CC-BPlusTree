@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::mem;
 use crate::page_model::{Attempts, Height, Level};
 use crate::block::block::BlockGuard;
-use crate::crud_model::crud_api::CRUDDispatcher;
+use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPoint;
 use crate::record_model::unsafe_clone::UnsafeClone;
@@ -22,17 +22,20 @@ impl<const FAN_OUT: usize,
 {
     #[inline]
     fn retrieve_root_olc(&self, mut lock_level: Level, mut attempt: Attempts)
-    -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
+    -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
     {
+        let mut node_visits = 0usize;
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
                 Err((n_lock_level, n_attempt)) => {
                     lock_level = n_lock_level;
                     attempt = n_attempt;
+                    node_visits += 1;
 
                     sched_yield(attempt);
                 }
-                Ok((guard, height)) => break (guard, height, lock_level, attempt)
+                Ok((guard, height)) =>
+                    break (node_visits + 1, guard, height, lock_level, attempt)
             }
         }
     }
@@ -40,7 +43,9 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub(crate) fn range_query_olc(&self,
                                   path: &mut Vec<(Interval<Key>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
-                                  org_key_interval: Interval<Key>) -> CRUDOperationResult<Key, Payload>
+                                  org_key_interval: Interval<Key>,
+                                  mut node_visits: NodeVisits
+    ) -> (NodeVisits, CRUDOperationResult<Key, Payload>)
     {
         let mut key_interval
             = org_key_interval.clone();
@@ -54,8 +59,10 @@ impl<const FAN_OUT: usize,
         loop {
             history_path.push_back(path.to_vec());
 
-            let local_results =
+            let (visits, local_results) =
                 self.range_query_leaf_results(path, &key_interval);
+
+            node_visits += visits;
 
             if history_path.len() >= 2 {
                 let prev_path
@@ -69,7 +76,10 @@ impl<const FAN_OUT: usize,
                         mem::drop(all_results);
 
                         *path = Vec::with_capacity(0);
-                        return self.dispatch(CRUDOperation::Range(org_key_interval))
+                        let (visits, retry)
+                            = self.dispatch(CRUDOperation::Range(org_key_interval));
+
+                        return (visits + node_visits, retry)
                     }
                     _ => {}
                 };
@@ -87,7 +97,7 @@ impl<const FAN_OUT: usize,
                     break;
                 }
 
-                self.next_leaf_page(
+                node_visits += self.next_leaf_page(
                     path,
                     path.len() - 2,
                     key_interval.lower());
@@ -96,17 +106,20 @@ impl<const FAN_OUT: usize,
             }
         }
 
-        CRUDOperationResult::MatchedRecords(all_results)
+        (node_visits, CRUDOperationResult::MatchedRecords(all_results))
     }
 
     #[inline]
     pub(crate) fn next_leaf_page(&self,
                                  path: &mut Vec<(Interval<Key>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                                  mut parent_index: usize,
-                                 next_key: Key)
+                                 next_key: Key) -> NodeVisits
     {
         let mut attempts = 0;
+        let mut node_visits = 0;
         loop {
+            node_visits += 1;
+
             if attempts > 0 {
                 sched_yield(attempts);
             }
@@ -164,6 +177,7 @@ impl<const FAN_OUT: usize,
 
             match curr_deref.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
+                    node_visits += 1;
                     let keys
                         = index_page.keys();
 
@@ -206,7 +220,7 @@ impl<const FAN_OUT: usize,
                 }
                 Node::Leaf(..) => {
                     path.truncate(parent_index + 1);
-                    return
+                    return node_visits;
                 }
             }
         }
@@ -216,8 +230,11 @@ impl<const FAN_OUT: usize,
     fn range_query_leaf_results(&self,
                                 path: &mut Vec<(Interval<Key>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
                                 key_interval: &Interval<Key>)
-                                -> Vec<RecordPoint<Key, Payload>>
+                                -> (NodeVisits, Vec<RecordPoint<Key, Payload>>)
     {
+        let mut node_visits
+            = 0;
+
         loop {
             let (.., leaf)
                 = path.last().unwrap();
@@ -242,13 +259,16 @@ impl<const FAN_OUT: usize,
                             = leaf.is_read_not_obsolete_result();
 
                         if read && n_current_read_version == current_read_version { // avoid write in-between
-                            return potential_results
+                            return (node_visits, potential_results)
                         } else {
                             potential_results.set_len(0);
                         }
                     }
 
-                    self.next_leaf_page(path, path.len() - 2, key_interval.lower());
+                    node_visits += self.next_leaf_page(
+                        path,
+                        path.len() - 2,
+                        key_interval.lower());
                 }
                 _ => unreachable!("Found Index but expected leaf = {}", leaf_unchecked)
             }
@@ -312,31 +332,37 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline]
-    pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub(crate) fn traversal_write_olc(&self, key: Key) -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
+        let mut node_visits = 0usize;
 
         loop {
             match self.traversal_write_olc_internal(lock_level, attempt, key) {
-                Err((n_lock_level, n_attempt)) => {
+                (visits, Err((n_lock_level, n_attempt))) => {
                     attempt = n_attempt;
                     lock_level = n_lock_level;
+                    node_visits += visits;
 
                     sched_yield(attempt);
                 }
-                Ok(guard) => break guard,
+                (visits, Ok(guard)) => break (node_visits + visits, guard),
             }
         }
     }
 
     #[inline]
     fn traversal_write_olc_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
-                                    -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
+    -> (NodeVisits, Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>)
     {
         let mut curr_level = INIT_TREE_HEIGHT;
 
-        let (mut current_guard, height, lock_level, attempt)
-            = self.retrieve_root_olc(lock_level, attempt);
+        let (mut node_visits,
+            mut current_guard,
+            height,
+            lock_level,
+            attempt
+        ) = self.retrieve_root_olc(lock_level, attempt);
 
         let key = (self.inc_key)(key);
         loop {
@@ -346,11 +372,13 @@ impl<const FAN_OUT: usize,
             if current_guard_result.is_none() {
                 mem::drop(current_guard);
 
-                return Err((curr_level - 1, attempt + 1));
+                return (node_visits, Err((curr_level - 1, attempt + 1)));
             }
 
             match current_guard_result.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
+                    node_visits + 1;
+
                     let (child_pos, next_node)
                         = match index_page.keys().binary_search(&key)
                     {
@@ -361,7 +389,7 @@ impl<const FAN_OUT: usize,
                     if !current_guard.is_valid() {
                         mem::drop(current_guard);
 
-                        return Err((curr_level - 1, attempt + 1));
+                        return (node_visits, Err((curr_level - 1, attempt + 1)));
                     }
 
                     curr_level += 1;
@@ -380,7 +408,7 @@ impl<const FAN_OUT: usize,
                         mem::drop(next_guard);
                         mem::drop(current_guard);
 
-                        return Err((curr_level - 1, attempt + 1));
+                        return (node_visits, Err((curr_level - 1, attempt + 1)));
                     }
 
                     let has_overflow_next
@@ -391,7 +419,7 @@ impl<const FAN_OUT: usize,
                             mem::drop(next_guard);
                             mem::drop(current_guard);
 
-                            return Err((curr_level - 1, attempt + 1));
+                            return (node_visits, Err((curr_level - 1, attempt + 1)));
                         }
 
                         debug_assert!(current_guard.upgrade_write_lock() &&
@@ -413,9 +441,9 @@ impl<const FAN_OUT: usize,
                     }
                 }
                 _ => return if current_guard.upgrade_write_lock() {
-                    Ok(current_guard)
+                    (node_visits, Ok(current_guard))
                 } else {
-                    Err((curr_level - 1, attempt + 1))
+                    (node_visits, Err((curr_level - 1, attempt + 1)))
                 },
             }
         }

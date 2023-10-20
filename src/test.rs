@@ -17,7 +17,7 @@ use rand::distributions::{Standard, Uniform};
 use rand::rngs::StdRng;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
-use crate::crud_model::crud_api::CRUDDispatcher;
+use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, LHL_read, lightweight_hybrid_lock_unlimited, LHL_write, LHL_read_write, LockingStrategy, OLC, orwc, orwc_attempts};
 use crate::{TREE, Tree};
 use crate::crud_model::crud_operation::CRUDOperation;
@@ -32,9 +32,13 @@ pub const EXE_RANGE_LOOK_UPS: bool = false;
 
 pub const BSZ_BASE: usize = _4KB;
 pub const BSZ: usize = BSZ_BASE - bsz_alignment::<Key, Payload>();
-pub const FAN_OUT: usize = BSZ / 8 / 2;
+// pub const FAN_OUT: usize = BSZ / 8 / 2;
 // pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
-pub const NUM_RECORDS: usize = 8;
+
+pub const FAN_OUT: usize = 16;
+pub const NUM_RECORDS: usize = 16;
+
+// pub const NUM_RECORDS: usize = 64;
 
 pub type Key = u64;
 pub type Payload = f64;
@@ -53,7 +57,7 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, Key::MIN, Key::MAX, inc_key, dec_key);
 
 #[inline(always)]
-pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key, Payload>]) -> (u128, u64) {
+pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key, Payload>]) -> (u128, u64, NodeVisits) {
     let mut data_buff = operations_queue
         .iter()
         .chunks(operations_queue.len() / worker_threads)
@@ -77,24 +81,31 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
         let index = tree.clone();
         handles.push(spawn(move || {
             let mut counter_errs = 0;
+            let mut node_visits = 0;
             current_chunk
                 .into_iter()
                 .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
-                    CRUDOperationResult::Error => counter_errs += 1,
-                    _ => {}
+                    (visits, CRUDOperationResult::Error) => {
+                        counter_errs += 1;
+                        node_visits += visits;
+                    }
+                    (visits, ..) => node_visits += visits
                 });
-            counter_errs
+            (counter_errs, node_visits)
         }));
     }
 
-    let dups = handles
+    let time_elapsed
+        = SystemTime::now().duration_since(start).unwrap();
+
+    let (dups, node_visits) = handles
         .into_iter()
         .map(|handle| handle
             .join()
-            .unwrap())
-        .sum();
+            .unwrap()
+        ).fold((0, 0), |(errors, visits), (n_e, n_v)| (errors + n_e, visits + n_v));
 
-    (SystemTime::now().duration_since(start).unwrap().as_millis(), dups)
+    (time_elapsed.as_millis(), dups, node_visits)
 }
 
 fn make_leaf_hits_map(tree: Tree) -> Vec<(Interval<Key>, usize)> {
@@ -189,33 +200,42 @@ pub fn start_paper_tests() {
     = false;
 
     const N: u64
-    = 100_000;
+    = 10_000_000;
 
     const KEY_RANGE: RangeInclusive<Key>
     = 1..=N;
 
     const REPEATS: usize
-    = 3;
+    = 2;
 
-    const UPDATES_THRESHOLD: [f64; 5]
-    = [0.1, 0.3, 0.5, 0.7, 0.9];
+    const UPDATES_THRESHOLD: [f64; 3]
+    = [0.1, 0.5, 0.9];
 
     const THREADS: [usize; 12]
     = [1, 2, 4, 5, 8, 16, 20, 25, 32, 40, 50, 64];
 
-    const LAMBDAS: [f64; 17]
+    const LAMBDAS: [f64; 21]
     = [
-        0.1_f64, 0.2_f64, 0.4_f64, 0.6_f64, 0.8_f64,
-        1_f64, 2_f64, 4_f64, 6_f64, 8_f64,
-        16_f64, 32_f64, 64_f64, 128_f64, 256_f64, 512_f64,
+        0.1_f64,
+        0.4_f64, 0.8_f64,
+        1_f64, 4_f64, 8_f64,
+        16_f64,
+        24_f64, 30_f64,
+        32_f64,
+        38_f64, 48_f64, 54_f64,
+        64_f64,
+        66_f64, 72_f64, 84_f64,
+        128_f64,
+        256_f64,
+        512_f64,
         1024_f64
     ];
 
-    const RQ_PROBABILITY: [f64; 5]
-    = [0.0, 0.1, 0.5, 0.9, 1.0];
+    const RQ_PROBABILITY: [f64; 1]
+    = [1.0];
 
-    const RQ_OFFSET: [u64; 2] = [
-        4 * (NUM_RECORDS as u64 + 1_u64),
+    const RQ_OFFSET: [u64; 1] = [
+        // 4 * (NUM_RECORDS as u64 + 1_u64),
         64 * (NUM_RECORDS as u64 + 1_u64),
     ];
 
@@ -238,7 +258,7 @@ pub fn start_paper_tests() {
             let tree
                 = TREE(OLC());
 
-            let (_create_time, _errs) = bulk_crud(
+            let (_create_time, _errs, _visits) = bulk_crud(
                 num_cpus::get_physical(),
                 tree.clone(),
                 data_lambdas[lambda].as_slice(),
@@ -273,42 +293,68 @@ pub fn start_paper_tests() {
     }
 
     let protocols = [
+        // MonoWriter,
+        // LockCoupling,
+        // hybrid_lock(),
+        orwc_attempts(1),
+        orwc_attempts(4),
+        // orwc(),
+        // orwc_attempts(16),
         OLC(),
-        LHL_read(0), LHL_read(1),
-        LHL_read(4), LHL_read(16),
-        LHL_read(64), LHL_read(128),
-        LHL_write(0), LHL_write(1),
-        LHL_write(4), LHL_write(16),
-        LHL_write(64), LHL_write(128),
-        LHL_read_write(0, 0), LHL_read_write(1, 1),
-        LHL_read_write(4, 4), LHL_read_write(16, 16),
-        LHL_read_write(64, 64), LHL_read_write(128, 128),
+        // LHL_read(0),
+        LHL_read(1),
+        // LHL_read(4),
+        LHL_read(4),
+        // LHL_read(64), LHL_read(128),
+        // LHL_write(0),
+        // LHL_write(1),
+        // LHL_write(4),
+        // LHL_write(16),
+        // LHL_write(64), LHL_write(128),
+        // LHL_read_write(0, 0),
+        LHL_read_write(1, 1),
+        LHL_read_write(4, 4),
+        // LHL_read_write(16, 16),
+        // LHL_read_write(64, 64), LHL_read_write(128, 128),
     ];
 
-    println!("Records,Threads,Protocol,Create Time,Dupes,Lambda,Run,\
-    Mixed Time,U-TH,Updates,Reads,Ranges,Range Offset,RQ-TH,Total,Leaf Size");
+    println!("Records,Threads,Protocol,Create Time,Create Node Visits,Create Duplicates,Lambda,Run,\
+    Mixed Time,Mixed Node Visits,U-TH,Updates,Reads,Ranges,Range Offset,RQ-TH,Total,Leaf Size");
 
     for protocol in protocols {
         for lambda in 0..LAMBDAS.len() {
-            let tree
-                = TREE(protocol.clone());
-
-            let (create_time, errs) = if protocol.is_mono_writer() {
-                bulk_crud(1,
-                          tree.clone(),
-                          data_lambdas[lambda].as_slice())
-            } else {
-                bulk_crud(16,
-                          tree.clone(),
-                          data_lambdas[lambda].as_slice())
-            };
+            // let tree
+            //     = TREE(protocol.clone());
+            //
+            // let (create_time, errs) = if protocol.is_mono_writer() {
+            //     bulk_crud(1,
+            //               tree.clone(),
+            //               data_lambdas[lambda].as_slice())
+            // } else {
+            //     bulk_crud(16,
+            //               tree.clone(),
+            //               data_lambdas[lambda].as_slice())
+            // };
 
             for thread in THREADS {
+                let tree
+                    = TREE(protocol.clone());
+
+                let (create_time, errs, create_node_visits) = if protocol.is_mono_writer() {
+                    bulk_crud(1,
+                              tree.clone(),
+                              data_lambdas[lambda].as_slice())
+                } else {
+                    bulk_crud(thread,
+                              tree.clone(),
+                              data_lambdas[lambda].as_slice())
+                };
                 for ut in UPDATES_THRESHOLD {
                     if RQ_ENABLED {
                         for rq in RQ_PROBABILITY {
                             for rq_off in RQ_OFFSET {
                                 mixed_test_new(
+                                    create_node_visits,
                                     create_time,
                                     errs,
                                     protocol.clone(),
@@ -325,6 +371,7 @@ pub fn start_paper_tests() {
                         }
                     } else {
                         mixed_test_new(
+                            create_node_visits,
                             create_time,
                             errs,
                             protocol.clone(),
@@ -403,6 +450,7 @@ fn make_hist(lambda: f64, map: &mut Vec<(Interval<Key>, usize)>, n: u64, key_ran
 }
 
 fn mixed_test_new(
+    create_node_visits: NodeVisits,
     create_time: u128,
     dups: u64,
     ls: CRUDProtocol,
@@ -489,26 +537,30 @@ fn mixed_test_new(
 
         spawn(move || working_queue
             .iter()
-            .for_each(|op| { u_tree.dispatch(op.clone()); }))
+            .map(|op| u_tree.dispatch(op.clone()).0)
+            .fold(NodeVisits::MIN, |n, acc| acc + n))
     };
 
     for run in 1..=runs {
         let start = SystemTime::now();
-        (0..threads)
+        let node_visits = (0..threads)
             .map(|which| (worker)(which))
             .collect::<Vec<_>>()
             .into_iter()
-            .for_each(|handle| handle.join().unwrap());
+            .map(|handle| handle.join().unwrap())
+            .fold(NodeVisits::MIN, |n, acc| acc + n);
 
-        println!("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        println!("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                  operations_count,
                  threads,
                  ls.clone(),
                  create_time,
+                 create_node_visits,
                  dups,
                  lambda,
                  run,
                  SystemTime::now().duration_since(start).unwrap().as_millis(),
+                 node_visits,
                  updates_thresh_hold,
                  actual_updates_count,
                  actual_reads_count,

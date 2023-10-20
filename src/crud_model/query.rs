@@ -2,9 +2,11 @@ use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
 use std::ops::Deref;
+use hashbrown::Equivalent;
 use crate::locking::locking_strategy::LockingStrategy;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::block::block::BlockGuard;
+use crate::crud_model::crud_api::NodeVisits;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
 use crate::utils::interval::Interval;
@@ -39,16 +41,18 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
-                                -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
+    -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
     {
+        let mut node_visits = 0;
         loop {
             match self.retrieve_root_internal(lock_level, attempt) {
                 Err((n_lock_level, n_attempt)) => {
                     lock_level = n_lock_level;
                     attempt = n_attempt;
+                    node_visits += 1;
                 }
                 Ok((guard, height)) =>
-                    break (guard, height, lock_level, attempt)
+                    break (node_visits + 1, guard, height, lock_level, attempt)
             }
         }
     }
@@ -312,12 +316,16 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
-                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
+    -> (NodeVisits, Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>)
     {
         let mut curr_level = INIT_TREE_HEIGHT;
 
-        let (mut current_guard, height, lock_level, attempt)
-            = self.retrieve_root(lock_level, attempt);
+        let (mut node_visits,
+            mut current_guard,
+            height,
+            lock_level,
+            attempt
+        ) = self.retrieve_root(lock_level, attempt);
 
         let key = (self.inc_key)(key);
         loop {
@@ -326,6 +334,8 @@ impl<const FAN_OUT: usize,
 
             match current_guard_result.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
+                    node_visits += 1;
+
                     let (child_pos, next_node)
                         = match index_page.keys().binary_search(&key)
                     {
@@ -355,14 +365,14 @@ impl<const FAN_OUT: usize,
                             mem::drop(next_guard);
                             mem::drop(current_guard);
 
-                            return Err((curr_level - 1, attempt + 1));
+                            return (node_visits, Err((curr_level - 1, attempt + 1)));
                         } else if self.locking_strategy.is_orwc() &&
                                   !current_exclusive &&
                                   self.has_overflow(current_guard.deref().unwrap())
                         { // this maps the obsolete check within an is_valid/deref auto call
                             mem::drop(next_guard);
                             mem::drop(current_guard);
-                            return Err((curr_level - 1, attempt + 1));
+                            return (node_visits, Err((curr_level - 1, attempt + 1)));
                         }
 
                         debug_assert!(self.locking_strategy.additional_lock_required() &&
@@ -378,42 +388,48 @@ impl<const FAN_OUT: usize,
                     }
                 }
                 _ => return if current_guard.upgrade_write_lock() {
-                    Ok(current_guard)
+                    (node_visits, Ok(current_guard))
                 } else {
-                    Err((curr_level - 1, attempt + 1))
+                    (node_visits, Err((curr_level - 1, attempt + 1)))
                 },
             }
         }
     }
 
     #[inline]
-    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub(crate) fn traversal_write(&self, key: Key) -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
+        let mut node_visits = 0;
 
         loop {
             match self.traversal_write_internal(lock_level, attempt, key) {
-                Err((n_lock_level, n_attempt)) => {
+                (visits, Err((n_lock_level, n_attempt))) => {
                     attempt = n_attempt;
                     lock_level = n_lock_level;
+                    node_visits += visits;
                 }
-                Ok(guard) => break guard,
+                (visits, Ok(guard)) => break (node_visits + visits, guard),
             }
         }
     }
 
     #[inline]
-    pub(crate) fn traversal_read(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub(crate) fn traversal_read(&self, key: Key) -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         let mut current_block
             = self.root.block();
 
         let mut current_guard
             = self.lock_reader(&current_block);
 
+        let mut node_visits = 1;
+
         let key = (self.inc_key)(key);
         loop {
             match current_guard.deref().unwrap().as_ref() {
-                Node::Index(index_page) =>
+                Node::Index(index_page) => {
+                    node_visits += 1;
+
                     match index_page.keys().binary_search(&key) {
                         Ok(pos) => unsafe {
                             let next_block
@@ -435,8 +451,9 @@ impl<const FAN_OUT: usize,
                             current_guard = next_guard;
                             current_block = next_block;
                         }
-                    },
-                _ => break current_guard,
+                    }
+                }
+                _ => break (node_visits, current_guard),
             }
         }
     }
@@ -445,13 +462,17 @@ impl<const FAN_OUT: usize,
     pub(crate) fn traversal_read_range(
         &self,
         current_range: &Interval<Key>)
-        -> Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>)>
+        -> (NodeVisits,
+            Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>)>)
     {
         let mut current_block
             = self.root.block();
 
         let mut current_guard
             = self.lock_reader(&current_block);
+
+        let mut node_visits
+            = 1;
 
         let mut path
             = VecDeque::new();
@@ -483,6 +504,7 @@ impl<const FAN_OUT: usize,
                         Err(pos) => pos
                     };
 
+                    node_visits += last_pos - first_pos + 1;
                     path.extend(index_page.children()
                         .get_unchecked(first_pos..=last_pos)
                         .iter()
@@ -492,6 +514,6 @@ impl<const FAN_OUT: usize,
             }
         }
 
-        results
+        (node_visits, results)
     }
 }

@@ -32,11 +32,11 @@ pub const EXE_RANGE_LOOK_UPS: bool = false;
 
 pub const BSZ_BASE: usize = _4KB;
 pub const BSZ: usize = BSZ_BASE - bsz_alignment::<Key, Payload>();
-// pub const FAN_OUT: usize = BSZ / 8 / 2;
-// pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
+pub const FAN_OUT: usize = BSZ / 8 / 2;
+pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
 
-pub const FAN_OUT: usize = 16;
-pub const NUM_RECORDS: usize = 16;
+// pub const FAN_OUT: usize = 16;
+// pub const NUM_RECORDS: usize = 16;
 
 // pub const NUM_RECORDS: usize = 64;
 
@@ -95,15 +95,15 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
         }));
     }
 
-    let time_elapsed
-        = SystemTime::now().duration_since(start).unwrap();
-
     let (dups, node_visits) = handles
         .into_iter()
         .map(|handle| handle
             .join()
             .unwrap()
         ).fold((0, 0), |(errors, visits), (n_e, n_v)| (errors + n_e, visits + n_v));
+
+    let time_elapsed
+        = SystemTime::now().duration_since(start).unwrap();
 
     (time_elapsed.as_millis(), dups, node_visits)
 }
@@ -211,20 +211,21 @@ pub fn start_paper_tests() {
     const UPDATES_THRESHOLD: [f64; 3]
     = [0.1, 0.5, 0.9];
 
-    const THREADS: [usize; 12]
-    = [1, 2, 4, 5, 8, 16, 20, 25, 32, 40, 50, 64];
+    const THREADS: [usize; 10]
+    = [1, 2, 4, 8, 16, 24, 32, 42, 56, 64];
 
-    const LAMBDAS: [f64; 21]
-    = [
-        0.1_f64,
-        0.4_f64, 0.8_f64,
-        1_f64, 4_f64, 8_f64,
+    const LAMBDAS: [f64; 15]
+    = [0.1_f64,
+        0.8_f64,
+        4_f64,
+        8_f64,
         16_f64,
-        24_f64, 30_f64,
+        24_f64,
         32_f64,
-        38_f64, 48_f64, 54_f64,
+        48_f64,
         64_f64,
-        66_f64, 72_f64, 84_f64,
+        72_f64,
+        96_f64,
         128_f64,
         256_f64,
         512_f64,
@@ -244,7 +245,8 @@ pub fn start_paper_tests() {
         .map(|lambda| {
             let mut rnd = StdRng::seed_from_u64(90501960);
             gen_data_exp(N, *lambda, &mut rnd)
-                .into_iter().map(|key| CRUDOperation::Insert(key, Payload::default()))
+                .into_iter()
+                .map(|key| CRUDOperation::Insert(key, Payload::default()))
                 .collect::<Vec<_>>()
         }).collect::<Vec<_>>();
 
@@ -295,25 +297,22 @@ pub fn start_paper_tests() {
     let protocols = [
         // MonoWriter,
         // LockCoupling,
-        // hybrid_lock(),
-        orwc_attempts(1),
-        orwc_attempts(4),
-        // orwc(),
+        hybrid_lock(),
+        // orwc_attempts(1),
+        // orwc_attempts(4),
         // orwc_attempts(16),
-        OLC(),
+        // OLC(),
         // LHL_read(0),
-        LHL_read(1),
+        // LHL_read(1),
         // LHL_read(4),
-        LHL_read(4),
-        // LHL_read(64), LHL_read(128),
+        // LHL_read(16),
         // LHL_write(0),
         // LHL_write(1),
         // LHL_write(4),
         // LHL_write(16),
-        // LHL_write(64), LHL_write(128),
         // LHL_read_write(0, 0),
-        LHL_read_write(1, 1),
-        LHL_read_write(4, 4),
+        // LHL_read_write(1, 1),
+        // LHL_read_write(4, 4),
         // LHL_read_write(16, 16),
         // LHL_read_write(64, 64), LHL_read_write(128, 128),
     ];
@@ -323,32 +322,15 @@ pub fn start_paper_tests() {
 
     for protocol in protocols {
         for lambda in 0..LAMBDAS.len() {
-            // let tree
-            //     = TREE(protocol.clone());
-            //
-            // let (create_time, errs) = if protocol.is_mono_writer() {
-            //     bulk_crud(1,
-            //               tree.clone(),
-            //               data_lambdas[lambda].as_slice())
-            // } else {
-            //     bulk_crud(16,
-            //               tree.clone(),
-            //               data_lambdas[lambda].as_slice())
-            // };
-
             for thread in THREADS {
                 let tree
                     = TREE(protocol.clone());
 
-                let (create_time, errs, create_node_visits) = if protocol.is_mono_writer() {
-                    bulk_crud(1,
-                              tree.clone(),
-                              data_lambdas[lambda].as_slice())
-                } else {
-                    bulk_crud(thread,
-                              tree.clone(),
-                              data_lambdas[lambda].as_slice())
-                };
+                let (create_time, errs, create_node_visits)
+                    = bulk_crud(thread,
+                                tree.clone(),
+                                data_lambdas[lambda].as_slice());
+
                 for ut in UPDATES_THRESHOLD {
                     if RQ_ENABLED {
                         for rq in RQ_PROBABILITY {

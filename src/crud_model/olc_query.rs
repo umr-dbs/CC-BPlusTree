@@ -377,7 +377,7 @@ impl<const FAN_OUT: usize,
 
             match current_guard_result.unwrap().as_ref() {
                 Node::Index(index_page) => unsafe {
-                    node_visits + 1;
+                    node_visits += 1;
 
                     let (child_pos, next_node)
                         = match index_page.keys().binary_search(&key)

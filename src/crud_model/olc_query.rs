@@ -259,13 +259,13 @@ impl<const FAN_OUT: usize,
                             = leaf.is_read_not_obsolete_result();
 
                         if read && n_current_read_version == current_read_version { // avoid write in-between
-                            return (node_visits, potential_results)
+                            return (node_visits + 1, potential_results)
                         } else {
                             potential_results.set_len(0);
                         }
                     }
 
-                    node_visits += self.next_leaf_page(
+                    node_visits += 1 + self.next_leaf_page(
                         path,
                         path.len() - 2,
                         key_interval.lower());

@@ -297,6 +297,7 @@ pub fn start_paper_tests() {
     let protocols = [
         // MonoWriter,
         // LockCoupling,
+        // orwc_attempts(0),
         // orwc_attempts(1),
         // orwc_attempts(4),
         // orwc_attempts(16),
@@ -313,7 +314,6 @@ pub fn start_paper_tests() {
         LHL_read_write(1, 1),
         LHL_read_write(4, 4),
         LHL_read_write(16, 16),
-        LHL_read_write(64, 64),
         hybrid_lock(),
     ];
 

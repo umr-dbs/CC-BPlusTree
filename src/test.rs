@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
 use std::fmt::{Display, Formatter};
-use std::fs;
+use std::{fs, thread};
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Deref, DerefMut, Div, RangeInclusive, Sub};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use std::thread::spawn;
 use std::time::{Duration, SystemTime};
 use crossbeam::channel::TryRecvError;
@@ -25,6 +25,7 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::locking::locking_strategy::LockingStrategy::{LockCoupling, MonoWriter};
 use crate::page_model::node::Node;
 use crate::utils::interval::Interval;
+use crate::utils::smart_cell::COUNTERS;
 
 pub const VALIDATE_OPERATION_RESULT: bool = false;
 pub const EXE_LOOK_UPS: bool = false;
@@ -208,27 +209,28 @@ pub fn start_paper_tests() {
     const REPEATS: usize
     = 2;
 
-    const UPDATES_THRESHOLD: [f64; 3]
-    = [0.1, 0.5, 0.9];
+    const UPDATES_THRESHOLD: [f64; 0]
+    = [];
 
-    const THREADS: [usize; 10]
-    = [1, 2, 4, 8, 16, 24, 32, 42, 56, 64];
+    const THREADS: [usize; 3]
+    = [16, 32, 64];
 
-    const LAMBDAS: [f64; 15]
-    = [0.1_f64,
-        0.8_f64,
-        4_f64,
+    const LAMBDAS: [f64; 4]
+    = [
+        0.1_f64,
+        // 0.8_f64,
+        // 4_f64,
         8_f64,
-        16_f64,
-        24_f64,
-        32_f64,
-        48_f64,
-        64_f64,
-        72_f64,
-        96_f64,
+        // 16_f64,
+        // 24_f64,
+        // 32_f64,
+        // 48_f64,
+        // 64_f64,
+        // 72_f64,
+        // 96_f64,
         128_f64,
-        256_f64,
-        512_f64,
+        // 256_f64,
+        // 512_f64,
         1024_f64
     ];
 
@@ -301,24 +303,28 @@ pub fn start_paper_tests() {
         // orwc_attempts(1),
         // orwc_attempts(4),
         // orwc_attempts(16),
+        // OLC(),
         OLC(),
-        LHL_read(0),
+
+        // LHL_read(0),
         LHL_read(1),
         LHL_read(4),
         LHL_read(16),
-        LHL_write(0),
+
+        // LHL_write(0),
         LHL_write(1),
         LHL_write(4),
         LHL_write(16),
-        LHL_read_write(0, 0),
+        // LHL_read_write(0, 0),
         LHL_read_write(1, 1),
         LHL_read_write(4, 4),
         LHL_read_write(16, 16),
-        hybrid_lock(),
+        // hybrid_lock(),
     ];
 
-    println!("Records,Threads,Protocol,Create Time,Create Node Visits,Create Duplicates,Lambda,Run,\
-    Mixed Time,Mixed Node Visits,U-TH,Updates,Reads,Ranges,Range Offset,RQ-TH,Total,Leaf Size");
+    // println!("Records,Threads,Protocol,Create Time,Create Node Visits,Create Duplicates,Lambda,Run,\
+    // Mixed Time,Mixed Node Visits,U-TH,Updates,Reads,Ranges,Range Offset,RQ-TH,Total,Leaf Size");
+    println!("Protocol,PAUSE,sched_yield,lambda,threads");
 
     for protocol in protocols {
         for lambda in 0..LAMBDAS.len() {
@@ -326,10 +332,31 @@ pub fn start_paper_tests() {
                 let tree
                     = TREE(protocol.clone());
 
+                unsafe {
+                    COUNTERS.0.store(0, SeqCst);
+                    COUNTERS.1.store(0, SeqCst);
+                }
+
+                thread::sleep(Duration::from_millis(300));
+
+                for _ in 0..5 {
+                    let (create_time, errs, create_node_visits)
+                        = bulk_crud(thread,
+                                    tree.clone(),
+                                    data_lambdas[lambda].as_slice());
+                }
+
                 let (create_time, errs, create_node_visits)
-                    = bulk_crud(thread,
-                                tree.clone(),
-                                data_lambdas[lambda].as_slice());
+                    = (0, 0, 0);
+
+                thread::sleep(Duration::from_secs(1));
+
+                unsafe {
+                    let (pause, yields)
+                        = (COUNTERS.0.load(SeqCst), COUNTERS.1.load(SeqCst));
+
+                    println!("{},{},{},{},{}", protocol, pause, yields, LAMBDAS[lambda], thread);
+                }
 
                 for ut in UPDATES_THRESHOLD {
                     if RQ_ENABLED {

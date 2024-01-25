@@ -3,6 +3,7 @@ use std::{hint, mem, ptr};
 use std::mem::{transmute, transmute_copy};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
@@ -78,13 +79,19 @@ pub enum LatchType {
     LightWeightHybrid,
     None,
 }
+pub static mut COUNTERS: (AtomicUsize, AtomicUsize) =
+    (AtomicUsize::new(0), AtomicUsize::new(0));
 
 #[inline(always)]
 #[cfg(target_os = "linux")]
 pub fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
-        unsafe { libc::sched_yield(); }
+        unsafe {
+            COUNTERS.1.fetch_add(1, Relaxed);
+            libc::sched_yield();
+        }
     } else {
+        unsafe { COUNTERS.0.fetch_add(1, Relaxed); }
         hint::spin_loop();
     }
 }
@@ -340,9 +347,7 @@ pub enum SmartFlavor<E: Default> {
 
 impl<E: Default> Default for SmartFlavor<E> {
     fn default() -> Self {
-        FreeCell(SafeCell::new(unsafe {
-            mem::MaybeUninit::uninit().assume_init()
-        }))
+        FreeCell(SafeCell::new(E::default()))
     }
 }
 

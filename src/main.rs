@@ -22,14 +22,7 @@ mod test;
 // @Bernhard: Manually reduce InternalNode size:
 // Check whether that makes a difference.
 
-pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
-    Arc::new(if let MonoWriter = crud {
-        TreeDispatcher::Wrapper(RwLock::new(MAKE_INDEX(crud)))
-    }
-    else {
-        TreeDispatcher::Ref(MAKE_INDEX(crud))
-    })
-};
+
 
 fn main() {
     // make_splash();
@@ -164,39 +157,7 @@ fn make_splash() {
     println!("--> System Log:");
 }
 
-pub type Tree = Arc<TreeDispatcher>;
 
-pub enum TreeDispatcher {
-    Wrapper(RwLock<INDEX>),
-    Ref(INDEX)
-}
-
-impl CRUDDispatcher<Key, Payload> for TreeDispatcher {
-    #[inline(always)]
-    fn dispatch(&self, crud: CRUDOperation<Key, Payload>) -> (NodeVisits, CRUDOperationResult<Key, Payload>) {
-        match self {
-            TreeDispatcher::Ref(inner) => inner.dispatch(crud),
-            TreeDispatcher::Wrapper(sync) => if crud.is_read() {
-                sync.read().dispatch(crud)
-            }
-            else {
-                sync.write().dispatch(crud)
-            }
-        }
-    }
-}
-
-// unsafe impl Send for TreeDispatcher {}
-// unsafe impl Sync for TreeDispatcher {}
-
-impl TreeDispatcher {
-    pub fn as_index(&self) -> &INDEX {
-        match self {
-            TreeDispatcher::Wrapper(inner) => unsafe { &*inner.data_ptr() },
-            TreeDispatcher::Ref(inner) => inner
-        }
-    }
-}
 pub fn hle() -> &'static str {
     if cfg!(feature = "hardware-lock-elision") {
         if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {

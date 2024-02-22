@@ -12,18 +12,20 @@ use std::time::{Duration, SystemTime};
 use crossbeam::channel::TryRecvError;
 use hashbrown::HashMap;
 use itertools::Itertools;
+use parking_lot::RwLock;
 use rand::{Rng, RngCore, SeedableRng, thread_rng};
 use rand::distributions::{Standard, Uniform};
 use rand::rngs::StdRng;
 use crate::block::block_manager::{_4KB, bsz_alignment};
-use crate::bplus_tree::BPlusTree;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
-use crate::locking::locking_strategy::{CRUDProtocol, hybrid_lock, lightweight_hybrid_lock, LHL_read, lightweight_hybrid_lock_unlimited, LHL_write, LHL_read_write, LockingStrategy, OLC, orwc, orwc_attempts};
-use crate::{TREE, Tree};
+use crate::locking::locking_strategy::{CRUDProtocol, LHL_read, LHL_write, LHL_read_write, LockingStrategy, OLC, orwc, orwc_attempts};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::locking::locking_strategy::LockingStrategy::{LockCoupling, MonoWriter};
 use crate::page_model::node::Node;
+
+use crate::tree::bplus_tree::BPlusTree;
+
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::COUNTERS;
 
@@ -54,8 +56,51 @@ pub fn dec_key(k: Key) -> Key {
 
 pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
+pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
+    Arc::new(if let MonoWriter = crud {
+        TreeDispatcher::Wrapper(RwLock::new(MAKE_INDEX(crud)))
+    }
+    else {
+        TreeDispatcher::Ref(MAKE_INDEX(crud))
+    })
+};
+
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, Key::MIN, Key::MAX, inc_key, dec_key);
+
+pub type Tree = Arc<TreeDispatcher>;
+
+pub enum TreeDispatcher {
+    Wrapper(RwLock<INDEX>),
+    Ref(INDEX)
+}
+
+impl CRUDDispatcher<Key, Payload> for TreeDispatcher {
+    #[inline(always)]
+    fn dispatch(&self, crud: CRUDOperation<Key, Payload>) -> (NodeVisits, CRUDOperationResult<Key, Payload>) {
+        match self {
+            TreeDispatcher::Ref(inner) => inner.dispatch(crud),
+            TreeDispatcher::Wrapper(sync) => if crud.is_read() {
+                sync.read().dispatch(crud)
+            }
+            else {
+                sync.write().dispatch(crud)
+            }
+        }
+    }
+}
+
+// unsafe impl Send for TreeDispatcher {}
+// unsafe impl Sync for TreeDispatcher {}
+
+impl TreeDispatcher {
+    pub fn as_index(&self) -> &INDEX {
+        match self {
+            TreeDispatcher::Wrapper(inner) => unsafe { &*inner.data_ptr() },
+            TreeDispatcher::Ref(inner) => inner
+        }
+    }
+}
 
 #[inline(always)]
 pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key, Payload>]) -> (u128, u64, NodeVisits) {
@@ -457,7 +502,6 @@ fn make_hist(lambda: f64, map: &mut Vec<(Interval<Key>, usize)>, n: u64, key_ran
 
     fs::write(stats_lambda_leaf_hits, s).unwrap();
 }
-
 fn mixed_test_new(
     create_node_visits: NodeVisits,
     create_time: u128,

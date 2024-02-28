@@ -1,5 +1,6 @@
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
+use std::ptr;
 use crate::page_model::ObjectCount;
 
 pub struct ShadowVec<E: Default> {
@@ -12,7 +13,8 @@ impl<E: Default> Drop for ShadowVec<E> {
     fn drop(&mut self) {
         unsafe {
             if self.update_len {
-                *self.obj_cnt = self.unreal_vec.len() as _
+                ptr::write_unaligned(self.obj_cnt, self.unreal_vec.len() as _)
+                // *self.obj_cnt = self.unreal_vec.len() as _
             }
         }
     }

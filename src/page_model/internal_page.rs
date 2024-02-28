@@ -1,6 +1,6 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::mem;
+use std::{mem, ptr};
 use std::mem::MaybeUninit;
 use std::ptr::null_mut;
 use crate::page_model::{BlockRef, ObjectCount};
@@ -85,6 +85,7 @@ impl<const FAN_OUT: usize,
     pub const fn get_key(&self, index: usize) -> Key {
         unsafe {
             *(self.key_array.as_ptr().add(index + 1) as *const Key)
+            // ptr::read_unaligned(self.key_array.as_ptr().add(index + 1) as *const Key)
         }
     }
 
@@ -118,6 +119,7 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub const fn keys_len(&self) -> usize {
         unsafe {
+            // ptr::read_unaligned(self.key_array.as_ptr() as *const ObjectCount) as usize
             *(self.key_array.as_ptr() as *const ObjectCount) as usize
         }
     }

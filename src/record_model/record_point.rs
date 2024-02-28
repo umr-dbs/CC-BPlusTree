@@ -33,7 +33,7 @@ impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> RecordPoint<Key
     #[inline(always)]
     pub const fn key(&self) -> Key {
         unsafe {
-            *addr_of!(self.key)
+            self.key
         }
     }
 

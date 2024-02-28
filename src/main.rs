@@ -2,13 +2,16 @@ use std::{env, fs};
 use std::sync::Arc;
 use chrono::{DateTime, Local};
 use parking_lot::RwLock;
+use cc_bplustree::locking::locking_strategy::LockingStrategy;
 use crate::tree::bplus_tree;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::locking::locking_strategy::CRUDProtocol;
 use crate::locking::locking_strategy::LockingStrategy::*;
-use crate::test::{INDEX, Key, MAKE_INDEX, Payload, start_paper_tests};
+use crate::test::{dec_key, inc_key, INDEX, Key, MAKE_INDEX, Payload, start_paper_tests};
+use crate::tree::bplus_tree::BPlusTree;
+use crate::utils::interval::Interval;
 use crate::utils::smart_cell::ENABLE_YIELD;
 
 mod block;
@@ -28,6 +31,59 @@ fn main() {
     // make_splash();
     // show_alignment_bsz();
 
+    let tree = BPlusTree::<250, 250, Key, Key>::new_with(
+        MonoWriter,
+        Key::MIN,
+        Key::MAX,
+        inc_key,
+        dec_key
+    );
+    
+    let insert_data = (0..25000 as Key)
+        .map(|k| CRUDOperation::Insert(k as Key, k as Key))
+        .collect::<Vec<_>>();
+
+    let delete_data = (0..25000)
+        .map(|k| CRUDOperation::<Key, Key>::Delete(k))
+        .collect::<Vec<_>>();
+    
+    for insert_crud in insert_data {
+        tree.dispatch(insert_crud);
+    }
+
+    let mut count = 25000;
+    for delete_crud in delete_data {
+        println!("{delete_crud}");
+
+        // if let CRUDOperation::Delete(243) = &delete_crud {
+        //     let s = "asdas".to_string();
+        // }
+        count -= 1;
+        tree.dispatch(delete_crud);
+        match tree.dispatch(CRUDOperation::Range(Interval::new(Key::MIN, Key::MAX))) {
+            (_, CRUDOperationResult::MatchedRecords(s)) => {
+                let asd = "3Weq".to_string();
+                if s.len() != count {
+                    println!("Missing! Expected = {count}, Found = {}", s.len())
+                }
+                println!("Found = {}", s.len());
+            }
+            (.., s) => {
+                let asd = "3Weq".to_string();
+                println!("errrrrrr")
+            }
+        }
+
+        match tree.dispatch(CRUDOperation::MinPoint) {
+            (_, c) => println!("MIN: {c}")
+        }
+
+        match tree.dispatch(CRUDOperation::MaxPoint) {
+            (_, c) => println!("MAX: {c}")
+        }
+    }
+    
+    println!("\n************\nstart paper tests");
     start_paper_tests();
     //
     // const THREADS: usize        = 24;

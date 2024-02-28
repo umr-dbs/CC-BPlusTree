@@ -104,9 +104,7 @@ impl<const FAN_OUT: usize,
                         .map(|pos| unsafe { leaf_page.as_records().get_unchecked(pos) }.clone())
                         .into())
                 }
-                (node_visits, ..) => (node_visits, CRUDOperationResult::Error)
-            }
-            ,
+            },
             CRUDOperation::Range(key_interval) if olc => {
                 let mut path
                     = Vec::with_capacity(self.root.height() as _);
@@ -136,6 +134,48 @@ impl<const FAN_OUT: usize,
                     .collect::<Vec<_>>()
                     .into())
             },
+            CRUDOperation::MinPoint if olc => match self.dispatch(
+                CRUDOperation::Range((self.min_key..=self.min_key).into()))
+            {
+                (node_visits, CRUDOperationResult::MatchedRecords(mut records)) 
+                => (node_visits, records.pop().into()),
+                (node_visits, ..) => (node_visits, CRUDOperationResult::Error)
+            },
+            CRUDOperation::MinPoint => match self.traversal_read(self.min_key) {
+                (node_visits, leaf_guard) => {
+                    let leaf_page =  leaf_guard
+                        .deref()
+                        .unwrap()
+                        .as_ref();
+
+                    (node_visits, leaf_page
+                        .as_records()
+                        .first()
+                        .cloned()
+                        .into())
+                }
+            }
+            CRUDOperation::MaxPoint if olc => match self.dispatch(
+                CRUDOperation::Range((self.max_key..=self.max_key).into()))
+            {
+                (node_visits, CRUDOperationResult::MatchedRecords(mut records))
+                => (node_visits, records.pop().into()),
+                (node_visits, ..) => (node_visits, CRUDOperationResult::Error)
+            },
+            CRUDOperation::MaxPoint => match self.traversal_read(self.max_key) {
+                (node_visits, leaf_guard) => {
+                    let leaf_page =  leaf_guard
+                        .deref()
+                        .unwrap()
+                        .as_ref();
+
+                    (node_visits, leaf_page
+                        .as_records()
+                        .last()
+                        .cloned()
+                        .into())
+                }
+            }
             CRUDOperation::Empty => (NodeVisits::MIN, CRUDOperationResult::Error),
         }
     }

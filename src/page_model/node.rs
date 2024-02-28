@@ -63,11 +63,17 @@ pub enum NodeUnsafeDegree {
 }
 
 impl NodeUnsafeDegree {
+    #[inline]
     pub const fn is_ok(&self) -> bool {
         match self {
             Self::Ok => true,
             _ => false
         }
+    }
+    
+    #[inline(always)]
+    pub const fn is_unsafe(&self) -> bool {
+        !self.is_ok()
     }
 
     pub const fn is_overflow(&self) -> bool {
@@ -99,7 +105,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn is_underflow(&self, allocation: usize) -> bool {
-        debug_assert!(allocation > 0 && allocation >= self.len());
+        // debug_assert!(allocation > 0 && allocation >= self.len());
 
         self.len() < allocation / 2
     }
@@ -138,6 +144,22 @@ impl<const FAN_OUT: usize,
         match self {
             Node::Index(index_page) => index_page.keys_mut(),
             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_mut")
+        }
+    }
+
+    #[inline(always)]
+    pub fn keys(&self) -> &[Key] {
+        match self {
+            Node::Index(index_page) => index_page.keys(),
+            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys")
+        }
+    }
+
+    #[inline(always)]
+    pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>] {
+        match self {
+            Node::Index(index_page) => index_page.children(),
+            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .children")
         }
     }
 

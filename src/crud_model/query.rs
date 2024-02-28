@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
-use std::mem;
-use std::ops::Deref;
-use hashbrown::Equivalent;
+use std::fmt::Display;
+use std::{mem, ptr};
+use itertools::Itertools;
 use crate::locking::locking_strategy::LockingStrategy;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
-use crate::block::block::BlockGuard;
+use crate::block::block::{Block, BlockGuard};
 use crate::crud_model::crud_api::NodeVisits;
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
@@ -13,8 +13,8 @@ use crate::utils::interval::Interval;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Sync,
-    Payload: Default + Clone + Sync
+    Key: Default + Ord + Copy + Hash + Sync + Display + 'static,
+    Payload: Default + Clone + Sync + 'static
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
@@ -25,9 +25,9 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    fn has_underflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
+    pub(crate) fn has_underflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
         match node.is_leaf() {
-            true => node.is_underflow(self.block_manager.allocation_leaf()),
+            true => node.is_underflow(self.block_manager.allocation_leaf() - 1),
             false => node.is_underflow(self.block_manager.allocation_directory())
         }
     }
@@ -41,7 +41,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn retrieve_root(&self, mut lock_level: Level, mut attempt: Attempts)
-    -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
+                                -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height, LockLevel, Attempts)
     {
         let mut node_visits = 0;
         loop {
@@ -55,6 +55,108 @@ impl<const FAN_OUT: usize,
                     break (node_visits + 1, guard, height, lock_level, attempt)
             }
         }
+    }
+
+    fn merge(&self,
+             block_guard: &mut BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+             child_pos: usize,
+             child_key: Key,
+             curr_level: Level,
+             lock_level: LockLevel,
+             attempt: Attempts,
+    ) -> Result<(), ()> {
+        // unsafe {
+        //     if ptr::read_unaligned(&child_key as *const _ as *const u64) == 246 {
+        //         println!("FROM ROOT");
+        //         Self::log_console(self.root.block.unsafe_borrow(), 0);
+        //         println!("FROM BLOCKGUARD");
+        //         Self::log_console(BlockGuard::deref(block_guard).unwrap(), 0);
+        //         let s = "sfsd".to_string();
+        //     }
+        // }
+        let height
+            = self.root.height();
+
+        if !block_guard.upgrade_write_lock() {
+            return Err(());
+        }
+
+        let block_deref
+            = block_guard.deref_mut().unwrap();
+
+        let mut children_latched = block_deref
+            .children()
+            .iter()
+            .map(|c| self.apply_for_ref(
+                curr_level, lock_level, attempt, height, c))
+            .collect_vec();
+
+        if children_latched.iter_mut().any(|guard|
+            !guard.upgrade_write_lock())
+        {
+            mem::drop(children_latched);
+            return Err(());
+        }
+        // println!("FROM ROOT");
+        // Self::log_console(self.root.block.unsafe_borrow(), 0);
+        // println!("FROM BLOCKGUARD");
+        // Self::log_console(BlockGuard::deref(block_guard).unwrap(), 0);
+
+        let is_leaf_children = unsafe { children_latched.get_unchecked(0).deref_unsafe().unwrap() }
+            .is_leaf();
+
+        let block = match is_leaf_children {
+            true => {
+                let n_leaf
+                    = self.block_manager.new_empty_leaf();
+                // println!("FROM ROOT");
+                // Self::log_console(self.root.block.unsafe_borrow(), 0);
+                // println!("FROM BLOCKGUARD");
+                // Self::log_console(BlockGuard::deref(block_guard).unwrap(), 0);
+                children_latched
+                    .into_iter()
+                    .for_each(|leaf_guard|
+                        n_leaf.records_mut().extend_from_slice(leaf_guard.deref().unwrap().as_records()));
+
+                n_leaf
+            }
+            false => {
+                let n_internal
+                    = self.block_manager.new_empty_index_block();
+
+                children_latched
+                    .into_iter()
+                    .enumerate()
+                    .for_each(|(index, internal_guard)| {
+                        let page = internal_guard.deref().unwrap();
+                        let keys = page.keys();
+                        let children = page.children();
+
+                        n_internal.children_mut().extend_from_slice(children);
+
+                        if index == child_pos + 1 {
+                            n_internal.keys_mut().push(child_key)
+                        }
+                        n_internal.keys_mut().extend_from_slice(keys);
+                    });
+
+                n_internal
+            }
+        };
+
+        if ptr::addr_eq(self.root.block.unsafe_borrow() as *const _,
+                        BlockGuard::deref(block_guard).unwrap() as *const _)
+        {
+            self.root.get_mut().height -= 1;
+        } else {
+            unreachable!("Merge non-root into lower height")
+        }
+
+        *block_guard.deref_mut().unwrap() = block;
+
+        // println!("AFTER MERGE BLOCKGUARD");
+        // Self::log_console(BlockGuard::deref(block_guard).unwrap(), 0);
+        Ok(())
     }
 
     #[inline]
@@ -71,20 +173,14 @@ impl<const FAN_OUT: usize,
                                root.height(),
                                &root.block);
 
-        let root_ref
-            = root_guard.deref();
-
-        if root_ref.is_none() {
+        if !root_guard.is_valid() {
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
         }
 
-        let root_ref
-            = root_ref.unwrap();
-
         let has_overflow_root
-            = self.has_overflow(root_ref);
+            = self.has_overflow(unsafe { root_guard.deref_unsafe() }.unwrap());
 
         let force_restart = match self.locking_strategy {
             LockingStrategy::MonoWriter | LockingStrategy::LockCoupling => false,
@@ -98,12 +194,12 @@ impl<const FAN_OUT: usize,
         }
 
         if has_overflow_root && self.locking_strategy.is_orwc() &&
-           !self.has_overflow(root_guard.deref().unwrap())
+            !self.has_overflow(root_guard.deref().unwrap())
         { // Detect interferences
             // if !root_guard.deref().unwrap().is_leaf() {
             //     root_guard.downgrade(); // allow possible concurrency, instead of definitive lock
             // }
-            return Ok((root_guard, root.height()))
+            return Ok((root_guard, root.height()));
         }
 
         if !has_overflow_root {
@@ -207,6 +303,347 @@ impl<const FAN_OUT: usize,
         }
 
         Ok((root_guard, n_height))
+    }
+
+    pub(crate) fn log_console(mufasa: &Block<FAN_OUT, NUM_RECORDS, Key, Payload>, rec: usize) {
+        if let Node::Index(internal_page) = mufasa.as_ref() {
+            println!("{}Keys: [{}]", "\t".repeat(rec), internal_page
+                .keys()
+                .iter()
+                .map(|k| k as *const _ as *const u64)
+                .map(|k| unsafe { k.read_unaligned() })
+                .join(","));
+        }
+        match mufasa.as_ref() {
+            Node::Index(internal_page) => internal_page
+                .children()
+                .iter()
+                .enumerate()
+                .for_each(|(index, c)| {
+                    print!("{}Child-{index}\n\t", "\t".repeat(rec + 1));
+                    Self::log_console(c.unsafe_borrow(), rec + 1)
+                }),
+            Node::Leaf(leaf_page) => println!("{}Leaf = [{}]", "\t".repeat(rec), leaf_page
+                .as_records()
+                .iter()
+                .map(|r| r.key())
+                .join(", "))
+        }
+    }
+
+    pub(crate) fn do_underflow_correction(
+        &self,
+        fence: &Interval<Key>,
+        curr_level: Level,
+        attempts: Attempts,
+        lock_level: LockLevel,
+        parent_guard: &mut BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        mut child_pos: usize,
+        from_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
+        -> Result<(), ()>
+    {
+        let mufasa = parent_guard
+            .deref_mut()
+            .unwrap();
+
+        let child_key = unsafe { *mufasa.keys().get_unchecked(child_pos) };
+
+        let from_deref
+            = from_guard.deref().unwrap();
+
+        let is_leaf
+            = from_deref.is_leaf();
+
+        let mut all_candidates = mufasa
+            .children()
+            .iter()
+            .zip(mufasa.keys().iter().merge([&fence.upper]))
+            .enumerate()
+            .filter(|(index, ..)| *index != child_pos)
+            .map(|(index, (block, key))|
+                (index, block.borrow_read(), *key))
+            .sorted_by_key(|(.., key)| *key)
+            .collect_vec();
+
+        let (mut merge_index,
+            mut merge_guard,
+            mut merge_key
+        ) = match all_candidates
+            .binary_search_by_key(&child_key, |(.., key)| *key)
+        {
+            _ if all_candidates.len() == 1 && !is_leaf => { // copy all to mufasa
+                mem::drop(all_candidates);
+                return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts)
+            }
+            Ok(index) | Err(index) if index < all_candidates.len() => all_candidates.remove(index),
+            Err(..) if !all_candidates.is_empty()  && !is_leaf => all_candidates.pop().unwrap(),
+            _ => {
+                mem::drop(all_candidates);
+                return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts);
+            },
+        };
+
+        all_candidates.clear();
+
+        if !merge_guard.upgrade_write_lock() { // OLC
+            return Err(());
+        }
+
+        let merge_deref
+            = merge_guard.deref().unwrap();
+
+        if is_leaf {
+            let fit
+                = from_deref.len() + merge_deref.len() < NUM_RECORDS;
+
+            if mufasa.len() == 1 && fit {
+                return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts)
+            }
+            if fit { // merge into one new leaf; checked
+                // println!("Before Leaf Merge");
+                // Self::log_console(mufasa, 0);
+                let new_leaf = self.block_manager
+                    .new_empty_leaf()
+                    .into_cell(self.locking_strategy.latch_type());
+
+                new_leaf
+                    .unsafe_borrow_mut()
+                    .records_mut()
+                    .extend(from_deref
+                        .as_records()
+                        .iter()
+                        .merge_by(merge_deref.as_records(),
+                                  |r0, r1|
+                                      r0.key() < r1.key())
+                        .cloned());
+
+                let mut mufasa_children_mut
+                    = mufasa.children_mut();
+
+                let mut mufasa_keys_mut
+                    = mufasa.keys_mut();
+
+                let t_child = child_pos;
+                child_pos = child_pos.min(merge_index);
+                merge_index = merge_index.max(t_child);
+
+                merge_key = merge_key.min(child_key);
+
+                // Self::log_console(mufasa, 0);
+                mufasa_keys_mut.remove(child_pos);
+                mufasa_children_mut.remove(merge_index);
+
+                unsafe {
+                    *mufasa_children_mut.get_unchecked_mut(child_pos) = new_leaf;
+                }
+
+                mem::drop(mufasa_keys_mut);
+                mem::drop(mufasa_children_mut);
+
+                // Self::log_console(mufasa, 0);
+
+                // println!("After Leaf Merge");
+                // Self::log_console(mufasa, 0);
+            } else { // Leaf: key-split
+                // Self::log_console(mufasa, 0);
+                let new_leaf_left = self.block_manager
+                    .new_empty_leaf()
+                    .into_cell(self.locking_strategy.latch_type());
+
+                let new_leaf_right = self.block_manager
+                    .new_empty_leaf()
+                    .into_cell(self.locking_strategy.latch_type());
+
+                let joined = from_deref
+                    .as_records()
+                    .iter()
+                    .merge_by(merge_deref.as_records(),
+                              |r0, r1|
+                                  r0.key() < r1.key())
+                    .cloned()
+                    .collect_vec();
+
+                let joined_len = joined.len();
+                let (first, second)
+                    = joined.split_at(joined_len / 2);
+
+                let left_key = unsafe {
+                    second.get_unchecked(0).key()
+                };
+
+                let right_key
+                    = merge_key.max(child_key);
+
+                new_leaf_left.unsafe_borrow_mut()
+                    .records_mut()
+                    .extend_from_slice(first);
+
+                new_leaf_right.unsafe_borrow_mut()
+                    .records_mut()
+                    .extend_from_slice(second);
+
+                mem::drop(joined);
+
+                let mut mufasa_children_mut
+                    = mufasa.children_mut();
+
+                let mut mufasa_keys_mut
+                    = mufasa.keys_mut();
+
+                unsafe {
+                    let t_child_pos = child_pos;
+                    let child_pos = child_pos.min(merge_index);
+                    let merge_index = t_child_pos.max(merge_index);
+
+                    *mufasa_keys_mut.get_unchecked_mut(child_pos) = left_key;
+                    // *mufasa_keys_mut.get_unchecked_mut(merge_index) = right_key;
+                    *mufasa_children_mut.get_unchecked_mut(child_pos) = new_leaf_left;
+                    *mufasa_children_mut.get_unchecked_mut(merge_index) = new_leaf_right;
+                }
+                // Self::log_console(mufasa, 0);
+            }
+        } else { // is Internal page: Combine
+            if from_deref.len() + merge_deref.len() < FAN_OUT - 1 {
+                // Self::log_console(mufasa, 0);
+
+                let new_index = self.block_manager
+                    .new_empty_index_block()
+                    .into_cell(self.locking_strategy.latch_type());
+
+                let mut keys_mut = new_index
+                    .unsafe_borrow_mut()
+                    .keys_mut();
+
+                let mut children_mut = new_index
+                    .unsafe_borrow_mut()
+                    .children_mut();
+
+                let (child_pos, merge_index) = if child_pos < merge_index {
+                    children_mut.extend_from_slice(from_deref.children());
+                    children_mut.extend_from_slice(merge_deref.children());
+
+                    keys_mut.extend(from_deref.keys());
+                    keys_mut.push(child_key);
+                    keys_mut.extend(merge_deref.keys());
+
+                    (child_pos, merge_index)
+                } else {
+                    children_mut.extend_from_slice(merge_deref.children());
+                    children_mut.extend_from_slice(from_deref.children());
+
+                    keys_mut.extend(merge_deref.keys());
+                    keys_mut.push(merge_key);
+                    keys_mut.extend(from_deref.keys());
+
+                    (merge_index, child_pos)
+                };
+
+                let mut mufasa_children_mut
+                    = mufasa.children_mut();
+
+                let mut mufasa_keys_mut
+                    = mufasa.keys_mut();
+
+                mufasa_children_mut.remove(merge_index);
+                mufasa_keys_mut.remove(child_pos);
+
+                mem::drop(keys_mut);
+                mem::drop(children_mut);
+                unsafe {
+                    *mufasa_children_mut.get_unchecked_mut(child_pos) = new_index;
+                }
+
+                mem::drop(mufasa_keys_mut);
+                mem::drop(mufasa_children_mut);
+                // println!("After Internal Merge");
+                // Self::log_console(mufasa, 0);
+                // let s = "adasda".to_string();
+            } else { // key-split: Internal Page
+                // println!("aaaaa");
+                let new_internal_left = self.block_manager
+                    .new_empty_index_block()
+                    .into_cell(self.locking_strategy.latch_type());
+
+                let new_internal_right = self.block_manager
+                    .new_empty_index_block()
+                    .into_cell(self.locking_strategy.latch_type());
+
+                let (child_pos, merge_index, joined_keys, joined_children) = if child_pos < merge_index
+                {
+                    (child_pos, merge_index,
+                     from_deref
+                         .keys()
+                         .iter()
+                         .merge(merge_deref.keys())
+                         .cloned()
+                         .collect_vec(),
+                     from_deref
+                         .children()
+                         .iter()
+                         .merge_by(merge_deref.children(), |_, _| true)
+                         .cloned()
+                         .collect_vec())
+                } else {
+                    (merge_index, child_pos,
+                     merge_deref
+                         .keys()
+                         .iter()
+                         .merge(from_deref.keys())
+                         .cloned()
+                         .collect_vec(),
+                     merge_deref
+                         .children()
+                         .iter()
+                         .merge_by(from_deref.children(), |_, _| true)
+                         .cloned()
+                         .collect_vec())
+                };
+
+                let keys_joined
+                    = joined_keys.len();
+
+                let (keys_left, keys_right)
+                    = joined_keys.split_at(keys_joined / 2);
+
+                let split_key
+                    = unsafe { *keys_right.get_unchecked(0) };
+
+                let keys_right
+                    = unsafe { keys_right.get_unchecked(1..) };
+
+                let children_left =
+                    unsafe { joined_children.get_unchecked(..=keys_left.len()) };
+
+                let children_right =
+                    unsafe { joined_children.get_unchecked(keys_left.len() + 1..) };
+
+                new_internal_left
+                    .unsafe_borrow_mut()
+                    .children_mut()
+                    .extend_from_slice(children_left);
+
+                new_internal_left.unsafe_borrow_mut()
+                    .keys_mut()
+                    .extend_from_slice(keys_left);
+
+                new_internal_right
+                    .unsafe_borrow_mut()
+                    .children_mut()
+                    .extend_from_slice(children_right);
+
+                new_internal_right.unsafe_borrow_mut()
+                    .keys_mut()
+                    .extend_from_slice(keys_right);
+
+                unsafe {
+                    *mufasa.keys_mut().get_unchecked_mut(merge_index) = split_key;
+                    *mufasa.children_mut().get_unchecked_mut(child_pos) = new_internal_left;
+                    *mufasa.children_mut().get_unchecked_mut(merge_index) = new_internal_right;
+                }
+            }
+        }
+        // Self::log_console(mufasa, 0);
+        Ok(())
     }
 
     pub(crate) fn do_overflow_correction(
@@ -327,6 +764,13 @@ impl<const FAN_OUT: usize,
             attempt
         ) = self.retrieve_root(lock_level, attempt);
 
+        // if unsafe { ptr::read_unaligned(&key as *const _ as *const u64) } == 23 {
+        //     Self::log_console(current_guard.deref().unwrap(), 0);
+        //     let s = "daasd".to_string();
+        // }
+        let mut fence
+            = Interval::new(self.min_key, self.max_key);
+
         let key = (self.inc_key)(key);
         loop {
             let current_guard_result
@@ -336,11 +780,14 @@ impl<const FAN_OUT: usize,
                 Node::Index(index_page) => unsafe {
                     node_visits += 1;
 
+                    // let keys = index_page.keys();
+                    // if keys.len() == 0 {
+                    //     let s = "afasdf".to_string();
+                    // }
                     let (child_pos, next_node)
                         = match index_page.keys().binary_search(&key)
                     {
-                        Ok(pos) => (pos, index_page.get_child_unsafe_cloned(pos)),
-                        Err(pos) => (pos, index_page.get_child_unsafe_cloned(pos))
+                        Ok(pos) | Err(pos) => (pos, index_page.get_child_unsafe_cloned(pos)),
                     };
 
                     curr_level += 1;
@@ -355,7 +802,10 @@ impl<const FAN_OUT: usize,
                     let has_overflow_next
                         = self.has_overflow(next_guard.deref().unwrap());
 
-                    if has_overflow_next {
+                    let has_underflow_next
+                        = self.has_underflow(next_guard.deref().unwrap());
+
+                    if has_overflow_next || has_underflow_next {
                         let current_exclusive
                             = current_guard.is_write_lock();
 
@@ -367,8 +817,8 @@ impl<const FAN_OUT: usize,
 
                             return (node_visits, Err((curr_level - 1, attempt + 1)));
                         } else if self.locking_strategy.is_orwc() &&
-                                  !current_exclusive &&
-                                  self.has_overflow(current_guard.deref().unwrap())
+                            !current_exclusive &&
+                            self.has_overflow(current_guard.deref().unwrap())
                         { // this maps the obsolete check within an is_valid/deref auto call
                             mem::drop(next_guard);
                             mem::drop(current_guard);
@@ -379,11 +829,34 @@ impl<const FAN_OUT: usize,
                             current_guard.is_write_lock() && next_guard.is_write_lock() ||
                             !self.locking_strategy.additional_lock_required());
 
-                        self.do_overflow_correction(
-                            &mut current_guard,
-                            child_pos,
-                            next_guard)
+                        if has_overflow_next {
+                            self.do_overflow_correction(
+                                &mut current_guard,
+                                child_pos,
+                                next_guard)
+                        } else {
+                            match self.do_underflow_correction(
+                                &fence,
+                                curr_level,
+                                attempt,
+                                lock_level,
+                                &mut current_guard,
+                                child_pos,
+                                next_guard)
+                            {
+                                Err(..) => return (node_visits, Err((curr_level - 1, attempt + 1))),
+                                _ => {}
+                            }
+                        }
                     } else {
+                        if child_pos < index_page.len() {
+                            fence.upper = index_page.get_key(child_pos);
+                        }
+
+                        if child_pos > 0 {
+                            fence.lower = index_page.get_key(child_pos - 1)
+                        }
+
                         current_guard = next_guard;
                     }
                 }

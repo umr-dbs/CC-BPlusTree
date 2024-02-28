@@ -787,7 +787,7 @@ impl<E: Default> SmartCell<E> {
             ReadersWriterCell(rw, ptr) => unsafe {
                 RwReader(transmute(rw.read()), ptr.as_ref())
             },
-            _ => OLCReader(None)
+            FreeCell(ptr) => LockFree(ptr.get_mut()),
         }
     }
 

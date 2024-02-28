@@ -364,7 +364,11 @@ impl<const FAN_OUT: usize,
             attempt
         ) = self.retrieve_root_olc(lock_level, attempt);
 
+        let mut fence
+            = Interval::new(self.min_key, self.max_key);
+        
         let key = (self.inc_key)(key);
+        
         loop {
             let current_guard_result
                 = current_guard.deref();
@@ -382,8 +386,7 @@ impl<const FAN_OUT: usize,
                     let (child_pos, next_node)
                         = match index_page.keys().binary_search(&key)
                     {
-                        Ok(pos) => (pos, index_page.get_child_result(pos)),
-                        Err(pos) => (pos, index_page.get_child_result(pos))
+                        Ok(pos) | Err(pos) => (pos, index_page.get_child_result(pos)),
                     };
 
                     if !current_guard.is_valid() {
@@ -413,8 +416,11 @@ impl<const FAN_OUT: usize,
 
                     let has_overflow_next
                         = self.has_overflow(next_guard_result.unwrap());
-
-                    if has_overflow_next {
+                    
+                    let has_underflow_next
+                        = self.has_underflow(next_guard_result.unwrap());
+                    
+                    if has_overflow_next || has_underflow_next {
                         if !current_guard.upgrade_write_lock() || !next_guard.upgrade_write_lock() {
                             mem::drop(next_guard);
                             mem::drop(current_guard);
@@ -425,18 +431,36 @@ impl<const FAN_OUT: usize,
                         debug_assert!(current_guard.upgrade_write_lock() &&
                             next_guard.upgrade_write_lock());
 
-                        self.do_overflow_correction(
-                            &mut current_guard,
-                            child_pos,
-                            next_guard)
+                        if has_overflow_next {
+                            self.do_overflow_correction(
+                                &mut current_guard,
+                                child_pos,
+                                next_guard)
+                        }
+                        else {
+                            match self.do_underflow_correction(
+                                &fence,
+                                curr_level,
+                                attempt,
+                                lock_level,
+                                &mut current_guard,
+                                child_pos,
+                                next_guard)
+                            {
+                                Err(_) => return (node_visits, Err((curr_level - 1, attempt + 1))),
+                                _ => { }
+                            }
+                        }
                     }
-                    // else if !current_guard.is_valid() || !next_guard.is_valid() {
-                    //     mem::drop(next_guard);
-                    //     mem::drop(current_guard);
-                    //
-                    //     return Err((curr_level - 1, attempt + 1));
-                    // }
                     else {
+                        if child_pos < index_page.len() {
+                            fence.upper = index_page.get_key(child_pos);
+                        }
+
+                        if child_pos > 0 {
+                            fence.lower = index_page.get_key(child_pos - 1)
+                        }
+                        
                         current_guard = next_guard;
                     }
                 }

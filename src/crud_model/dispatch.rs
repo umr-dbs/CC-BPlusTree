@@ -134,16 +134,16 @@ impl<const FAN_OUT: usize,
                     .collect::<Vec<_>>()
                     .into())
             },
-            CRUDOperation::MinPoint if olc => match self.dispatch(
+            CRUDOperation::PeekMin if olc => match self.dispatch(
                 CRUDOperation::Range((self.min_key..=self.min_key).into()))
             {
-                (node_visits, CRUDOperationResult::MatchedRecords(mut records)) 
-                => (node_visits, records.pop().into()),
+                (node_visits, CRUDOperationResult::MatchedRecords(records)) 
+                => (node_visits, records.first().cloned().into()),
                 (node_visits, ..) => (node_visits, CRUDOperationResult::Error)
             },
-            CRUDOperation::MinPoint => match self.traversal_read(self.min_key) {
+            CRUDOperation::PeekMin => match self.traversal_read(self.min_key) {
                 (node_visits, leaf_guard) => {
-                    let leaf_page =  leaf_guard
+                    let leaf_page = leaf_guard
                         .deref()
                         .unwrap()
                         .as_ref();
@@ -155,16 +155,16 @@ impl<const FAN_OUT: usize,
                         .into())
                 }
             }
-            CRUDOperation::MaxPoint if olc => match self.dispatch(
+            CRUDOperation::PeekMax if olc => match self.dispatch(
                 CRUDOperation::Range((self.max_key..=self.max_key).into()))
             {
-                (node_visits, CRUDOperationResult::MatchedRecords(mut records))
-                => (node_visits, records.pop().into()),
+                (node_visits, CRUDOperationResult::MatchedRecords(records))
+                => (node_visits, records.last().cloned().into()),
                 (node_visits, ..) => (node_visits, CRUDOperationResult::Error)
             },
-            CRUDOperation::MaxPoint => match self.traversal_read(self.max_key) {
+            CRUDOperation::PeekMax => match self.traversal_read(self.max_key) {
                 (node_visits, leaf_guard) => {
-                    let leaf_page =  leaf_guard
+                    let leaf_page = leaf_guard
                         .deref()
                         .unwrap()
                         .as_ref();
@@ -174,6 +174,80 @@ impl<const FAN_OUT: usize,
                         .last()
                         .cloned()
                         .into())
+                }
+            }
+            CRUDOperation::PopMin if olc => match self.traversal_write_olc(self.min_key) {
+                (node_visits, leaf_guard) => {
+                    let leaf_page =  leaf_guard
+                        .deref()
+                        .unwrap()
+                        .as_ref();
+
+                    if !leaf_page.as_records().is_empty() {
+                        let r
+                            = leaf_page.records_mut().remove(0);
+
+                        (node_visits, CRUDOperationResult::Deleted(r.key(), r.payload.clone()))
+                    }
+                    else {
+                        (node_visits, CRUDOperationResult::Error)
+                    }
+                }
+            }
+            CRUDOperation::PopMin => match self.traversal_write(self.min_key) {
+                (node_visits, leaf_guard) => {
+                    let leaf_page =  leaf_guard
+                        .deref()
+                        .unwrap()
+                        .as_ref();
+
+                    if !leaf_page.as_records().is_empty() {
+                        let r 
+                            = leaf_page.records_mut().remove(0);
+                        
+                        (node_visits, CRUDOperationResult::Deleted(r.key(), r.payload.clone()))
+                    }
+                    else {
+                        (node_visits, CRUDOperationResult::Error)
+                    }
+                }
+            }
+            CRUDOperation::PopMax if olc => match self.traversal_write_olc(self.max_key) {
+                (node_visits, leaf_guard) => {
+                    let leaf_page =  leaf_guard
+                        .deref()
+                        .unwrap()
+                        .as_ref();
+
+                    let len = leaf_page.len();
+                    if len > 0 {
+                        let r
+                            = leaf_page.records_mut().remove(len - 1);
+
+                        (node_visits, CRUDOperationResult::Deleted(r.key(), r.payload.clone()))
+                    }
+                    else {
+                        (node_visits, CRUDOperationResult::Error)
+                    }
+                }
+            }
+            CRUDOperation::PopMax => match self.traversal_write(self.max_key) {
+                (node_visits, leaf_guard) => {
+                    let leaf_page =  leaf_guard
+                        .deref()
+                        .unwrap()
+                        .as_ref();
+
+                    let len = leaf_page.len();
+                    if len > 0 {
+                        let r
+                            = leaf_page.records_mut().remove(len - 1);
+                        
+                        (node_visits, CRUDOperationResult::Deleted(r.key(), r.payload.clone()))
+                    }
+                    else {
+                        (node_visits, CRUDOperationResult::Error)
+                    }
                 }
             }
             CRUDOperation::Empty => (NodeVisits::MIN, CRUDOperationResult::Error),

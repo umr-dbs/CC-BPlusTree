@@ -16,8 +16,10 @@ pub enum CRUDOperation<Key: Ord + Copy + Hash, Payload: Clone> {
     Update(Key, Payload),
     Delete(Key),
     Point(Key),
-    MinPoint,
-    MaxPoint,
+    PeekMin,
+    PeekMax,
+    PopMin,
+    PopMax,
     Range(Interval<Key>),
 }
 
@@ -39,10 +41,14 @@ impl<Key: Display + Ord + Copy + Hash, Payload: Display + Clone> Display for CRU
             Range(key) =>
                 write!(f, "Range(Keys: [{}, {}])", key.lower(), key.upper()),
             Empty => write!(f, "Empty"),
-            CRUDOperation::MinPoint => 
+            CRUDOperation::PeekMin => 
                 write!(f, "MinPoint"),
-            CRUDOperation::MaxPoint =>
+            CRUDOperation::PeekMax =>
                 write!(f, "MaxPoint"),
+            CRUDOperation::PopMin => 
+                write!(f, "PopMin"),
+            CRUDOperation::PopMax =>
+                write!(f, "PopMax"),
         }
     }
 }

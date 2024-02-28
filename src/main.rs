@@ -44,41 +44,22 @@ fn main() {
         .collect::<Vec<_>>();
 
     let delete_data = (0..25000)
-        .map(|k| CRUDOperation::<Key, Key>::Delete(k))
+        .map(|_| CRUDOperation::<Key, Key>::PopMin)
         .collect::<Vec<_>>();
     
     for insert_crud in insert_data {
         tree.dispatch(insert_crud);
     }
 
-    let mut count = 25000;
     for delete_crud in delete_data {
         println!("{delete_crud}");
-
-        // if let CRUDOperation::Delete(243) = &delete_crud {
-        //     let s = "asdas".to_string();
-        // }
-        count -= 1;
         tree.dispatch(delete_crud);
-        match tree.dispatch(CRUDOperation::Range(Interval::new(Key::MIN, Key::MAX))) {
-            (_, CRUDOperationResult::MatchedRecords(s)) => {
-                let asd = "3Weq".to_string();
-                if s.len() != count {
-                    println!("Missing! Expected = {count}, Found = {}", s.len())
-                }
-                println!("Found = {}", s.len());
-            }
-            (.., s) => {
-                let asd = "3Weq".to_string();
-                println!("errrrrrr")
-            }
-        }
 
-        match tree.dispatch(CRUDOperation::MinPoint) {
+        match tree.dispatch(CRUDOperation::PeekMin) {
             (_, c) => println!("MIN: {c}")
         }
 
-        match tree.dispatch(CRUDOperation::MaxPoint) {
+        match tree.dispatch(CRUDOperation::PeekMax) {
             (_, c) => println!("MAX: {c}")
         }
     }

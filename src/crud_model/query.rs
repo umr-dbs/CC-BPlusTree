@@ -373,12 +373,14 @@ impl<const FAN_OUT: usize,
         {
             _ if all_candidates.len() == 1 && !is_leaf => { // copy all to mufasa
                 mem::drop(all_candidates);
+                mem::drop(from_guard);
                 return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts)
             }
             Ok(index) | Err(index) if index < all_candidates.len() => all_candidates.remove(index),
             Err(..) if !all_candidates.is_empty()  && !is_leaf => all_candidates.pop().unwrap(),
             _ => {
                 mem::drop(all_candidates);
+                mem::drop(from_guard);
                 return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts);
             },
         };
@@ -397,6 +399,8 @@ impl<const FAN_OUT: usize,
                 = from_deref.len() + merge_deref.len() < NUM_RECORDS;
 
             if mufasa.len() == 1 && fit {
+                mem::drop(from_guard);
+                mem::drop(merge_guard);
                 return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts)
             }
             if fit { // merge into one new leaf; checked

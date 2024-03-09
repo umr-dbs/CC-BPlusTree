@@ -1,9 +1,10 @@
 use std::hash::Hash;
 use std::fmt::Display;
+use std::mem;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
-use crate::page_model::node::Node;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
+use crate::record_model::unsafe_clone::UnsafeClone;
 use crate::tree::bplus_tree::BPlusTree;
 
 impl<const FAN_OUT: usize,
@@ -134,13 +135,30 @@ impl<const FAN_OUT: usize,
                     .collect::<Vec<_>>()
                     .into())
             },
-            CRUDOperation::PeekMin if olc => match self.dispatch(
-                CRUDOperation::Range((self.min_key..=self.min_key).into()))
-            {
-                (node_visits, CRUDOperationResult::MatchedRecords(records)) 
-                => (node_visits, records.first().cloned().into()),
-                (node_visits, ..) => (node_visits, CRUDOperationResult::Error)
-            },
+            CRUDOperation::PeekMin if olc => match self.traversal_read_olc(self.min_key) {
+                (node_visits, leaf_guard) => {
+                    let leaf_page = leaf_guard
+                        .deref()
+                        .unwrap()
+                        .as_ref();
+
+                    let result = leaf_page
+                        .as_records()
+                        .first()
+                        .map(|r| unsafe { r.unsafe_clone() });
+                    
+                    if leaf_guard.is_valid() {
+                        (node_visits, result.into())
+                    }
+                    else {
+                        mem::drop(leaf_guard);
+                        if !mem::needs_drop::<Payload>() { // fishy af
+                            mem::forget(result);
+                        }
+                        self.dispatch(CRUDOperation::PeekMin)
+                    }
+                }
+            }
             CRUDOperation::PeekMin => match self.traversal_read(self.min_key) {
                 (node_visits, leaf_guard) => {
                     let leaf_page = leaf_guard
@@ -155,12 +173,26 @@ impl<const FAN_OUT: usize,
                         .into())
                 }
             }
-            CRUDOperation::PeekMax if olc => match self.dispatch(
-                CRUDOperation::Range((self.max_key..=self.max_key).into()))
-            {
-                (node_visits, CRUDOperationResult::MatchedRecords(records))
-                => (node_visits, records.last().cloned().into()),
-                (node_visits, ..) => (node_visits, CRUDOperationResult::Error)
+            CRUDOperation::PeekMax if olc => match self.traversal_read_olc(self.max_key) {
+                (node_visits, leaf_guard) => {
+                    let leaf_page = leaf_guard
+                        .deref()
+                        .unwrap()
+                        .as_ref();
+
+                    let result = leaf_page
+                        .as_records()
+                        .last()
+                        .map(|r| unsafe { r.unsafe_clone() });
+                    
+                    if leaf_guard.is_valid() {
+                        (node_visits, result.into())
+                    }
+                    else {
+                        mem::drop(leaf_guard);
+                        self.dispatch(CRUDOperation::PeekMax)
+                    }
+                }
             },
             CRUDOperation::PeekMax => match self.traversal_read(self.max_key) {
                 (node_visits, leaf_guard) => {

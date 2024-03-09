@@ -7,7 +7,7 @@ use crate::tree::bplus_tree;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::locking::locking_strategy::CRUDProtocol;
+use crate::locking::locking_strategy::{CRUDProtocol, orwc};
 use crate::locking::locking_strategy::LockingStrategy::*;
 use crate::test::{dec_key, inc_key, INDEX, Key, MAKE_INDEX, Payload, start_paper_tests};
 use crate::tree::bplus_tree::BPlusTree;
@@ -32,7 +32,7 @@ fn main() {
     // show_alignment_bsz();
 
     let tree = BPlusTree::<250, 250, Key, Key>::new_with(
-        MonoWriter,
+        OLC,
         Key::MIN,
         Key::MAX,
         inc_key,
@@ -51,8 +51,13 @@ fn main() {
         tree.dispatch(insert_crud);
     }
 
+    let mut i = 0;
     for delete_crud in delete_data {
         println!("{delete_crud}");
+        if i == 24752 {
+            let s = "31231231".to_string();
+        }
+        i += 1;
         tree.dispatch(delete_crud);
 
         match tree.dispatch(CRUDOperation::PeekMin) {

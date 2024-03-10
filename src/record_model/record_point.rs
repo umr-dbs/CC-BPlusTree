@@ -32,30 +32,22 @@ impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> RecordPoint<Key
 
     #[inline(always)]
     pub const fn key(&self) -> Key {
-        unsafe {
-            self.key
-        }
+        self.key
     }
 
     #[inline(always)]
     pub const fn key_ref(&self) -> &Key {
-        unsafe {
-            &*addr_of!(self.key)
-        }
+        &self.key
     }
 
     #[inline(always)]
     pub const fn payload_ref(&self) -> &Payload {
-        unsafe {
-            &*addr_of!(self.payload)
-        }
+        &self.payload
     }
 
     #[inline(always)]
     pub fn payload_mut(&mut self) -> &mut Payload {
-        unsafe {
-            &mut *addr_of_mut!(self.payload)
-        }
+        &mut self.payload
     }
 }
 // impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> RecordLike<Key, Payload> for RecordPoint<Key, Payload> {

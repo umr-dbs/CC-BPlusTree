@@ -1,6 +1,7 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::{mem, ptr};
+use std::cell::Cell;
 use std::mem::MaybeUninit;
 use std::ptr::null_mut;
 use crate::page_model::{BlockRef, ObjectCount};
@@ -57,27 +58,19 @@ impl<const FAN_OUT: usize,
     pub fn keys_mut(&self) -> ShadowVec<Key> {
         unsafe {
             ShadowVec {
-                unreal_vec: mem::ManuallyDrop::new(Vec::from_raw_parts(
-                    self.key_array.as_ptr().add(1) as *mut Key,
-                    self.keys_len(),
-                    FAN_OUT - 1)),
-                obj_cnt: self.key_array.as_ptr() as *mut ObjectCount,
-                update_len: true,
+                ptr: self.key_array.as_ptr().add(1) as *mut Key,
+                len: Cell::new(self.keys_len()),
+                update_len: Some(self.key_array.as_ptr() as *mut ObjectCount),
             }
         }
     }
 
     #[inline(always)]
     pub fn children_mut(&self) -> ShadowVec<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        unsafe {
-            ShadowVec {
-                unreal_vec: mem::ManuallyDrop::new(Vec::from_raw_parts(
-                    self.children_array.as_ptr() as _,
-                    self.children_len(),
-                    FAN_OUT)),
-                obj_cnt: null_mut(),
-                update_len: false,
-            }
+        ShadowVec {
+            ptr: self.children_array.as_ptr() as _,
+            len: Cell::new(self.children_len()),
+            update_len: None,
         }
     }
 

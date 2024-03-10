@@ -59,6 +59,8 @@ impl<const FAN_OUT: usize,
 
     fn merge(&self,
              block_guard: &mut BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+             from_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+             merge_guard: Option<(usize, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
              child_pos: usize,
              child_key: Key,
              curr_level: Level,
@@ -90,6 +92,14 @@ impl<const FAN_OUT: usize,
             .map(|c| self.apply_for_ref(
                 curr_level, lock_level, attempt, height, c))
             .collect_vec();
+
+        unsafe {
+            *children_latched.get_unchecked_mut(child_pos) = from_guard;
+
+            if let Some((merge_pos, merge_guard)) = merge_guard {
+                *children_latched.get_unchecked_mut(merge_pos) = merge_guard;
+            }
+        }
 
         if children_latched.iter_mut().any(|guard|
             !guard.upgrade_write_lock())
@@ -349,7 +359,7 @@ impl<const FAN_OUT: usize,
         let child_key = unsafe { *mufasa.keys().get_unchecked(child_pos) };
 
         let from_deref
-            = from_guard.deref().unwrap();
+            = from_guard.deref_mut().unwrap();
 
         let is_leaf
             = from_deref.is_leaf();
@@ -367,22 +377,20 @@ impl<const FAN_OUT: usize,
 
         let (mut merge_index,
             mut merge_guard,
-            mut merge_key
+            merge_key
         ) = match all_candidates
             .binary_search_by_key(&child_key, |(.., key)| *key)
         {
             _ if all_candidates.len() == 1 && !is_leaf => { // copy all to mufasa
                 mem::drop(all_candidates);
-                mem::drop(from_guard);
-                return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts)
+                return self.merge(parent_guard, from_guard, None, child_pos, child_key, curr_level, lock_level, attempts);
             }
             Ok(index) | Err(index) if index < all_candidates.len() => all_candidates.remove(index),
-            Err(..) if !all_candidates.is_empty()  && !is_leaf => all_candidates.pop().unwrap(),
+            Err(..) if !all_candidates.is_empty() && !is_leaf => all_candidates.pop().unwrap(),
             _ => {
                 mem::drop(all_candidates);
-                mem::drop(from_guard);
-                return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts);
-            },
+                return self.merge(parent_guard, from_guard, None, child_pos, child_key, curr_level, lock_level, attempts);
+            }
         };
 
         all_candidates.clear();
@@ -399,9 +407,7 @@ impl<const FAN_OUT: usize,
                 = from_deref.len() + merge_deref.len() < NUM_RECORDS;
 
             if mufasa.len() == 1 && fit {
-                mem::drop(from_guard);
-                mem::drop(merge_guard);
-                return self.merge(parent_guard, child_pos, child_key, curr_level, lock_level, attempts)
+                return self.merge(parent_guard, from_guard, Some((merge_index, merge_guard)), child_pos, child_key, curr_level, lock_level, attempts);
             }
             if fit { // merge into one new leaf; checked
                 // println!("Before Leaf Merge");
@@ -421,25 +427,23 @@ impl<const FAN_OUT: usize,
                                       r0.key() < r1.key())
                         .cloned());
 
-                let mut mufasa_children_mut
+                let mufasa_children_mut
                     = mufasa.children_mut();
 
-                let mut mufasa_keys_mut
+                let mufasa_keys_mut
                     = mufasa.keys_mut();
 
                 let t_child = child_pos;
                 child_pos = child_pos.min(merge_index);
                 merge_index = merge_index.max(t_child);
 
-                merge_key = merge_key.min(child_key);
+                // merge_key = merge_key.min(child_key);
 
                 // Self::log_console(mufasa, 0);
                 mufasa_keys_mut.remove(child_pos);
                 mufasa_children_mut.remove(merge_index);
 
-                unsafe {
-                    *mufasa_children_mut.get_unchecked_mut(child_pos) = new_leaf;
-                }
+                *mufasa_children_mut.get_unchecked_mut(child_pos) = new_leaf;
 
                 mem::drop(mufasa_keys_mut);
                 mem::drop(mufasa_children_mut);
@@ -488,22 +492,21 @@ impl<const FAN_OUT: usize,
 
                 mem::drop(joined);
 
-                let mut mufasa_children_mut
+                let mufasa_children_mut
                     = mufasa.children_mut();
 
-                let mut mufasa_keys_mut
+                let mufasa_keys_mut
                     = mufasa.keys_mut();
 
-                unsafe {
-                    let t_child_pos = child_pos;
-                    let child_pos = child_pos.min(merge_index);
-                    let merge_index = t_child_pos.max(merge_index);
+                let t_child_pos = child_pos;
+                let child_pos = child_pos.min(merge_index);
+                let merge_index = t_child_pos.max(merge_index);
 
-                    *mufasa_keys_mut.get_unchecked_mut(child_pos) = left_key;
-                    // *mufasa_keys_mut.get_unchecked_mut(merge_index) = right_key;
-                    *mufasa_children_mut.get_unchecked_mut(child_pos) = new_leaf_left;
-                    *mufasa_children_mut.get_unchecked_mut(merge_index) = new_leaf_right;
-                }
+                *mufasa_keys_mut.get_unchecked_mut(child_pos) = left_key;
+                // *mufasa_keys_mut.get_unchecked_mut(merge_index) = right_key;
+                *mufasa_children_mut.get_unchecked_mut(child_pos) = new_leaf_left;
+                *mufasa_children_mut.get_unchecked_mut(merge_index) = new_leaf_right;
+
                 // Self::log_console(mufasa, 0);
             }
         } else { // is Internal page: Combine
@@ -514,11 +517,11 @@ impl<const FAN_OUT: usize,
                     .new_empty_index_block()
                     .into_cell(self.locking_strategy.latch_type());
 
-                let mut keys_mut = new_index
+                let keys_mut = new_index
                     .unsafe_borrow_mut()
                     .keys_mut();
 
-                let mut children_mut = new_index
+                let children_mut = new_index
                     .unsafe_borrow_mut()
                     .children_mut();
 
@@ -526,26 +529,26 @@ impl<const FAN_OUT: usize,
                     children_mut.extend_from_slice(from_deref.children());
                     children_mut.extend_from_slice(merge_deref.children());
 
-                    keys_mut.extend(from_deref.keys());
+                    keys_mut.extend_from_slice(from_deref.keys());
                     keys_mut.push(child_key);
-                    keys_mut.extend(merge_deref.keys());
+                    keys_mut.extend_from_slice(merge_deref.keys());
 
                     (child_pos, merge_index)
                 } else {
                     children_mut.extend_from_slice(merge_deref.children());
                     children_mut.extend_from_slice(from_deref.children());
 
-                    keys_mut.extend(merge_deref.keys());
+                    keys_mut.extend_from_slice(merge_deref.keys());
                     keys_mut.push(merge_key);
-                    keys_mut.extend(from_deref.keys());
+                    keys_mut.extend_from_slice(from_deref.keys());
 
                     (merge_index, child_pos)
                 };
 
-                let mut mufasa_children_mut
+                let mufasa_children_mut
                     = mufasa.children_mut();
 
-                let mut mufasa_keys_mut
+                let mufasa_keys_mut
                     = mufasa.keys_mut();
 
                 mufasa_children_mut.remove(merge_index);
@@ -553,9 +556,8 @@ impl<const FAN_OUT: usize,
 
                 mem::drop(keys_mut);
                 mem::drop(children_mut);
-                unsafe {
-                    *mufasa_children_mut.get_unchecked_mut(child_pos) = new_index;
-                }
+
+                *mufasa_children_mut.get_unchecked_mut(child_pos) = new_index;
 
                 mem::drop(mufasa_keys_mut);
                 mem::drop(mufasa_children_mut);
@@ -639,11 +641,9 @@ impl<const FAN_OUT: usize,
                     .keys_mut()
                     .extend_from_slice(keys_right);
 
-                unsafe {
-                    *mufasa.keys_mut().get_unchecked_mut(merge_index) = split_key;
-                    *mufasa.children_mut().get_unchecked_mut(child_pos) = new_internal_left;
-                    *mufasa.children_mut().get_unchecked_mut(merge_index) = new_internal_right;
-                }
+                *mufasa.keys_mut().get_unchecked_mut(merge_index) = split_key;
+                *mufasa.children_mut().get_unchecked_mut(child_pos) = new_internal_left;
+                *mufasa.children_mut().get_unchecked_mut(merge_index) = new_internal_right;
             }
         }
         // Self::log_console(mufasa, 0);
@@ -757,7 +757,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_write_internal(&self, lock_level: LockLevel, attempt: Attempts, key: Key)
-    -> (NodeVisits, Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>)
+                                -> (NodeVisits, Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>)
     {
         let mut curr_level = INIT_TREE_HEIGHT;
 

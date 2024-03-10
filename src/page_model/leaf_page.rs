@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
@@ -74,15 +75,10 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn as_records_mut(&self) -> ShadowVec<RecordPoint<Key, Payload>> {
-        unsafe {
-            ShadowVec {
-                unreal_vec: ManuallyDrop::new(Vec::from_raw_parts(
-                    self.record_data.as_ptr() as *mut RecordPoint<Key, Payload>,
-                    *self.records_len.get_mut() as _,
-                    NUM_RECORDS)),
-                obj_cnt: self.records_len.get_mut(),
-                update_len: true,
-            }
+        ShadowVec {
+            ptr: self.record_data.as_ptr() as *mut RecordPoint<Key, Payload>,
+            len: Cell::new(*self.records_len.get_mut() as _),
+            update_len: Some(self.records_len.get_mut()),
         }
     }
 }

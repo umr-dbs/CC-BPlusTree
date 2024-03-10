@@ -1,6 +1,8 @@
 use std::hash::Hash;
 use std::fmt::Display;
 use std::mem;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::Acquire;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
@@ -136,25 +138,22 @@ impl<const FAN_OUT: usize,
                     .into())
             },
             CRUDOperation::PeekMin if olc => match self.traversal_read_olc(self.min_key) {
-                (node_visits, leaf_guard) => {
+                (node_visits, leaf_guard) => unsafe {
                     let leaf_page = leaf_guard
-                        .deref()
+                        .deref_unsafe()
                         .unwrap()
                         .as_ref();
 
                     let result = leaf_page
                         .as_records()
                         .first()
-                        .map(|r| unsafe { r.unsafe_clone() });
+                        .cloned();
                     
                     if leaf_guard.is_valid() {
                         (node_visits, result.into())
                     }
                     else {
                         mem::drop(leaf_guard);
-                        if !mem::needs_drop::<Payload>() { // fishy af
-                            mem::forget(result);
-                        }
                         self.dispatch(CRUDOperation::PeekMin)
                     }
                 }
@@ -166,24 +165,26 @@ impl<const FAN_OUT: usize,
                         .unwrap()
                         .as_ref();
 
-                    (node_visits, leaf_page
+                    let result = leaf_page
                         .as_records()
                         .first()
                         .cloned()
-                        .into())
+                        .into();
+                    
+                    (node_visits, result)
                 }
             }
             CRUDOperation::PeekMax if olc => match self.traversal_read_olc(self.max_key) {
-                (node_visits, leaf_guard) => {
+                (node_visits, leaf_guard) => unsafe {
                     let leaf_page = leaf_guard
-                        .deref()
+                        .deref_unsafe()
                         .unwrap()
                         .as_ref();
 
                     let result = leaf_page
                         .as_records()
                         .last()
-                        .map(|r| unsafe { r.unsafe_clone() });
+                        .cloned();
                     
                     if leaf_guard.is_valid() {
                         (node_visits, result.into())
@@ -201,16 +202,18 @@ impl<const FAN_OUT: usize,
                         .unwrap()
                         .as_ref();
 
-                    (node_visits, leaf_page
+                    let result = leaf_page
                         .as_records()
                         .last()
                         .cloned()
-                        .into())
+                        .into();
+                    
+                    (node_visits, result)
                 }
             }
             CRUDOperation::PopMin if olc => match self.traversal_write_olc(self.min_key) {
                 (node_visits, leaf_guard) => {
-                    let leaf_page =  leaf_guard
+                    let leaf_page = leaf_guard
                         .deref()
                         .unwrap()
                         .as_ref();
@@ -237,7 +240,7 @@ impl<const FAN_OUT: usize,
                         let r 
                             = leaf_page.records_mut().remove(0);
                         
-                        (node_visits, CRUDOperationResult::Deleted(r.key(), r.payload.clone()))
+                        (node_visits, CRUDOperationResult::Deleted(r.key, r.payload))
                     }
                     else {
                         (node_visits, CRUDOperationResult::Error)
@@ -254,7 +257,7 @@ impl<const FAN_OUT: usize,
                     let len = leaf_page.len();
                     if len > 0 {
                         let r
-                            = leaf_page.records_mut().remove(len - 1);
+                            = leaf_page.records_mut().pop();
 
                         (node_visits, CRUDOperationResult::Deleted(r.key(), r.payload.clone()))
                     }
@@ -273,7 +276,7 @@ impl<const FAN_OUT: usize,
                     let len = leaf_page.len();
                     if len > 0 {
                         let r
-                            = leaf_page.records_mut().remove(len - 1);
+                            = leaf_page.records_mut().pop();
                         
                         (node_visits, CRUDOperationResult::Deleted(r.key(), r.payload.clone()))
                     }

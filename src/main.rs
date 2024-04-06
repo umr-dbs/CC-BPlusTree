@@ -53,7 +53,10 @@ fn main() {
 
     let mut i = 0;
     for delete_crud in delete_data {
-        println!("{delete_crud}");
+        println!("{i}: {delete_crud}");
+        // if i == 129 {
+        //     let s = "3asd".to_string();
+        // }
         i += 1;
         tree.dispatch(delete_crud);
 

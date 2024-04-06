@@ -89,18 +89,27 @@ impl<const FAN_OUT: usize,
         let mut children_latched = block_deref
             .children()
             .iter()
-            .map(|c| self.apply_for_ref(
-                curr_level, lock_level, attempt, height, c))
+            .enumerate()
+            .filter(|(index, ..)| *index != child_pos)
+            .filter(|(index, ..)| match merge_guard {
+                Some((merge_pos, ..)) => *index != merge_pos,
+                _ => true
+            })
+            .map(|(.., c)| self.apply_for_ref(curr_level, lock_level, attempt, height, c))
             .collect_vec();
-
-        unsafe {
-            *children_latched.get_unchecked_mut(child_pos) = from_guard;
-
-            if let Some((merge_pos, merge_guard)) = merge_guard {
-                *children_latched.get_unchecked_mut(merge_pos) = merge_guard;
-            }
+        
+        if children_latched.is_empty() {
+            children_latched.push(from_guard);
+        } else {
+            children_latched.insert(child_pos, from_guard);
         }
+        // *children_latched.get_unchecked_mut(child_pos) = from_guard;
 
+        if let Some((merge_pos, merge_guard)) = merge_guard {
+            children_latched.insert(merge_pos, merge_guard);
+            // *children_latched.get_unchecked_mut(merge_pos) = merge_guard;
+        }
+        
         if children_latched.iter_mut().any(|guard|
             !guard.upgrade_write_lock())
         {
@@ -371,12 +380,13 @@ impl<const FAN_OUT: usize,
             .enumerate()
             .filter(|(index, ..)| *index != child_pos)
             .map(|(index, (block, key))|
-                (index, block.borrow_read(), *key))
-            .sorted_by_key(|(.., key)| *key)
+                (index, block.clone(), *key))
+            // .sorted_by_key(|(.., key)| *key)
             .collect_vec();
 
         let (mut merge_index,
-            mut merge_guard,
+            _merge_block,
+            // mut merge_guard,
             merge_key
         ) = match all_candidates
             .binary_search_by_key(&child_key, |(.., key)| *key)
@@ -385,17 +395,31 @@ impl<const FAN_OUT: usize,
                 mem::drop(all_candidates);
                 return self.merge(parent_guard, from_guard, None, child_pos, child_key, curr_level, lock_level, attempts);
             }
-            Ok(index) | Err(index) if index < all_candidates.len() => all_candidates.remove(index),
-            Err(..) if !all_candidates.is_empty() && !is_leaf => all_candidates.pop().unwrap(),
-            _ => {
+            Ok(index) | Err(index) => if index < all_candidates.len() {
+                all_candidates.remove(index)
+            } else if !all_candidates.is_empty() && index == all_candidates.len() {
+                all_candidates.pop().unwrap()
+            } else {
                 mem::drop(all_candidates);
                 return self.merge(parent_guard, from_guard, None, child_pos, child_key, curr_level, lock_level, attempts);
             }
+            // Err(..) if !all_candidates.is_empty() && !is_leaf => all_candidates.pop().unwrap(),
+            // r => {
+            //     println!("{:?}", r);
+            //     // Self::log_console(self.root.block.unsafe_borrow(), 1);
+            //     // println!("MUFASA");
+            //     // Self::log_console(mufasa, 1);
+            //     mem::drop(all_candidates);
+            //     return self.merge(parent_guard, from_guard, None, child_pos, child_key, curr_level, lock_level, attempts);
+            // }
         };
 
         all_candidates.clear();
 
-        if !merge_guard.upgrade_write_lock() { // OLC
+        let merge_guard
+            = _merge_block.borrow_mut();
+
+        if !merge_guard.is_valid() { // OLC
             return Err(());
         }
 
@@ -739,7 +763,7 @@ impl<const FAN_OUT: usize,
                     .deref_mut()
                     .unwrap();
 
-                let mut parent_children
+                let parent_children
                     = parent_mut.children_mut();
 
                 parent_children
@@ -767,6 +791,9 @@ impl<const FAN_OUT: usize,
             lock_level,
             attempt
         ) = self.retrieve_root(lock_level, attempt);
+
+        let mut _curr_block
+            = self.root.block();
 
         // if unsafe { ptr::read_unaligned(&key as *const _ as *const u64) } == 23 {
         //     Self::log_console(current_guard.deref().unwrap(), 0);
@@ -862,6 +889,7 @@ impl<const FAN_OUT: usize,
                         }
 
                         current_guard = next_guard;
+                        _curr_block = next_node;
                     }
                 }
                 _ => return if current_guard.upgrade_write_lock() {

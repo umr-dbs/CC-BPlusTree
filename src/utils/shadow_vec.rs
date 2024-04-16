@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::ptr;
+use std::{ptr, slice};
 use std::ptr::slice_from_raw_parts_mut;
 use crate::page_model::ObjectCount;
 
@@ -122,7 +122,12 @@ impl<E: Default + Clone> ShadowVec<E> {
             let len
                 = self.len.get();
 
-            ptr::copy(other.as_ptr(), self.ptr.add(len), other.len());
+            let p = self.ptr.add(len);
+            other.iter()
+                .enumerate()
+                .for_each(|(i, e)| p.add(i).write(e.clone()));
+            
+            // ptr::copy(other.as_ptr(), self.ptr.add(len), other.len());
 
             self.len.set(len + other.len())
         }

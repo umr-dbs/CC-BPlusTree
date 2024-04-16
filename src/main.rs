@@ -31,50 +31,50 @@ fn main() {
     // make_splash();
     // show_alignment_bsz();
 
-    let tree = Box::new(BPlusTree::<250, 250, Key, Key>::new_with(
-        OLC,
-        Key::MIN,
-        Key::MAX,
-        inc_key,
-        dec_key
-    ));
-    
-    let insert_data = (0..25000 as Key)
-        .map(|k| CRUDOperation::Insert(k as Key, k as Key))
-        .collect::<Vec<_>>();
-
-    let delete_data = (0..25000)
-        .map(|_| CRUDOperation::<Key, Key>::PopMax)
-        .collect::<Vec<_>>();
-    
-    for insert_crud in insert_data {
-        tree.dispatch(insert_crud);
-    }
-
-    let mut i = 0;
-    for delete_crud in delete_data {
-        println!("{i}: {delete_crud}");
-        // if i == 129 {
-        //     let s = "3asd".to_string();
-        // }
-        i += 1;
-        tree.dispatch(delete_crud);
-
-        match tree.dispatch(CRUDOperation::PeekMin) {
-            (_, c) => {
-                let s = "asdas".to_string();
-                println!("MIN: {c}")
-            }
-        }
-
-        match tree.dispatch(CRUDOperation::PeekMax) {
-            (_, c) => {
-                println!("MAX: {c}")
-            }
-        }
-    }
-    
-    println!("\n************\nstart paper tests");
+    // let tree = Box::new(BPlusTree::<250, 250, Key, Key>::new_with(
+    //     OLC,
+    //     Key::MIN,
+    //     Key::MAX,
+    //     inc_key,
+    //     dec_key
+    // ));
+    // 
+    // let insert_data = (0..25000 as Key)
+    //     .map(|k| CRUDOperation::Insert(k as Key, k as Key))
+    //     .collect::<Vec<_>>();
+    // 
+    // let delete_data = (0..25000)
+    //     .map(|_| CRUDOperation::<Key, Key>::PopMax)
+    //     .collect::<Vec<_>>();
+    // 
+    // for insert_crud in insert_data {
+    //     tree.dispatch(insert_crud);
+    // }
+    // 
+    // let mut i = 0;
+    // for delete_crud in delete_data {
+    //     println!("{i}: {delete_crud}");
+    //     // if i == 129 {
+    //     //     let s = "3asd".to_string();
+    //     // }
+    //     i += 1;
+    //     tree.dispatch(delete_crud);
+    // 
+    //     match tree.dispatch(CRUDOperation::PeekMin) {
+    //         (_, c) => {
+    //             let s = "asdas".to_string();
+    //             println!("MIN: {c}")
+    //         }
+    //     }
+    // 
+    //     match tree.dispatch(CRUDOperation::PeekMax) {
+    //         (_, c) => {
+    //             println!("MAX: {c}")
+    //         }
+    //     }
+    // }
+    // 
+    // println!("\n************\nstart paper tests");
     start_paper_tests();
     //
     // const THREADS: usize        = 24;

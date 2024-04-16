@@ -1,12 +1,9 @@
 use std::hash::Hash;
 use std::fmt::Display;
 use std::mem;
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::Acquire;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::record_model::unsafe_clone::UnsafeClone;
 use crate::tree::bplus_tree::BPlusTree;
 
 impl<const FAN_OUT: usize,

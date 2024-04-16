@@ -849,7 +849,8 @@ impl<const FAN_OUT: usize,
                             return (node_visits, Err((curr_level - 1, attempt + 1)));
                         } else if self.locking_strategy.is_orwc() &&
                             !current_exclusive &&
-                            self.has_overflow(current_guard.deref().unwrap())
+                            (self.has_overflow(current_guard.deref().unwrap()) ||
+                             self.has_underflow(current_guard.deref().unwrap()))
                         { // this maps the obsolete check within an is_valid/deref auto call
                             mem::drop(next_guard);
                             mem::drop(current_guard);

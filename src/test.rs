@@ -72,7 +72,7 @@ pub type Tree = Arc<TreeDispatcher>;
 
 pub enum TreeDispatcher {
     Wrapper(RwLock<INDEX>),
-    Ref(INDEX)
+    Ref(INDEX),
 }
 
 impl CRUDDispatcher<Key, Payload> for TreeDispatcher {
@@ -82,8 +82,7 @@ impl CRUDDispatcher<Key, Payload> for TreeDispatcher {
             TreeDispatcher::Ref(inner) => inner.dispatch(crud),
             TreeDispatcher::Wrapper(sync) => if crud.is_read() {
                 sync.read().dispatch(crud)
-            }
-            else {
+            } else {
                 sync.write().dispatch(crud)
             }
         }
@@ -246,7 +245,7 @@ pub fn start_paper_tests() {
     = false;
 
     const N: u64
-    = 1_000_000;
+    = 10_000_000;
 
     const KEY_RANGE: RangeInclusive<Key>
     = 1..=N;
@@ -254,11 +253,16 @@ pub fn start_paper_tests() {
     const REPEATS: usize
     = 5;
 
-    const UPDATES_THRESHOLD: [f64; 10]
-    = [0.91_f64, 0.92_f64, 0.93_f64, 0.94_f64, 0.95_f64, 0.96_f64, 0.97_f64, 0.98_f64, 0.99_f64, 1_f64,];
+    const UPDATES_THRESHOLD: [f64; 5] = [
+        0.0_f64,
+        0.1_f64,
+        0.5_f64,
+        0.9_f64,
+        1_f64
+    ];
 
-    const THREADS: [usize; 8]
-    = [1, 2, 4, 8, 12, 16, 32, 64];
+    const THREADS: [usize; 9]
+    = [1, 2, 4, 8, 12, 16, 32, 64, 128];
 
     const LAMBDAS: [f64; 4]
     = [
@@ -385,10 +389,10 @@ pub fn start_paper_tests() {
                 // thread::sleep(Duration::from_millis(10));
 
                 // for _ in 0..5 {
-                    let (create_time, errs, create_node_visits)
-                        = bulk_crud(thread,
-                                    tree.clone(),
-                                    data_lambdas[lambda].as_slice());
+                let (create_time, errs, create_node_visits)
+                    = bulk_crud(thread,
+                                tree.clone(),
+                                data_lambdas[lambda].as_slice());
                 // }
 
                 // let (create_time, errs, create_node_visits)
@@ -502,6 +506,7 @@ fn make_hist(lambda: f64, map: &mut Vec<(Interval<Key>, usize)>, n: u64, key_ran
 
     fs::write(stats_lambda_leaf_hits, s).unwrap();
 }
+
 fn mixed_test_new(
     create_node_visits: NodeVisits,
     create_time: u128,

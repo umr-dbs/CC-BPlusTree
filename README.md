@@ -1,17 +1,17 @@
 ## Concurrency Control CRUD B+Tree
     Build:             - 06.05.2024
-    Version:           - 0.0.116 (Beta)
-    Enable OLC-HLE:    - cargo build --features hardware-lock-elision
-    Architecture:      - x86
-    OS:                - Linux
+    Version:           - 0.0.117 (Beta)
+    Enable OLC-HLE:    - --features olc-hle
+    Enable ORWC-FAIR   - --features orwc-fair
+
+    OS/Architecture:   - Linux/x86
     Rustc:             - >= 1.65.0 (2021 Edition)
 ## Locking Techniques
-    Use the terminal 'crud' command for object names and settings.
+    - ORWC (DEXA24)
+    - LHL  (DEXA24)
     - MonoWriter
     - Exclusive-LC
-    - ORWC
     - OLC
-    - LHL
     - HL
 # CRUD
     - (C) Create  - Insert a new key

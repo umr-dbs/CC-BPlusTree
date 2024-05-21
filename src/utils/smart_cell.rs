@@ -26,7 +26,7 @@ const WRITE_OBSOLETE_FLAG_VERSION: LatchVersion = 0xC_000000000000000;
 const WRITE_PIN_FLAG_VERSION: LatchVersion = 0x6_000000000000000;
 const WRITE_PIN_OBSOLETE_FLAG_VERSION: LatchVersion = 0xE_000000000000000;
 
-#[cfg(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(all(feature = "olc-hle", any(target_arch = "x86", target_arch = "x86_64")))]
 pub trait AtomicElisionExt {
     fn elision_compare_exchange_acquire(
         &self,
@@ -35,7 +35,7 @@ pub trait AtomicElisionExt {
     ) -> Result<Version, Version>;
 }
 
-#[cfg(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(all(feature = "olc-hle", any(target_arch = "x86", target_arch = "x86_64")))]
 impl AtomicElisionExt for AtomicVersion {
     #[inline(always)]
     fn elision_compare_exchange_acquire(&self, current: Version, new: Version) -> Result<Version, Version> {
@@ -164,7 +164,7 @@ impl<E: Default> OptCell<E> {
         (read_version & WRITE_OBSOLETE_FLAG_VERSION == 0, read_version & !PIN_FLAG_VERSION)
     }
 
-    #[cfg(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(all(feature = "olc-hle", any(target_arch = "x86", target_arch = "x86_64")))]
     #[inline(always)]
     pub fn pin_lock(&self) -> Result<LatchVersion, (IsRead, LatchVersion)> {
         let read_version
@@ -187,7 +187,7 @@ impl<E: Default> OptCell<E> {
         }
     }
 
-    #[cfg(not(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64"))))]
+    #[cfg(not(all(feature = "olc-hle", any(target_arch = "x86", target_arch = "x86_64"))))]
     #[inline(always)]
     pub fn pin_lock(&self) -> Result<LatchVersion, (IsRead, LatchVersion)> {
         let read_version
@@ -238,7 +238,7 @@ impl<E: Default> OptCell<E> {
         pin_write
     }
 
-    #[cfg(not(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64"))))]
+    #[cfg(not(all(feature = "olc-hle", any(target_arch = "x86", target_arch = "x86_64"))))]
     #[inline(always)]
     pub fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
         match self.cell_version.compare_exchange_weak(
@@ -252,7 +252,7 @@ impl<E: Default> OptCell<E> {
         }
     }
 
-    #[cfg(all(feature = "hardware-lock-elision", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(all(feature = "olc-hle", any(target_arch = "x86", target_arch = "x86_64")))]
     #[inline(always)]
     pub fn write_lock(&self, read_version: LatchVersion) -> Option<LatchVersion> {
         match self.cell_version.elision_compare_exchange_acquire(
@@ -857,6 +857,20 @@ impl<E: Default> SmartCell<E> {
 impl<'a, E: Default> Drop for SmartGuard<'a, E> {
     fn drop(&mut self) {
         match self {
+            #[cfg(feature = "orwc-fair")]
+            RwWriter(guard, ..) => unsafe {
+                RwLockWriteGuard::rwlock(guard)
+                    .force_unlock_write_fair();
+                
+                ptr::write(self, OLCReader(None))
+            }
+            #[cfg(feature = "orwc-fair")]
+            RwReader(guard, ..) => unsafe {
+                RwLockReadGuard::rwlock(guard)
+                    .force_unlock_read_fair();
+                
+                ptr::write(self, OLCReader(None))
+            }
             OLCWriter(cell, write_version) =>
                 if let LightWeightHybridCell(opt) = cell.0.as_ref() {
                     if *write_version != ZEROED_FLAG_VERSION {

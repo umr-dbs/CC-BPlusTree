@@ -251,14 +251,14 @@ pub fn start_paper_tests() {
     = 1..=N;
 
     const REPEATS: usize
-    = 5;
+    = 3;
 
-    const UPDATES_THRESHOLD: [f64; 5] = [
-        0.0_f64,
+    const UPDATES_THRESHOLD: [f64; 3] = [
+        // 0.0_f64,
         0.1_f64,
         0.5_f64,
         0.9_f64,
-        1_f64
+        // 1_f64
     ];
 
     const THREADS: [usize; 9]
@@ -353,21 +353,21 @@ pub fn start_paper_tests() {
         orwc_attempts(4),
         // orwc_attempts(16),
         // OLC(),
-        OLC(),
+        // OLC(),
 
         // LHL_read(0),
-        LHL_read(1),
-        LHL_read(4),
-        LHL_read(16),
+        // LHL_read(1),
+        // LHL_read(4),
+        // LHL_read(16),
 
         // LHL_write(0),
-        LHL_write(1),
-        LHL_write(4),
-        LHL_write(16),
+        // LHL_write(1),
+        // LHL_write(4),
+        // LHL_write(16),
         // LHL_read_write(0, 0),
-        LHL_read_write(1, 1),
-        LHL_read_write(4, 4),
-        LHL_read_write(16, 16),
+        // LHL_read_write(1, 1),
+        // LHL_read_write(4, 4),
+        // LHL_read_write(16, 16),
         // hybrid_lock(),
     ];
 

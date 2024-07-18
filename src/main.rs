@@ -2,7 +2,6 @@ use std::{env, fs};
 use std::sync::Arc;
 use chrono::{DateTime, Local};
 use parking_lot::RwLock;
-use cc_bplustree::locking::locking_strategy::LockingStrategy;
 use crate::tree::bplus_tree;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::crud_model::crud_operation::CRUDOperation;

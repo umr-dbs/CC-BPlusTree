@@ -44,7 +44,7 @@ pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
 // pub const NUM_RECORDS: usize = 64;
 
 pub type Key = u64;
-pub type Payload = f64;
+pub type Payload = u64;
 
 pub fn inc_key(k: Key) -> Key {
     k.checked_add(1).unwrap_or(Key::MAX)

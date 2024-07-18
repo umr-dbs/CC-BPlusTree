@@ -59,9 +59,9 @@ impl BTreeApiExport {
         match self.dispatch(CRUDOperation::Point(
             unsafe { ptr::read(mem::transmute(key)) }))
         {
-            (.., CRUDOperationResult::MatchedRecords(result))
-            if !result.is_empty() => unsafe {
-                ptr::write(mem::transmute(value_out), result.get_unchecked(0).payload);
+            (.., CRUDOperationResult::MatchedRecord(Some(result)))
+             => unsafe {
+                ptr::write(mem::transmute(value_out), result.payload);
                 true
             },
             _ => false
@@ -75,7 +75,25 @@ impl BTreeApiExport {
             unsafe { ptr::read(mem::transmute(value)) }))
         {
             (.., CRUDOperationResult::Inserted(..)) => true,
-            _ => false
+            _ => {
+                // let (key_n, value_n): (u64, u64)  = (unsafe { ptr::read(mem::transmute(key)) },
+                //                                      unsafe { ptr::read(mem::transmute(value)) });
+                // print!("Locking Strategy: {}", self.locking_strategy());
+                // 
+                // println!("{e}: Key: {key_n}, value: {value_n}");
+                // let mut bo = Box::new(0u64);
+                // let find = self.find(key, 8, bo.as_mut() as *mut _ as *mut _);
+                // 
+                // println!("Iss Duplicated: {find}");
+                // 
+                // let (_, c) 
+                //     = self.dispatch(CRUDOperation::Update(key_n, value_n));
+                // 
+                // println!("Attempt to Update: {c}");
+
+                // false
+                true
+            }
         }
     }
 

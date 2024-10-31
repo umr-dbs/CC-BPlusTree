@@ -1,15 +1,15 @@
 [package]
 name = "CCBPlusTree"
-version = "0.0.118"
+version = "0.0.119"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "Experimental Concurrency Control CRUD B+Tree Implementation"
 repository = "https://github.com/umr-dbs/CC-BPlusTree"
 
 [lib]
-name = "cc_bplustree"
-path = "src/lib.rs"
-crate-type = ["cdylib"]
+#name = "CCBPlusTree"
+#path = "src/lib.rs"
+#crate-type = ["cdylib"]
 
 [profile.dev]
 overflow-checks = false

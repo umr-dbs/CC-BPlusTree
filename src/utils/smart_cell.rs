@@ -496,13 +496,16 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
 
                 ptr::write(self, s_guard)
             },
-            // OLCWriter(cell, latch)
-            // if *latch & OBSOLETE_FLAG_VERSION == 0 => {
-            //     let reader
-            //         = OLCReader(Some((cell.clone(), *latch & !WRITE_FLAG_VERSION)));
-            //
-            //     let _ = mem::replace(self, reader);
-            // }
+            OLCWriter(cell, latch)
+            if *latch & OBSOLETE_FLAG_VERSION == 0 => unsafe {
+                if let OLCCell(opt) = cell.0.as_ref() {
+                    let reader
+                        = OLCReader(Some((transmute_copy(cell), (*latch + 1) & !WRITE_FLAG_VERSION)));
+
+                    opt.write_unlock(*latch);
+                    ptr::write(self, reader);
+                }
+            }
             _ => {}
         }
     }

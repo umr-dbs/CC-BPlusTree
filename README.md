@@ -1,6 +1,6 @@
 ## Concurrency Control CRUD B+Tree
-    Build:             - 18.07.2024
-    Version:           - 0.0.118 (Beta)
+    Build:             - 27.03.2025
+    Version:           - 0.0.120 (Beta)
     Enable OLC-HLE:    - --features olc-hle
     Enable ORWC-FAIR   - --features orwc-fair
 

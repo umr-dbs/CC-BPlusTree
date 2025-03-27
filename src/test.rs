@@ -1,33 +1,24 @@
 use std::collections::VecDeque;
-use std::fmt::{Display, Formatter};
-use std::{fs, thread};
-use std::hash::{Hash, Hasher};
-use std::ops::{Add, Deref, DerefMut, Div, RangeInclusive, Sub};
-use std::path::Path;
+use std::fs;
+use std::ops::{Div, RangeInclusive, Sub};
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use std::thread::spawn;
-use std::time::{Duration, SystemTime};
-use crossbeam::channel::TryRecvError;
-use hashbrown::HashMap;
+use std::time::SystemTime;
 use itertools::Itertools;
 use parking_lot::RwLock;
-use rand::{Rng, RngCore, SeedableRng, thread_rng};
-use rand::distributions::{Standard, Uniform};
+use rand::{Rng, SeedableRng};
+use rand::distr::Uniform;
 use rand::rngs::StdRng;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
-use crate::locking::locking_strategy::{CRUDProtocol, LHL_read, LHL_write, LHL_read_write, LockingStrategy, OLC, orwc, orwc_attempts};
+use crate::locking::locking_strategy::{CRUDProtocol, LockingStrategy, OLC, orwc_attempts};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::locking::locking_strategy::LockingStrategy::{LockCoupling, MonoWriter};
+use crate::locking::locking_strategy::LockingStrategy::MonoWriter;
 use crate::page_model::node::Node;
 
 use crate::tree::bplus_tree::BPlusTree;
-
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::COUNTERS;
 
 pub const VALIDATE_OPERATION_RESULT: bool = false;
 pub const EXE_LOOK_UPS: bool = false;
@@ -538,8 +529,8 @@ fn mixed_test_new(
         lambda,
         &mut rnd);
 
-    let operations = thread_rng()
-        .sample_iter(Uniform::new(0_f64, 1_f64))
+    let operations = rand::rng()
+        .sample_iter(Uniform::new(0_f64, 1_f64).unwrap())
         .take(operations_count)
         .collect::<Vec<_>>()
         .into_iter()
@@ -550,7 +541,7 @@ fn mixed_test_new(
             if t <= updates_thresh_hold {
                 CRUDOperation::Update(key, Payload::default())
             } else {
-                if thread_rng().gen_bool(rq_probability) {
+                if rand::random_bool(rq_probability) {
                     match key.checked_add(rq_offset) {
                         None => {
                             let key1 = key.sub(rq_offset);

@@ -4,6 +4,7 @@ use std::mem;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
+use crate::record_model::record_point::RecordPoint;
 use crate::tree::bplus_tree::BPlusTree;
 
 impl<const FAN_OUT: usize,
@@ -189,6 +190,46 @@ impl<const FAN_OUT: usize,
                     else {
                         mem::drop(leaf_guard);
                         self.dispatch(CRUDOperation::PeekMax)
+                    }
+                }
+            },
+            CRUDOperation::Pred(key) => match self.traversal_read_pred_olc(key) {
+                (node_visits, leaf_guard, pred) => unsafe {
+                    let leaf_page = leaf_guard
+                        .deref_unsafe()
+                        .unwrap()
+                        .as_ref();
+
+                    let pos = match leaf_page
+                        .as_records()
+                        .binary_search_by_key(&key, |record| record.key)
+                    {
+                        Ok(pos) | Err(pos) => pos
+                    };
+
+                    let record = leaf_page
+                        .as_records()
+                        .get(pos)
+                        .cloned();
+
+                    if pos > 0 && record.as_ref().unwrap().key < key {
+                        if leaf_guard.is_valid() {
+                            (node_visits, CRUDOperationResult::MatchedRecord(record))
+                        }
+                        else {
+                            mem::drop(leaf_guard);
+                            self.dispatch(CRUDOperation::Pred(key))
+                        }
+                    }
+                    else {
+                        if leaf_guard.is_valid() {
+                            (node_visits, CRUDOperationResult::MatchedRecord(
+                                Some(RecordPoint::new(pred, Payload::default()))))
+                        }
+                        else {
+                            mem::drop(leaf_guard);
+                            self.dispatch(CRUDOperation::Pred(key))
+                        }
                     }
                 }
             },

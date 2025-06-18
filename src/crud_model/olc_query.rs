@@ -276,6 +276,60 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
+    fn traversal_read_pred_olc_internal(&self, key: Key) 
+        -> (NodeVisits, Option<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Key)>) {
+        let mut current_guard
+            = self.lock_reader(&self.root.block);
+
+        // let key = (self.inc_key)(key);
+        let mut node_visits = 0;
+        let mut pred = self.max_key;
+        loop {
+            let current
+                = unsafe { current_guard.deref_unsafe() };
+
+            let (read, current_reader_version)
+                = current_guard.is_read_not_obsolete_result();
+
+            if current.is_none() || !read {
+                mem::drop(current_guard);
+
+                return (node_visits + 1, None);
+            }
+
+            match current.unwrap().as_ref() {
+                Node::Index(index_page) => unsafe {
+                    node_visits += 1;
+
+                    let (pos, next_node) = match index_page.keys().binary_search(&key) {
+                        Ok(pos) => (pos, index_page.get_child_result(pos)),
+                        Err(pos) => (pos, index_page.get_child_result(pos))
+                    };
+
+                    let (read, read_version)
+                        = current_guard.is_read_not_obsolete_result();
+
+                    if !read || read_version != current_reader_version {
+                        return (node_visits, None);
+                    }
+
+                    if pos > 0 {
+                        let check = *index_page.keys().get_unchecked(pos - 1);
+                        if check < key {
+                            pred = check;
+                        }
+                    }
+                    
+                    current_guard
+                        = self.lock_reader(next_node.assume_init_ref());
+                }
+                _ => break (node_visits + 1, Some((current_guard, pred))),
+            }
+        }
+    }
+
+    
+    #[inline]
     fn traversal_read_olc_internal(&self, key: Key) -> (NodeVisits, Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
         let mut current_guard
             = self.lock_reader(&self.root.block);
@@ -319,6 +373,25 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    #[inline]
+    pub(crate) fn traversal_read_pred_olc(&self, key: Key)
+        -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Key) {
+        let mut attempt = 0;
+        let mut node_visits = 0;
+
+        loop {
+            match self.traversal_read_pred_olc_internal(key) {
+                (nv, Some((guard, pred))) if guard.is_valid() =>
+                    break (node_visits + nv, guard, pred),
+                (nv, ..) => {
+                    node_visits += nv;
+                    attempt += 1;
+                    sched_yield(attempt)
+                }
+            }
+        }
+    }
+    
     #[inline]
     pub(crate) fn traversal_read_olc(&self, key: Key) -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         let mut attempt = 0;

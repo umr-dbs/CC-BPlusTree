@@ -21,6 +21,8 @@ pub enum CRUDOperation<Key: Ord + Copy + Hash, Payload: Clone> {
     PopMin,
     PopMax,
     Range(Interval<Key>),
+    
+    Pred(Key)
 }
 
 /// Explicitly support move-semantics for Transaction.
@@ -49,6 +51,8 @@ impl<Key: Display + Ord + Copy + Hash, Payload: Display + Clone> Display for CRU
                 write!(f, "PopMin"),
             CRUDOperation::PopMax =>
                 write!(f, "PopMax"),
+            CRUDOperation::Pred(key) =>
+                write!(f, "Pred({key}"),
         }
     }
 }

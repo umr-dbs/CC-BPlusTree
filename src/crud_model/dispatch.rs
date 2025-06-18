@@ -206,15 +206,20 @@ impl<const FAN_OUT: usize,
                     {
                         Ok(pos) | Err(pos) => pos
                     };
-
-                    let record = leaf_page
-                        .as_records()
-                        .get(pos)
-                        .cloned();
-
-                    if pos > 0 && record.as_ref().unwrap().key < key {
+                    
+                    if pos < leaf_page.len() && leaf_page.as_records().get_unchecked(pos).key == key {
                         if leaf_guard.is_valid() {
-                            (node_visits, CRUDOperationResult::MatchedRecord(record))
+                            (node_visits, CRUDOperationResult::MatchedRecord(Some(RecordPoint::new(key, Payload::default()))))
+                        }
+                        else {
+                            mem::drop(leaf_guard);
+                            self.dispatch(CRUDOperation::Pred(key))
+                        }
+                    }
+                    else if pos > 0 {
+                        let k = *leaf_page.keys().get_unchecked(pos - 1);
+                        if leaf_guard.is_valid() {
+                            (node_visits, CRUDOperationResult::MatchedRecord(Some(RecordPoint::new(k, Payload::default()))))
                         }
                         else {
                             mem::drop(leaf_guard);
@@ -222,14 +227,8 @@ impl<const FAN_OUT: usize,
                         }
                     }
                     else {
-                        if leaf_guard.is_valid() {
-                            (node_visits, CRUDOperationResult::MatchedRecord(
-                                Some(RecordPoint::new(pred, Payload::default()))))
-                        }
-                        else {
-                            mem::drop(leaf_guard);
-                            self.dispatch(CRUDOperation::Pred(key))
-                        }
+                        (node_visits, 
+                         CRUDOperationResult::MatchedRecord(Some(RecordPoint::new(pred, Payload::default()))))
                     }
                 }
             },

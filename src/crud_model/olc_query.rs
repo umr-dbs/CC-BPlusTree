@@ -315,7 +315,7 @@ impl<const FAN_OUT: usize,
 
                     if pos > 0 {
                         let check = *index_page.keys().get_unchecked(pos - 1);
-                        if check < key {
+                        if check <= key {
                             pred = check;
                         }
                     }
